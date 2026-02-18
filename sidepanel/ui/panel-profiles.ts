@@ -1,5 +1,8 @@
 import { SidePanelUI } from './panel-ui.js';
 
+const DEFAULT_LOCAL_API_ENDPOINT = 'http://localhost:11434';
+const DEFAULT_KIMI_API_ENDPOINT = 'https://api.kimi.com/coding';
+
 (SidePanelUI.prototype as any).createNewConfig = async function createNewConfig(name?: string) {
   const trimmedName = (name || '').trim() || prompt('Digite o nome do perfil:') || '';
   if (!trimmedName) return;
@@ -238,11 +241,22 @@ import { SidePanelUI } from './panel-ui.js';
 };
 
 (SidePanelUI.prototype as any).collectProfileEditorData = function collectProfileEditorData() {
+  const provider = this.elements.profileEditorProvider.value;
+  const endpointInput = (this.elements.profileEditorEndpoint.value || '').trim();
+  let customEndpoint = '';
+  if (provider === 'ollama') {
+    customEndpoint = endpointInput || DEFAULT_LOCAL_API_ENDPOINT;
+  } else if (provider === 'kimi') {
+    customEndpoint = endpointInput || DEFAULT_KIMI_API_ENDPOINT;
+  } else if (provider === 'custom') {
+    customEndpoint = endpointInput;
+  }
+
   return {
-    provider: this.elements.profileEditorProvider.value,
+    provider,
     apiKey: this.elements.profileEditorApiKey.value,
     model: this.elements.profileEditorModel.value,
-    customEndpoint: this.elements.profileEditorEndpoint.value,
+    customEndpoint,
     temperature: Number.parseFloat(this.elements.profileEditorTemperature.value) || 0.7,
     maxTokens: Number.parseInt(this.elements.profileEditorMaxTokens.value) || 2048,
     timeout: Number.parseInt(this.elements.profileEditorTimeout.value) || 30000,

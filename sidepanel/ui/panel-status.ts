@@ -28,12 +28,80 @@ import { SidePanelUI } from './panel-ui.js';
   void this.fetchAvailableModels();
 };
 
+(SidePanelUI.prototype as any).getModelSourceContext = function getModelSourceContext() {
+  const config = this.configs?.[this.currentConfig] || {};
+  const provider = String(this.elements.provider?.value || config.provider || 'anthropic').toLowerCase();
+  const apiKey = String(this.elements.apiKey?.value ?? config.apiKey ?? '');
+
+  const endpointInput = this.elements.customEndpoint?.value;
+  let customEndpoint = String(
+    endpointInput !== undefined && endpointInput !== null ? endpointInput : config.customEndpoint || '',
+  ).trim();
+
+  if (provider === 'ollama' && !customEndpoint) {
+    customEndpoint = 'http://localhost:11434';
+  } else if (provider === 'kimi' && !customEndpoint) {
+    customEndpoint = 'https://api.kimi.com/coding';
+  } else if (provider !== 'custom' && provider !== 'ollama' && provider !== 'kimi') {
+    customEndpoint = '';
+  }
+
+  const model = String(this.elements.model?.value || config.model || '').trim();
+  return { provider, apiKey, customEndpoint, model };
+};
+
+(SidePanelUI.prototype as any).resolveModelFamilyFromEndpoint = function resolveModelFamilyFromEndpoint(
+  rawEndpoint: string,
+  fallbackFamily: string,
+) {
+  const endpoint = String(rawEndpoint || '').toLowerCase();
+  if (!endpoint) return fallbackFamily;
+  if (endpoint.includes('localhost:11434') || endpoint.includes(':11434') || endpoint.includes('ollama')) {
+    return 'Ollama';
+  }
+  if (endpoint.includes('openrouter.ai')) return 'OpenRouter';
+  if (endpoint.includes('api.openai.com')) return 'OpenAI';
+  if (endpoint.includes('anthropic.com')) return 'Anthropic';
+  if (endpoint.includes('generativelanguage.googleapis.com') || endpoint.includes('googleapis.com')) {
+    return 'Google';
+  }
+  if (endpoint.includes('kimi.com') || endpoint.includes('moonshot')) return 'Kimi';
+  return fallbackFamily;
+};
+
+(SidePanelUI.prototype as any).resolveModelFamilyBySource = function resolveModelFamilyBySource(
+  provider: string,
+  customEndpoint = '',
+) {
+  const normalizedProvider = String(provider || '').toLowerCase();
+  if (normalizedProvider === 'openai') {
+    return customEndpoint
+      ? this.resolveModelFamilyFromEndpoint(customEndpoint, 'OpenAI')
+      : 'OpenAI';
+  }
+  if (normalizedProvider === 'anthropic') return 'Anthropic';
+  if (normalizedProvider === 'google') return 'Google';
+  if (normalizedProvider === 'kimi') return 'Kimi';
+  if (normalizedProvider === 'ollama') return 'Ollama';
+  if (normalizedProvider === 'custom') {
+    return this.resolveModelFamilyFromEndpoint(customEndpoint, 'Custom');
+  }
+  return this.resolveModelFamilyFromEndpoint(customEndpoint, 'Modelo');
+};
+
+(SidePanelUI.prototype as any).isLikelyOllamaEndpoint = function isLikelyOllamaEndpoint(endpoint: string) {
+  const value = String(endpoint || '').toLowerCase();
+  if (!value) return false;
+  return value.includes('localhost:11434') || value.includes(':11434') || value.includes('ollama');
+};
+
 (SidePanelUI.prototype as any).fetchAvailableModels = async function fetchAvailableModels() {
   const config = this.configs[this.currentConfig] || {};
-  const provider = config.provider || 'anthropic';
-  const apiKey = config.apiKey || '';
-  const customEndpoint = config.customEndpoint || '';
-  const currentModel = config.model;
+  const sourceContext = this.getModelSourceContext();
+  const provider = sourceContext.provider || 'anthropic';
+  const apiKey = sourceContext.apiKey || '';
+  const customEndpoint = sourceContext.customEndpoint || '';
+  const currentModel = sourceContext.model || config.model;
 
   if (this.modelsFetchController) {
     this.modelsFetchController.abort();
@@ -42,120 +110,92 @@ import { SidePanelUI } from './panel-ui.js';
   const requestId = (this.modelsFetchSeq || 0) + 1;
   this.modelsFetchSeq = requestId;
 
-  const ANTHROPIC_MODELS = [
-    'claude-sonnet-4-20250514',
-    'claude-opus-4-20250514',
-    'claude-3-7-sonnet-20250219',
-    'claude-3-5-sonnet-20241022',
-    'claude-3-5-haiku-20241022',
-  ];
-
-  const GOOGLE_MODELS = [
-    'gemini-2.5-flash-preview-05-20',
-    'gemini-2.5-pro-preview-05-06',
-    'gemini-2.0-flash',
-    'gemini-2.0-flash-lite',
-    'gemini-1.5-pro',
-    'gemini-1.5-flash',
-  ];
-
-  const OPENAI_MODELS = [
-    'gpt-4.1',
-    'gpt-4.1-mini',
-    'gpt-4.1-nano',
-    'gpt-4o',
-    'gpt-4o-mini',
-    'gpt-4-turbo',
-    'o1',
-    'o1-mini',
-    'o1-pro',
-    'o3',
-    'o3-mini',
-    'o4-mini',
-  ];
-
-  const OLLAMA_MODELS = ['qwen3', 'qwen3:4b', 'llama3.1', 'mistral', 'deepseek-r1'];
-
   const isCurrentRequest = (controller?: AbortController | null) => {
     if (this.modelsFetchSeq !== requestId) return false;
     if (!controller) return true;
     return this.modelsFetchController === controller;
   };
-  const applyModels = (models: string[]) => {
+  const defaultSourceFamily = this.resolveModelFamilyBySource(provider, customEndpoint);
+  const applyModels = (models: string[], sourceFamily = defaultSourceFamily) => {
     if (!isCurrentRequest()) return;
-    this.populateModelSelect(models, currentModel);
+    this.populateModelSelect(models, currentModel, sourceFamily);
   };
+  const hasConnectionForSource = (() => {
+    if (provider === 'ollama') {
+      return Boolean(customEndpoint);
+    }
+    if (provider === 'custom') {
+      if (!customEndpoint) return false;
+      if (this.isLikelyOllamaEndpoint(customEndpoint)) return true;
+      return Boolean(apiKey);
+    }
+    if (provider === 'openai' || provider === 'anthropic' || provider === 'google' || provider === 'kimi') {
+      return Boolean(apiKey);
+    }
+    return Boolean(apiKey || customEndpoint);
+  })();
+  if (!hasConnectionForSource) {
+    applyModels([]);
+    return;
+  }
   const createController = () => {
     const controller = new AbortController();
     this.modelsFetchController = controller;
     return controller;
   };
-
-  if (provider === 'anthropic') {
-    applyModels(ANTHROPIC_MODELS);
-    return;
-  }
-
-  if (provider === 'google') {
-    applyModels(GOOGLE_MODELS);
-    return;
-  }
-
-  if (provider === 'ollama') {
-    // Tentar buscar modelos da API do Ollama
+  const fetchOllamaModels = async (endpoint: string) => {
     const controller = createController();
     try {
-      const endpoint = customEndpoint || 'http://localhost:11434';
       const baseUrl = endpoint.replace(/\/$/, '');
       const response = await fetch(`${baseUrl}/api/tags`, { signal: controller.signal });
-
       if (!isCurrentRequest(controller)) return;
-
-      if (response.ok) {
-        const data = await response.json();
-        if (!isCurrentRequest(controller)) return;
-        const models = (data.models || [])
-          .map((m: any) => m.name)
-          .filter(Boolean)
-          .sort();
-
-        if (models.length > 0) {
-          applyModels(models);
-          return;
-        }
+      if (!response.ok) {
+        applyModels([], 'Ollama');
+        return;
       }
-    } catch (e) {
-      if ((e as { name?: string })?.name === 'AbortError') return;
-      // Silenciosamente falha para o fallback
+      const data = await response.json();
+      if (!isCurrentRequest(controller)) return;
+      const models = (data.models || [])
+        .map((m: any) => m.name)
+        .filter(Boolean)
+        .sort();
+      applyModels(models, 'Ollama');
+    } catch (error) {
+      if ((error as { name?: string })?.name === 'AbortError') return;
+      applyModels([], 'Ollama');
     } finally {
       if (isCurrentRequest(controller)) {
         this.modelsFetchController = null;
       }
     }
+  };
 
-    if (!isCurrentRequest()) return;
-    // Fallback: lista hardcoded se a API nao responder
-    applyModels([currentModel || OLLAMA_MODELS[0], ...OLLAMA_MODELS]);
+  if (provider === 'anthropic') {
+    // Anthropic does not expose a stable public model-list endpoint for this flow.
+    // Keep only the user-configured model instead of guessing a static catalog.
+    applyModels(currentModel ? [currentModel] : [], 'Anthropic');
+    return;
+  }
+
+  if (provider === 'google') {
+    // Same approach as Anthropic: no static guesses.
+    applyModels(currentModel ? [currentModel] : [], 'Google');
+    return;
+  }
+
+  if (provider === 'ollama' || (provider === 'custom' && this.isLikelyOllamaEndpoint(customEndpoint))) {
+    void fetchOllamaModels(customEndpoint || 'http://localhost:11434');
     return;
   }
 
   if (provider === 'kimi') {
-    applyModels([currentModel || 'kimi-for-coding']);
-    return;
-  }
-
-  if (provider === 'openai' && !customEndpoint) {
-    applyModels(OPENAI_MODELS);
-    return;
-  }
-
-  if (!apiKey && provider === 'custom') {
-    applyModels([currentModel || 'gpt-4o']);
+    // Kimi flow is anthropic-compatible; keep current configured model only.
+    applyModels(currentModel ? [currentModel] : [], 'Kimi');
     return;
   }
 
   let baseUrl = '';
-  if (customEndpoint) {
+  if (provider === 'custom' && customEndpoint) {
     baseUrl = customEndpoint
       .replace(/\/chat\/completions\/?$/i, '')
       .replace(/\/completions\/?$/i, '')
@@ -167,10 +207,11 @@ import { SidePanelUI } from './panel-ui.js';
   }
 
   if (!baseUrl) {
-    applyModels([currentModel || 'gpt-4o']);
+    applyModels(currentModel ? [currentModel] : []);
     return;
   }
 
+  const sourceFamilyForEndpoint = this.resolveModelFamilyBySource(provider, baseUrl);
   const modelsUrl = `${baseUrl}/v1/models`;
   const controller = createController();
 
@@ -187,7 +228,7 @@ import { SidePanelUI } from './panel-ui.js';
     if (!isCurrentRequest(controller)) return;
 
     if (!response.ok) {
-      applyModels([currentModel || 'gpt-4o']);
+      applyModels(currentModel ? [currentModel] : [], sourceFamilyForEndpoint);
       return;
     }
 
@@ -207,13 +248,13 @@ import { SidePanelUI } from './panel-ui.js';
     const models = [...activeModels, ...inactiveModels].filter(Boolean);
 
     if (models.length > 0) {
-      applyModels(models);
+      applyModels(models, sourceFamilyForEndpoint);
     } else {
-      applyModels([currentModel || 'gpt-4o']);
+      applyModels(currentModel ? [currentModel] : [], sourceFamilyForEndpoint);
     }
   } catch (_error) {
     if ((_error as { name?: string })?.name === 'AbortError') return;
-    applyModels([currentModel || 'gpt-4o']);
+    applyModels(currentModel ? [currentModel] : [], sourceFamilyForEndpoint);
   } finally {
     if (isCurrentRequest(controller)) {
       this.modelsFetchController = null;
@@ -224,6 +265,7 @@ import { SidePanelUI } from './panel-ui.js';
 (SidePanelUI.prototype as any).populateModelSelect = function populateModelSelect(
   models: string[],
   currentModel?: string,
+  sourceFamily?: string,
 ) {
   let select = this.elements.modelSelect;
   if (!select) {
@@ -239,11 +281,10 @@ import { SidePanelUI } from './panel-ui.js';
 
   const config = this.configs[this.currentConfig] || {};
   const selectedModel = currentModel || config.model || '';
+  const normalizedSourceFamily = String(sourceFamily || '').trim();
 
   const normalizedModels = models.filter((model) => Boolean(model && model.trim?.())) as string[];
-  const fallbackModel = selectedModel || 'gpt-4o';
-
-  let finalModels = normalizedModels.length > 0 ? normalizedModels : [fallbackModel];
+  let finalModels = normalizedModels.length > 0 ? normalizedModels : [];
   if (selectedModel && !finalModels.includes(selectedModel)) {
     finalModels = [selectedModel, ...finalModels];
   }
@@ -263,6 +304,9 @@ import { SidePanelUI } from './panel-ui.js';
     const option = document.createElement('option');
     option.value = model;
     option.textContent = model;
+    if (normalizedSourceFamily) {
+      option.dataset.modelFamily = normalizedSourceFamily;
+    }
     if (model === selectedModel) {
       option.selected = true;
     }
@@ -285,24 +329,9 @@ import { SidePanelUI } from './panel-ui.js';
   valueEl.textContent = text;
 };
 
-(SidePanelUI.prototype as any).inferModelFamily = function inferModelFamily(modelId: string) {
-  const value = (modelId || '').toLowerCase();
-  if (!value) return 'Modelo';
-  if (value.startsWith('gpt') || value.startsWith('o1') || value.startsWith('o3') || value.startsWith('o4')) {
-    return 'OpenAI';
-  }
-  if (value.startsWith('claude')) return 'Anthropic';
-  if (value.startsWith('gemini')) return 'Google';
-  if (value.startsWith('kimi')) return 'Kimi';
-  if (
-    value.includes('llama') ||
-    value.includes('qwen') ||
-    value.includes('mistral') ||
-    value.includes('deepseek')
-  ) {
-    return 'Local';
-  }
-  return 'Personalizado';
+(SidePanelUI.prototype as any).inferModelFamily = function inferModelFamily(_modelId: string) {
+  const sourceContext = this.getModelSourceContext();
+  return this.resolveModelFamilyBySource(sourceContext.provider, sourceContext.customEndpoint);
 };
 
 (SidePanelUI.prototype as any).getVisibleModelOptions = function getVisibleModelOptions() {
@@ -368,12 +397,21 @@ import { SidePanelUI } from './panel-ui.js';
 
   const grouped = new Map<string, HTMLOptionElement[]>();
   for (const option of options) {
-    const family = this.inferModelFamily(option.value);
+    const family = option.dataset.modelFamily || this.inferModelFamily(option.value);
     if (!grouped.has(family)) grouped.set(family, []);
     grouped.get(family)?.push(option);
   }
 
-  const preferredOrder = ['OpenAI', 'Anthropic', 'Google', 'Kimi', 'Local', 'Personalizado', 'Modelo'];
+  const preferredOrder = [
+    'OpenAI',
+    'Anthropic',
+    'Google',
+    'Kimi',
+    'Ollama',
+    'OpenRouter',
+    'Custom',
+    'Modelo',
+  ];
   const dynamicFamilies = Array.from(grouped.keys())
     .filter((family) => !preferredOrder.includes(family))
     .sort((a, b) => a.localeCompare(b));

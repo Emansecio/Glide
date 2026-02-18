@@ -1,6 +1,25 @@
 import { SidePanelUI } from './panel-ui.js';
 
 const DEFAULT_LOCAL_API_ENDPOINT = 'http://localhost:11434';
+const DEFAULT_KIMI_API_ENDPOINT = 'https://api.kimi.com/coding';
+
+const normalizeProfileEndpoint = (profile: Record<string, any> = {}) => {
+  const provider = String(profile.provider || 'openai').toLowerCase();
+  const endpoint = String(profile.customEndpoint || '').trim();
+
+  if (provider === 'ollama') {
+    return endpoint || DEFAULT_LOCAL_API_ENDPOINT;
+  }
+  if (provider === 'kimi') {
+    return endpoint || DEFAULT_KIMI_API_ENDPOINT;
+  }
+  if (provider === 'custom') {
+    return endpoint;
+  }
+
+  // Cloud/native providers should not carry legacy local/custom endpoints.
+  return '';
+};
 
 (SidePanelUI.prototype as any).toggleSettings = async function toggleSettings(saveOnClose = true) {
   const isOpen = this.elements.settingsPanel ? !this.elements.settingsPanel.classList.contains('hidden') : false;
@@ -69,9 +88,9 @@ const DEFAULT_LOCAL_API_ENDPOINT = 'http://localhost:11434';
       const isOtherProviderUrl = currentValue &&
         (currentValue.includes('openrouter') || currentValue === DEFAULT_LOCAL_API_ENDPOINT);
       if (!currentValue || isOtherProviderUrl) {
-        this.elements.customEndpoint.value = 'https://api.kimi.com/coding';
+        this.elements.customEndpoint.value = DEFAULT_KIMI_API_ENDPOINT;
       }
-      this.elements.customEndpoint.placeholder = 'https://api.kimi.com/coding';
+      this.elements.customEndpoint.placeholder = DEFAULT_KIMI_API_ENDPOINT;
     } else if (requiresEndpoint) {
       // Para provider custom, limpar o valor se for de outro provider conhecido
       const currentValue = this.elements.customEndpoint.value;
@@ -133,7 +152,8 @@ const DEFAULT_LOCAL_API_ENDPOINT = 'http://localhost:11434';
 (SidePanelUI.prototype as any).toggleProfileEditorEndpoint = function toggleProfileEditorEndpoint() {
   if (!this.elements.profileEditorEndpointGroup) return;
   const provider = this.elements.profileEditorProvider?.value;
-  this.elements.profileEditorEndpointGroup.style.display = provider === 'custom' || provider === 'kimi' ? 'block' : 'none';
+  this.elements.profileEditorEndpointGroup.style.display =
+    provider === 'custom' || provider === 'kimi' || provider === 'ollama' ? 'block' : 'none';
 };
 
 (SidePanelUI.prototype as any).switchSettingsTab = function switchSettingsTab(
@@ -190,7 +210,7 @@ const DEFAULT_LOCAL_API_ENDPOINT = 'http://localhost:11434';
     provider: 'openai',
     apiKey: '',
     model: 'gpt-4o',
-    customEndpoint: DEFAULT_LOCAL_API_ENDPOINT,
+    customEndpoint: '',
     systemPrompt: this.getDefaultSystemPrompt(),
     temperature: 0.7,
     maxTokens: 4096,
@@ -210,7 +230,15 @@ const DEFAULT_LOCAL_API_ENDPOINT = 'http://localhost:11434';
     default: { ...baseConfig, ...(storedConfigs.default || {}) },
     ...storedConfigs,
   };
-  if (!this.configs.default.customEndpoint) {
+  Object.keys(this.configs).forEach((name) => {
+    const profile = this.configs[name] || {};
+    this.configs[name] = {
+      ...profile,
+      provider: profile.provider || 'openai',
+      customEndpoint: normalizeProfileEndpoint(profile),
+    };
+  });
+  if (this.configs.default.provider === 'ollama' && !this.configs.default.customEndpoint) {
     this.configs.default.customEndpoint = DEFAULT_LOCAL_API_ENDPOINT;
   }
   this.currentConfig = this.configs[settings.activeConfig] ? settings.activeConfig : 'default';
@@ -377,11 +405,24 @@ const DEFAULT_LOCAL_API_ENDPOINT = 'http://localhost:11434';
 
 (SidePanelUI.prototype as any).collectCurrentFormProfile = function collectCurrentFormProfile() {
   const current = this.configs[this.currentConfig] || {};
+  const provider = this.elements.provider?.value || current.provider || 'openai';
+  const endpointInput = this.elements.customEndpoint?.value?.trim() || '';
+  const fallbackEndpoint = String(current.customEndpoint || '').trim();
+
+  let customEndpoint = '';
+  if (provider === 'ollama') {
+    customEndpoint = endpointInput || fallbackEndpoint || DEFAULT_LOCAL_API_ENDPOINT;
+  } else if (provider === 'kimi') {
+    customEndpoint = endpointInput || fallbackEndpoint || DEFAULT_KIMI_API_ENDPOINT;
+  } else if (provider === 'custom') {
+    customEndpoint = endpointInput;
+  }
+
   return {
-    provider: this.elements.provider?.value || current.provider || 'openai',
+    provider,
     apiKey: this.elements.apiKey?.value || current.apiKey || '',
     model: this.elements.model?.value || current.model || 'gpt-4o',
-    customEndpoint: this.elements.customEndpoint?.value || current.customEndpoint || DEFAULT_LOCAL_API_ENDPOINT,
+    customEndpoint,
     systemPrompt: this.elements.systemPrompt?.value || current.systemPrompt || '',
     temperature: Number.parseFloat(this.elements.temperature?.value) || current.temperature || 0.7,
     maxTokens: Number.parseInt(this.elements.maxTokens?.value) || current.maxTokens || 4096,
@@ -411,11 +452,21 @@ const DEFAULT_LOCAL_API_ENDPOINT = 'http://localhost:11434';
 
 (SidePanelUI.prototype as any).persistAllSettings = async function persistAllSettings({ silent = false } = {}) {
   const activeProfile = this.configs[this.currentConfig] || {};
+  const normalizedEndpoint = normalizeProfileEndpoint(activeProfile);
+  const normalizedConfigs = Object.fromEntries(
+    Object.entries(this.configs || {}).map(([name, profile]) => [
+      name,
+      {
+        ...(profile as Record<string, any>),
+        customEndpoint: normalizeProfileEndpoint(profile as Record<string, any>),
+      },
+    ]),
+  );
   const payload = {
     provider: activeProfile.provider || 'openai',
     apiKey: activeProfile.apiKey || '',
     model: activeProfile.model || 'gpt-4o',
-    customEndpoint: activeProfile.customEndpoint || '',
+    customEndpoint: normalizedEndpoint,
     systemPrompt: activeProfile.systemPrompt || this.getDefaultSystemPrompt(),
     temperature: activeProfile.temperature ?? 0.7,
     maxTokens: activeProfile.maxTokens || 4096,
@@ -437,8 +488,9 @@ const DEFAULT_LOCAL_API_ENDPOINT = 'http://localhost:11434';
     allowedDomains: this.elements.allowedDomains?.value || '',
     auxAgentProfiles: this.auxAgentProfiles,
     activeConfig: this.currentConfig,
-    configs: this.configs,
+    configs: normalizedConfigs,
   };
+  this.configs = normalizedConfigs;
   await chrome.storage.local.set(payload);
   this.updateContextUsage();
   if (!silent) {

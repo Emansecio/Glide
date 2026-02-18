@@ -62,6 +62,15 @@ Chunk do streaming.
 }
 ```
 
+#### assistant_stream_stop
+Fim do streaming de resposta.
+
+```typescript
+{
+  type: 'assistant_stream_stop';
+}
+```
+
 #### assistant_final
 Resposta final completa.
 
@@ -314,6 +323,10 @@ this.updateModelDisplay();
 // Buscar modelos disponíveis
 await this.fetchAvailableModels();
 ```
+
+Comportamento do seletor custom:
+- As opções são agrupadas por família (`OpenAI`, `Anthropic`, `Google`, `Kimi`, etc.).
+- Quando o provider ativo é `ollama`, todos os modelos são agrupados na família `Ollama`.
 
 ## Types
 

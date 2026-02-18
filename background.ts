@@ -48,6 +48,40 @@ const mapScreenshotQuality = (value: unknown) => {
   return 90;
 };
 
+const DEFAULT_LOCAL_API_ENDPOINT = 'http://localhost:11434';
+const DEFAULT_KIMI_API_ENDPOINT = 'https://api.kimi.com/coding';
+
+const isLikelyOllamaEndpoint = (endpoint: unknown) => {
+  const value = String(endpoint || '').toLowerCase();
+  if (!value) return false;
+  return value.includes('localhost:11434') || value.includes(':11434') || value.includes('ollama');
+};
+
+const normalizeEndpointForProvider = (provider: unknown, endpoint: unknown) => {
+  const normalizedProvider = String(provider || 'openai').toLowerCase();
+  const normalizedEndpoint = String(endpoint || '').trim();
+  if (normalizedProvider === 'ollama') {
+    return normalizedEndpoint || DEFAULT_LOCAL_API_ENDPOINT;
+  }
+  if (normalizedProvider === 'kimi') {
+    return normalizedEndpoint || DEFAULT_KIMI_API_ENDPOINT;
+  }
+  if (normalizedProvider === 'custom') {
+    return normalizedEndpoint;
+  }
+  return '';
+};
+
+const profileRequiresApiKey = (profile: Record<string, any>) => {
+  const provider = String(profile?.provider || '').toLowerCase();
+  const endpoint = String(profile?.customEndpoint || '').toLowerCase();
+  if (provider === 'ollama') return false;
+  if ((provider === 'custom' || provider === 'openai') && isLikelyOllamaEndpoint(endpoint)) {
+    return false;
+  }
+  return true;
+};
+
 class BackgroundService {
   browserTools: BrowserTools;
   currentSettings: Record<string, any> | null;
@@ -98,32 +132,48 @@ class BackgroundService {
       }],
     }).catch((e) => console.warn('Failed to set Kimi UA rule:', e));
 
-    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-      this.handleMessage(message, sender, sendResponse);
-      return true;
-    });
+    chrome.runtime.onMessage.addListener((message, sender, sendResponse) =>
+      this.handleMessage(message, sender, sendResponse),
+    );
   }
 
-  async handleMessage(message, sender, sendResponse) {
+  handleMessage(message, sender, sendResponse) {
     try {
       switch (message.type) {
-        case 'user_message':
-          await this.processUserMessage(
+        case 'user_message': {
+          sendResponse?.({ success: true, queued: true });
+          void this.processUserMessage(
             message.message,
             message.conversationHistory,
             message.selectedTabs || [],
             message.sessionId || `session-${Date.now()}`,
-          );
-          break;
+          ).catch((error) => {
+            console.error('Error processing user_message:', error);
+            this.sendToSidePanel({
+              type: 'error',
+              message: error?.message || String(error),
+            });
+          });
+          return false;
+        }
 
         case 'execute_tool': {
-          const result = await this.browserTools.executeTool(message.tool, message.args);
-          sendResponse({ success: true, result });
-          break;
+          void this.browserTools
+            .executeTool(message.tool, message.args)
+            .then((result) => sendResponse?.({ success: true, result }))
+            .catch((error) =>
+              sendResponse?.({
+                success: false,
+                error: error?.message || String(error),
+              }),
+            );
+          return true;
         }
 
         default:
           console.warn('Unknown message type:', message.type);
+          sendResponse?.({ success: false, error: `Unknown message type: ${message.type}` });
+          return false;
       }
     } catch (error) {
       console.error('Error handling message:', error);
@@ -131,7 +181,8 @@ class BackgroundService {
         type: 'error',
         message: error.message,
       });
-      sendResponse({ success: false, error: error.message });
+      sendResponse?.({ success: false, error: error.message });
+      return false;
     }
   }
 
@@ -188,15 +239,6 @@ class BackgroundService {
       if (settings.allowedDomains === undefined) settings.allowedDomains = '';
       if (!Array.isArray(settings.auxAgentProfiles)) settings.auxAgentProfiles = [];
 
-      // Ollama nao requer API key (acesso local sem autenticacao)
-      if (!settings.apiKey && settings.provider !== 'ollama') {
-        this.sendRuntime(runMeta, {
-          type: 'run_error',
-          message: 'Please configure your API key in settings',
-        });
-        return;
-      }
-
       this.currentSettings = settings;
       this.currentPlan = null;
       this.subAgentCount = 0;
@@ -227,6 +269,15 @@ class BackgroundService {
         : activeProfile;
       const visionProfile =
         settings.visionBridge !== false ? this.resolveProfile(settings, visionProfileName || activeProfileName) : null;
+
+      const activeModelProfileName = orchestratorEnabled ? orchestratorProfileName : activeProfileName;
+      if (profileRequiresApiKey(orchestratorProfile) && !orchestratorProfile.apiKey) {
+        this.sendRuntime(runMeta, {
+          type: 'run_error',
+          message: `Please configure your API key for profile "${activeModelProfileName}"`,
+        });
+        return;
+      }
 
       const tools = this.getToolsForSession(settings, orchestratorEnabled, teamProfiles);
 
@@ -1137,7 +1188,13 @@ Before your next tool call, verify:
       enableScreenshots: settings.enableScreenshots,
     };
     const profile = settings.configs && settings.configs[name] ? settings.configs[name] : {};
-    return { ...base, ...profile };
+    const merged = { ...base, ...profile };
+    const normalizedProvider = String(merged.provider || 'openai').toLowerCase();
+    return {
+      ...merged,
+      provider: normalizedProvider,
+      customEndpoint: normalizeEndpointForProvider(normalizedProvider, merged.customEndpoint),
+    };
   }
 
   resolveTeamProfiles(settings: Record<string, any>) {

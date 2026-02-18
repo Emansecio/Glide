@@ -1,6 +1,20 @@
 ﻿import { dedupeThinking } from '../../ai/message-utils.js';
 import { SidePanelUI } from './panel-ui.js';
 
+(SidePanelUI.prototype as any).formatToolErrorMessage = function formatToolErrorMessage(
+  toolName: string,
+  result: any,
+) {
+  const code = String(result?.code || '');
+  if (code === 'NO_EXECUTABLE_TAB') {
+    return `${toolName}: Nenhuma aba web acessivel (http/https) foi encontrada. Abra o site alvo e tente novamente.`;
+  }
+  if (code === 'TAB_INACCESSIBLE') {
+    return `${toolName}: A aba selecionada e restrita e nao pode ser automatizada.`;
+  }
+  return `${toolName}: ${result?.error || 'Falha na execucao da ferramenta'}`;
+};
+
 (SidePanelUI.prototype as any).displayToolExecution = function displayToolExecution(
   toolName: string,
   args: any,
@@ -37,7 +51,7 @@ import { SidePanelUI } from './panel-ui.js';
     this.updateToolMessage(entry, result);
     const isError = result && (result.error || result.success === false);
     if (isError) {
-      this.showErrorBanner(`${toolName}: ${result.error || 'Falha na execucao da ferramenta'}`);
+      this.showErrorBanner(this.formatToolErrorMessage(toolName, result));
     }
   }
   this.updateActivityToggle();

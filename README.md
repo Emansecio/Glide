@@ -17,7 +17,7 @@ flowchart LR
   BG -->|chat| LLM[AI Provider]
   LLM -->|tool calls| BG
   BG -->|tool exec| Browser[Chrome APIs]
-  BG -->|assistant_response| UI
+  BG -->|assistant_stream_* + assistant_final| UI
 ```
 
 ## Providers Suportados
@@ -139,6 +139,7 @@ Acesse através do ícone de engrenagem no sidepanel:
 - **Provider**: Selecione o provedor de IA
 - **API Key**: Chave de API (não necessária para Ollama)
 - **Modelo**: Modelo a ser usado
+- **Seletor de modelo**: Dropdown agrupado por família; com provider `ollama`, todos os modelos aparecem em `Ollama`
 - **Endpoint Customizado**: URL da API (quando aplicável)
 - **Temperatura**: Criatividade das respostas (0-1)
 - **Max Tokens**: Limite de tokens por resposta
@@ -174,16 +175,16 @@ sequenceDiagram
   LLM-->>BG: stream delta
   BG-->>UI: assistant_stream delta
   LLM-->>BG: final response
-  BG-->>UI: assistant_response
+  BG-->>UI: assistant_stream_stop + assistant_final
 ```
 
 ## Qualidade
 
-Verificado em: 2026-01-21
+Verificado em: 2026-02-18
 
 | Check | Comando | Resultado |
 |-------|---------|-----------|
-| Unit tests | `npm run test:unit` | 31/31 passando |
+| Unit tests | `npm run test:unit` | 28/28 passando |
 
 ## Licença
 

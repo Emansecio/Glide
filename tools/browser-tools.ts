@@ -19,6 +19,13 @@ type GroupOptions = {
   color?: chrome.tabGroups.ColorEnum;
 };
 
+type TabResolution = {
+  tabId: number;
+  tab: chrome.tabs.Tab;
+  requestedTabId: number | null;
+  fallbackUsed: boolean;
+};
+
 // Maximum number of tabs allowed per session to prevent runaway tab creation
 const MAX_SESSION_TABS = 5;
 
@@ -313,6 +320,120 @@ export class BrowserTools {
     }
   }
 
+  private isHttpUrl(url: string | undefined | null) {
+    if (!url) return false;
+    return url.startsWith('http://') || url.startsWith('https://');
+  }
+
+  private isRestrictedUrl(url: string | undefined | null) {
+    if (!url) return false;
+    const value = String(url).toLowerCase();
+    return (
+      value.startsWith('chrome://') ||
+      value.startsWith('chrome-extension://') ||
+      value.startsWith('edge://') ||
+      value.startsWith('about:') ||
+      value.startsWith('devtools://')
+    );
+  }
+
+  private async safeGetTab(tabId: number) {
+    try {
+      return await chrome.tabs.get(tabId);
+    } catch {
+      return null;
+    }
+  }
+
+  private trackTab(tab: chrome.tabs.Tab | null | undefined) {
+    if (!tab || typeof tab.id !== 'number') return;
+    this.sessionTabs.set(tab.id, { id: tab.id, title: tab.title, url: tab.url });
+  }
+
+  private buildNoExecutableTabError(toolName: string, requestedTabId: number | null, candidates: chrome.tabs.Tab[]) {
+    const candidateUrls = candidates
+      .filter((tab): tab is chrome.tabs.Tab & { id: number } => typeof tab?.id === 'number')
+      .map((tab) => ({
+        tabId: tab.id,
+        url: tab.url || '',
+        title: tab.title || '',
+      }));
+    return {
+      success: false,
+      code: 'NO_EXECUTABLE_TAB',
+      error: `No accessible http(s) tab available for ${toolName}. Open a web page and try again.`,
+      details: {
+        tool: toolName,
+        requestedTabId,
+        candidateTabs: candidateUrls,
+      },
+    };
+  }
+
+  private attachResolutionMeta(result: Record<string, any>, resolution: TabResolution) {
+    if (!resolution.fallbackUsed) return result;
+    return {
+      ...result,
+      fallbackUsed: true,
+      requestedTabId: resolution.requestedTabId,
+      resolvedTabId: resolution.tabId,
+      resolvedUrl: resolution.tab.url || '',
+    };
+  }
+
+  private async resolveExecutableTab(args: Record<string, any> = {}, toolName = 'tool') {
+    const requestedTabId = typeof args.tabId === 'number' ? args.tabId : null;
+    const candidateIds: number[] = [];
+    const addCandidateId = (id: number | null | undefined) => {
+      if (typeof id === 'number' && !candidateIds.includes(id)) candidateIds.push(id);
+    };
+
+    addCandidateId(requestedTabId);
+    addCandidateId(this.currentSessionTabId);
+
+    const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    addCandidateId(activeTab?.id);
+
+    for (const id of this.sessionTabs.keys()) addCandidateId(id);
+    const windowTabs = await chrome.tabs.query({ currentWindow: true });
+    for (const tab of windowTabs) addCandidateId(tab.id);
+
+    const candidates: chrome.tabs.Tab[] = [];
+    let selected: chrome.tabs.Tab | null = null;
+    let selectedIndex = -1;
+
+    for (let i = 0; i < candidateIds.length; i += 1) {
+      const tab = await this.safeGetTab(candidateIds[i]);
+      if (!tab) continue;
+      this.trackTab(tab);
+      candidates.push(tab);
+      if (!selected && this.isHttpUrl(tab.url)) {
+        selected = tab;
+        selectedIndex = i;
+      }
+    }
+
+    if (!selected || typeof selected.id !== 'number') {
+      return {
+        ok: false as const,
+        result: this.buildNoExecutableTabError(toolName, requestedTabId, candidates),
+      };
+    }
+
+    const fallbackUsed = selectedIndex > 0 || (requestedTabId !== null && requestedTabId !== selected.id);
+    this.currentSessionTabId = selected.id;
+    this.trackTab(selected);
+    return {
+      ok: true as const,
+      resolution: {
+        tabId: selected.id,
+        tab: selected,
+        requestedTabId,
+        fallbackUsed,
+      } as TabResolution,
+    };
+  }
+
   private async resolveTabId(args: Record<string, any> = {}) {
     if (typeof args.tabId === 'number') return args.tabId;
     if (this.currentSessionTabId) return this.currentSessionTabId;
@@ -321,12 +442,30 @@ export class BrowserTools {
   }
 
   private async runInTab(tabId: number, func: (...args: any[]) => unknown, args: any[] = []): Promise<any> {
-    const results = await chrome.scripting.executeScript({
-      target: { tabId },
-      func,
-      args,
-    });
-    return results?.[0]?.result ?? null;
+    try {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId },
+        func,
+        args,
+      });
+      return results?.[0]?.result ?? null;
+    } catch (error) {
+      const message = error?.message || String(error) || 'Script execution failed.';
+      const normalized = message.toLowerCase();
+      if (
+        normalized.includes('cannot access contents of url') ||
+        normalized.includes('cannot access a chrome://') ||
+        normalized.includes('extensions gallery cannot be scripted')
+      ) {
+        return {
+          success: false,
+          code: 'TAB_INACCESSIBLE',
+          error: 'Cannot access the selected tab URL. Use an http(s) page.',
+          details: { tabId, reason: message },
+        };
+      }
+      throw error;
+    }
   }
 
   private async navigate(args: Record<string, any>) {
@@ -405,8 +544,9 @@ export class BrowserTools {
   private async focusTab(args: Record<string, any>) {
     const tabId = typeof args.tabId === 'number' ? args.tabId : null;
     if (!tabId) return { success: false, error: 'Missing tabId.' };
-    await chrome.tabs.update(tabId, { active: true });
+    const tab = await chrome.tabs.update(tabId, { active: true });
     this.currentSessionTabId = tabId;
+    this.trackTab(tab);
     return { success: true, tabId };
   }
 
@@ -422,8 +562,10 @@ export class BrowserTools {
   }
 
   private async click(args: Record<string, any>) {
-    const tabId = await this.resolveTabId(args);
-    if (!tabId) return { success: false, error: 'No active tab.' };
+    const resolved = await this.resolveExecutableTab(args, 'click');
+    if (!resolved.ok) return resolved.result;
+    const { resolution } = resolved;
+    const tabId = resolution.tabId;
     const selector = String(args.selector || '');
     const result = await this.runInTab(
       tabId,
@@ -435,12 +577,15 @@ export class BrowserTools {
       },
       [selector],
     );
-    return result || { success: false, error: 'Script execution failed.' };
+    const baseResult = result || { success: false, error: 'Script execution failed.' };
+    return this.attachResolutionMeta(baseResult, resolution);
   }
 
   private async type(args: Record<string, any>) {
-    const tabId = await this.resolveTabId(args);
-    if (!tabId) return { success: false, error: 'No active tab.' };
+    const resolved = await this.resolveExecutableTab(args, 'type');
+    if (!resolved.ok) return resolved.result;
+    const { resolution } = resolved;
+    const tabId = resolution.tabId;
     const selector = String(args.selector || '');
     const text = String(args.text ?? '');
     const result = await this.runInTab(
@@ -456,12 +601,15 @@ export class BrowserTools {
       },
       [selector, text],
     );
-    return result || { success: false, error: 'Script execution failed.' };
+    const baseResult = result || { success: false, error: 'Script execution failed.' };
+    return this.attachResolutionMeta(baseResult, resolution);
   }
 
   private async pressKey(args: Record<string, any>) {
-    const tabId = await this.resolveTabId(args);
-    if (!tabId) return { success: false, error: 'No active tab.' };
+    const resolved = await this.resolveExecutableTab(args, 'pressKey');
+    if (!resolved.ok) return resolved.result;
+    const { resolution } = resolved;
+    const tabId = resolution.tabId;
     const key = String(args.key || '');
     const selector = args.selector ? String(args.selector) : '';
     const result = await this.runInTab(
@@ -475,12 +623,15 @@ export class BrowserTools {
       },
       [key, selector],
     );
-    return result || { success: false, error: 'Script execution failed.' };
+    const baseResult = result || { success: false, error: 'Script execution failed.' };
+    return this.attachResolutionMeta(baseResult, resolution);
   }
 
   private async scroll(args: Record<string, any>) {
-    const tabId = await this.resolveTabId(args);
-    if (!tabId) return { success: false, error: 'No active tab.' };
+    const resolved = await this.resolveExecutableTab(args, 'scroll');
+    if (!resolved.ok) return resolved.result;
+    const { resolution } = resolved;
+    const tabId = resolution.tabId;
     const direction = String(args.direction || 'down');
     const amount = typeof args.amount === 'number' ? args.amount : 600;
     const result = await this.runInTab(
@@ -499,12 +650,15 @@ export class BrowserTools {
       },
       [direction, amount],
     );
-    return result || { success: false, error: 'Script execution failed.' };
+    const baseResult = result || { success: false, error: 'Script execution failed.' };
+    return this.attachResolutionMeta(baseResult, resolution);
   }
 
   private async getContent(args: Record<string, any>) {
-    const tabId = await this.resolveTabId(args);
-    if (!tabId) return { success: false, error: 'No active tab.' };
+    const resolved = await this.resolveExecutableTab(args, 'getContent');
+    if (!resolved.ok) return resolved.result;
+    const { resolution } = resolved;
+    const tabId = resolution.tabId;
     const type = String(args.type || args.mode || 'text');
     const selector = args.selector ? String(args.selector) : '';
     const maxChars = typeof args.maxChars === 'number' && args.maxChars > 0 ? args.maxChars : 8000;
@@ -669,13 +823,16 @@ export class BrowserTools {
       },
       [type, selector, maxChars],
     );
-    return result || { success: false, error: 'Script execution failed.' };
+    const baseResult = result || { success: false, error: 'Script execution failed.' };
+    return this.attachResolutionMeta(baseResult, resolution);
   }
 
   private async screenshot(args: Record<string, any>) {
-    const tabId = await this.resolveTabId(args);
-    if (!tabId) return { success: false, error: 'No active tab.' };
-    const tab = await chrome.tabs.get(tabId);
+    const resolved = await this.resolveExecutableTab(args, 'screenshot');
+    if (!resolved.ok) return resolved.result;
+    const { resolution } = resolved;
+    const tabId = resolution.tabId;
+    const tab = resolution.tab;
     const requestedFormat = String(args.format || 'jpeg').toLowerCase();
     const format = requestedFormat === 'png' ? 'png' : 'jpeg';
     const quality =
@@ -685,21 +842,21 @@ export class BrowserTools {
 
     if (format === 'png') {
       const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
-      return { success: true, dataUrl, format: 'png' };
+      return this.attachResolutionMeta({ success: true, dataUrl, format: 'png' }, resolution);
     }
 
     try {
       const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality });
-      return { success: true, dataUrl, format: 'jpeg', quality };
+      return this.attachResolutionMeta({ success: true, dataUrl, format: 'jpeg', quality }, resolution);
     } catch (error) {
       const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
-      return {
+      return this.attachResolutionMeta({
         success: true,
         dataUrl,
         format: 'png',
         fallbackFrom: 'jpeg',
         fallbackReason: error?.message || String(error),
-      };
+      }, resolution);
     }
   }
 

@@ -90,21 +90,21 @@ import { SidePanelUI } from './panel-ui.js';
   }
   if (this.elements.planStatus) {
     this.elements.planStatus.textContent = this.entitlement?.active
-      ? `Active${this.entitlement.renewsAt ? ` · Renews ${new Date(this.entitlement.renewsAt).toLocaleDateString()}` : ''}`
-      : 'No active plan';
+      ? `Ativo${this.entitlement.renewsAt ? ` - renova em ${new Date(this.entitlement.renewsAt).toLocaleDateString()}` : ''}`
+      : 'Nenhum plano ativo';
   }
 
   if (this.elements.accountBtn) {
     const label = accountRequired
       ? state === 'auth'
-        ? 'Signed out'
-        : this.authState?.email || 'Signed in'
-      : this.authState?.email || 'Account';
+        ? 'Desconectado'
+        : this.authState?.email || 'Conectado'
+      : this.authState?.email || 'Conta';
     this.elements.accountBtn.textContent = label;
   }
 
   if (this.elements.accountNavLabel) {
-    const navLabel = this.authState?.email || 'Account';
+    const navLabel = this.authState?.email || 'Conta';
     this.elements.accountNavLabel.textContent = navLabel;
   }
 
@@ -124,7 +124,7 @@ import { SidePanelUI } from './panel-ui.js';
     this.elements.chatInterface?.classList.add('hidden');
     this.elements.historyPanel?.classList.add('hidden');
     if (state !== 'ready') {
-      this.updateStatus(state === 'auth' ? 'Sign in required' : 'Subscription required', 'warning');
+      this.updateStatus(state === 'auth' ? 'Login necessario' : 'Assinatura necessaria', 'warning');
     }
   } else {
     this.switchView(this.currentView || 'chat');
@@ -138,8 +138,8 @@ import { SidePanelUI } from './panel-ui.js';
   }
   if (this.elements.authSubtitle) {
     this.elements.authSubtitle.textContent = apiConfigured
-      ? 'Sign in with your email to unlock billing and sync.'
-      : 'Set the account API base URL in Settings before signing in.';
+      ? 'Entre com seu email para liberar cobranca e sincronizacao.'
+      : 'Defina a URL base da API de conta em Configuracoes antes de entrar.';
   }
 };
 
@@ -163,8 +163,8 @@ import { SidePanelUI } from './panel-ui.js';
   const fallbackUrl = this.accountClient?.baseUrl ? `${this.accountClient.baseUrl}/portal` : '';
   const url = this.authState?.verificationUrl || fallbackUrl;
   if (!url) {
-    this.setAccessStatus('Set the account API base URL in Settings to open the account page.', 'warning');
-    this.updateStatus('No account page available yet.', 'warning');
+    this.setAccessStatus('Defina a URL base da API de conta em Configuracoes para abrir a pagina da conta.', 'warning');
+    this.updateStatus('Nenhuma pagina de conta disponivel ainda.', 'warning');
     this.openAccountSettings({ focusAccountApi: true });
     return;
   }
@@ -188,14 +188,14 @@ import { SidePanelUI } from './panel-ui.js';
     await this.persistAccessState();
     this.updateAccessUI();
     if (!silent) {
-      this.updateStatus('Account synced', 'success');
+      this.updateStatus('Conta sincronizada', 'success');
     }
   } catch (error: any) {
-    const message = error?.message || 'Unable to refresh account';
-    if (message.includes('Session expired') || message.includes('Missing access token')) {
+    const message = error?.message || 'Nao foi possivel atualizar a conta';
+    if (message.includes('Session expired') || message.includes('Sessao expirada') || message.includes('Missing access token') || message.includes('Token de acesso ausente')) {
       await this.signOut();
       if (!silent) {
-        this.updateStatus('Session expired. Please sign in again.', 'warning');
+        this.updateStatus('Sessao expirada. Entre novamente.', 'warning');
       }
       return;
     }
@@ -248,8 +248,8 @@ import { SidePanelUI } from './panel-ui.js';
   if (!this.ensureAccountApiBase()) return;
   const email = (this.elements.authEmail?.value || '').trim();
   if (!email) {
-    this.setAccessStatus('Enter your email to sign in.', 'warning');
-    this.updateStatus('Email is required to sign in', 'warning');
+    this.setAccessStatus('Digite seu email para entrar.', 'warning');
+    this.updateStatus('Email obrigatorio para entrar', 'warning');
     this.elements.authEmail?.focus();
     return;
   }
@@ -259,12 +259,12 @@ import { SidePanelUI } from './panel-ui.js';
   if (this.elements.authEmail) {
     this.elements.authEmail.disabled = true;
   }
-  this.setAccessStatus('Signing you in…');
+  this.setAccessStatus('Entrando...');
   try {
     const response = await this.accountClient.signInWithEmail(email);
     const accessToken = response?.accessToken || response?.token;
     if (!accessToken) {
-      throw new Error('Sign-in did not return an access token.');
+      throw new Error('O login nao retornou um token de acesso.');
     }
     this.authState = {
       status: 'signed_in',
@@ -276,11 +276,11 @@ import { SidePanelUI } from './panel-ui.js';
     await this.refreshAccountData({ silent: true });
     this.accessPanelVisible = true;
     this.updateAccessUI();
-    this.setAccessStatus('Signed in successfully.', 'success');
-    this.updateStatus('Signed in — subscription required', 'warning');
+    this.setAccessStatus('Login realizado com sucesso.', 'success');
+    this.updateStatus('Conectado - assinatura necessaria', 'warning');
   } catch (error: any) {
-    this.setAccessStatus(error.message || 'Unable to sign in', 'error');
-    this.updateStatus(error.message || 'Unable to sign in', 'error');
+    this.setAccessStatus(error.message || 'Nao foi possivel entrar', 'error');
+    this.updateStatus(error.message || 'Nao foi possivel entrar', 'error');
   } finally {
     if (this.elements.authStartBtn) {
       this.elements.authStartBtn.disabled = false;
@@ -294,52 +294,52 @@ import { SidePanelUI } from './panel-ui.js';
 (SidePanelUI.prototype as any).saveAccessToken = async function saveAccessToken() {
   const token = (this.elements.authTokenInput?.value || '').trim();
   if (!token) {
-    this.setAccessStatus('Paste an access token to continue.', 'warning');
-    this.updateStatus('Access token required', 'warning');
+    this.setAccessStatus('Cole um token de acesso para continuar.', 'warning');
+    this.updateStatus('Token de acesso obrigatorio', 'warning');
     this.elements.authTokenInput?.focus();
     return;
   }
   this.authState = {
     status: 'signed_in',
     accessToken: token,
-    email: this.authState?.email || 'Token user',
+    email: this.authState?.email || 'Usuario de token',
   };
   await this.persistAccessState();
   this.accessPanelVisible = true;
   this.updateAccessUI();
-  this.setAccessStatus('Access token saved.', 'success');
-  this.updateStatus('Signed in with token', 'success');
+  this.setAccessStatus('Token de acesso salvo.', 'success');
+  this.updateStatus('Conectado com token', 'success');
   this.elements.authTokenInput.value = '';
 };
 
 (SidePanelUI.prototype as any).startSubscription = async function startSubscription() {
   if (!this.ensureAccountApiBase()) return;
   if (!this.authState || this.authState.status !== 'signed_in') {
-    this.setAccessStatus('Sign in required before subscribing.', 'warning');
-    this.updateStatus('Sign in required before subscribing', 'warning');
+    this.setAccessStatus('Login necessario antes de assinar.', 'warning');
+    this.updateStatus('Login necessario antes de assinar', 'warning');
     return;
   }
   try {
     const response = await this.accountClient.createCheckout();
     if (response?.url) {
       this.openExternalUrl(response.url);
-      this.setAccessStatus('Checkout opened in a new tab.', 'success');
-      this.updateStatus('Checkout opened in a new tab', 'active');
+      this.setAccessStatus('Checkout aberto em nova aba.', 'success');
+      this.updateStatus('Checkout aberto em nova aba', 'active');
     } else {
-      this.setAccessStatus('Checkout link unavailable.', 'warning');
-      this.updateStatus('Checkout link unavailable', 'warning');
+      this.setAccessStatus('Link de checkout indisponivel.', 'warning');
+      this.updateStatus('Link de checkout indisponivel', 'warning');
     }
   } catch (error: any) {
-    this.setAccessStatus(error.message || 'Unable to start subscription', 'error');
-    this.updateStatus(error.message || 'Unable to start subscription', 'error');
+    this.setAccessStatus(error.message || 'Nao foi possivel iniciar a assinatura', 'error');
+    this.updateStatus(error.message || 'Nao foi possivel iniciar a assinatura', 'error');
   }
 };
 
 (SidePanelUI.prototype as any).manageBilling = function manageBilling() {
   if (!this.ensureAccountApiBase()) return;
   if (!this.authState || this.authState.status !== 'signed_in') {
-    this.setAccessStatus('Sign in required before opening billing.', 'warning');
-    this.updateStatus('Sign in required before opening billing', 'warning');
+    this.setAccessStatus('Login necessario antes de abrir cobranca.', 'warning');
+    this.updateStatus('Login necessario antes de abrir cobranca', 'warning');
     return;
   }
   this.accountClient
@@ -347,23 +347,23 @@ import { SidePanelUI } from './panel-ui.js';
     .then((response: any) => {
       if (response?.url) {
         this.openExternalUrl(response.url);
-        this.setAccessStatus('Billing portal opened in a new tab.', 'success');
-        this.updateStatus('Billing portal opened in a new tab', 'success');
+        this.setAccessStatus('Portal de cobranca aberto em nova aba.', 'success');
+        this.updateStatus('Portal de cobranca aberto em nova aba', 'success');
       } else {
-        this.setAccessStatus('Billing portal unavailable.', 'warning');
-        this.updateStatus('Billing portal unavailable', 'warning');
+        this.setAccessStatus('Portal de cobranca indisponivel.', 'warning');
+        this.updateStatus('Portal de cobranca indisponivel', 'warning');
       }
     })
     .catch((error: any) => {
-      this.setAccessStatus(error.message || 'Unable to open billing portal', 'error');
-      this.updateStatus(error.message || 'Unable to open billing portal', 'error');
+      this.setAccessStatus(error.message || 'Nao foi possivel abrir o portal de cobranca', 'error');
+      this.updateStatus(error.message || 'Nao foi possivel abrir o portal de cobranca', 'error');
     });
 };
 
 (SidePanelUI.prototype as any).ensureAccountApiBase = function ensureAccountApiBase() {
   if (this.accountClient?.baseUrl) return true;
-  this.setAccessStatus('Open Settings → Account & billing and add the account API base URL.', 'warning');
-  this.updateStatus('Account API base URL is not configured', 'warning');
+  this.setAccessStatus('Abra Configuracoes > Conta e cobranca e informe a URL base da API de conta.', 'warning');
+  this.updateStatus('URL base da API de conta nao configurada', 'warning');
   this.openAccountSettings({ focusAccountApi: true });
   return false;
 };
@@ -390,6 +390,6 @@ import { SidePanelUI } from './panel-ui.js';
   await this.persistAccessState();
   this.accessPanelVisible = true;
   this.updateAccessUI();
-  this.setAccessStatus('Signed out.', 'warning');
-  this.updateStatus('Signed out', 'warning');
+  this.setAccessStatus('Desconectado.', 'warning');
+  this.updateStatus('Desconectado', 'warning');
 };

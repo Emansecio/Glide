@@ -67,8 +67,8 @@ import { SidePanelUI } from './panel-ui.js';
   if (this.elements.planStepCount) {
     this.elements.planStepCount.textContent =
       completedCount === totalCount
-        ? `${totalCount} steps · Done`
-        : `${completedCount}/${totalCount} steps`;
+        ? `${totalCount} etapas - concluido`
+        : `${completedCount}/${totalCount} etapas`;
   }
 
   // Render checklist
@@ -108,7 +108,7 @@ import { SidePanelUI } from './panel-ui.js';
               ${!canCheck && !isDone ? 'disabled' : ''}
               data-action="toggle-step"
               data-step-index="${index}"
-              title="${isDone ? 'Completed' : canCheck ? 'Mark as done' : 'Complete previous steps first'}"
+              title="${isDone ? 'Concluido' : canCheck ? 'Marcar como concluido' : 'Conclua as etapas anteriores primeiro'}"
             >
               ${checkIcon}
             </button>
@@ -145,7 +145,7 @@ import { SidePanelUI } from './panel-ui.js';
 
   // Can only toggle if previous steps are done
   if (!previousStepsDone && step.status !== 'done') {
-    this.updateStatus('Complete previous steps first', 'warning');
+    this.updateStatus('Conclua as etapas anteriores primeiro', 'warning');
     return;
   }
 

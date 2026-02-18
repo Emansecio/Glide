@@ -1,171 +1,302 @@
-<div id="settingsTabGeneral" class="tab-panel" data-tab="general">
-    <!-- Quick Setup - Always visible, most important -->
+﻿<div id="settingsTabGeneral" class="tab-panel" data-tab="general">
     <div class="settings-quick-setup">
-        <h3 class="setup-title">🔑 Quick Setup</h3>
+        <h3 class="setup-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
+            </svg>
+            Configuração Rápida
+        </h3>
+
         <div class="form-group">
-            <label for="provider">Provider</label>
+            <label for="provider">Provedor</label>
             <select id="provider">
                 <option value="anthropic">Anthropic (Claude)</option>
                 <option value="openai">OpenAI</option>
                 <option value="google">Google (Gemini)</option>
-                <option value="kimi">Kimi (Coding)</option>
-                <option value="custom">Custom / OpenRouter</option>
+                <option value="ollama">Ollama (Local)</option>
+                <option value="kimi">Kimi (Programação)</option>
+                <option value="custom">Customizado / OpenRouter</option>
             </select>
         </div>
+
         <div class="form-group">
-            <label for="apiKey">API Key</label>
-            <input type="password" id="apiKey" placeholder="Enter your API key..." />
-            <small>Your key is stored locally and never sent to our servers.</small>
+            <label for="apiKey">Chave de API</label>
+            <input type="password" id="apiKey" placeholder="Insira sua chave de API..." />
+            <small>A chave é armazenada localmente no navegador.</small>
         </div>
+
         <div class="form-group">
-            <label for="model">Model</label>
-            <input type="text" id="model" placeholder="e.g., claude-sonnet-4-20250514" />
-            <small id="modelHint">Recommended: claude-sonnet-4-20250514</small>
+            <label for="model">Modelo</label>
+            <input type="text" id="model" placeholder="Selecione o provedor primeiro..." />
+            <small id="modelHint">Selecione um provedor para ver o modelo recomendado.</small>
         </div>
+
         <div class="form-group" id="customEndpointGroup">
-            <label for="customEndpoint">API URL <span class="optional-badge">(optional)</span></label>
-            <input type="text" id="customEndpoint" placeholder="https://openrouter.ai/api/v1" />
-            <small>Override the default API endpoint. Required for OpenRouter/custom providers.</small>
+            <label for="customEndpoint">URL da API <span class="optional-badge">(opcional)</span></label>
+            <input type="text" id="customEndpoint" placeholder="http://localhost:11434" />
+            <small>Use apenas quando precisar de endpoint customizado.</small>
         </div>
-        <button id="saveSettingsBtn" class="btn btn-primary" style="width: 100%; margin-top: 8px;">
-            Save Settings
-        </button>
+
+        <div class="settings-actions">
+            <button id="saveSettingsBtn" class="btn btn-primary">Salvar configurações</button>
+            <button id="cancelSettingsBtn" class="btn btn-secondary">Cancelar</button>
+        </div>
     </div>
 
-    <!-- Profiles Section -->
-    <details class="settings-section">
-        <summary>📋 Profiles</summary>
+    <details class="settings-section" open>
+        <summary>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                <circle cx="9" cy="7" r="4" />
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+            </svg>
+            Perfis
+        </summary>
         <div class="settings-body">
             <div class="form-group">
-                <label for="activeConfig">Active Profile</label>
+                <label for="activeConfig">Perfil ativo</label>
                 <div class="config-row">
                     <select id="activeConfig">
-                        <option value="default">Default</option>
+                        <option value="default">Padrão</option>
                     </select>
-                    <button id="newConfigBtn" class="btn btn-secondary">+ New</button>
+                    <button id="newConfigBtn" class="btn btn-secondary" type="button">Novo</button>
                 </div>
             </div>
-            <button id="deleteConfigBtn" class="btn btn-secondary" style="width: 100%;">Delete Profile</button>
+            <div class="form-group">
+                <label for="generalProfileSelect">Editar perfil</label>
+                <select id="generalProfileSelect">
+                    <option value="default">default</option>
+                </select>
+            </div>
+            <div class="settings-inline">
+                <button id="deleteConfigBtn" class="btn btn-secondary" type="button">Remover perfil</button>
+                <button id="openProfilesBtn" class="btn btn-secondary" type="button">Abrir aba Perfis</button>
+            </div>
         </div>
     </details>
 
-    <!-- Model Parameters -->
     <details class="settings-section">
-        <summary>⚙️ Model Parameters</summary>
+        <summary>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+            Parâmetros do modelo
+        </summary>
         <div class="settings-body">
             <div class="form-group">
-                <label for="temperature">Temperature: <span id="temperatureValue">0.7</span></label>
+                <label for="temperature">Temperatura: <span id="temperatureValue">0.7</span></label>
                 <input type="range" id="temperature" min="0" max="2" step="0.1" value="0.7" />
-                <small>Lower = more focused, Higher = more creative</small>
             </div>
             <div class="form-group">
-                <label for="maxTokens">Max Output Tokens</label>
+                <label for="maxTokens">Tokens máximos de saída</label>
                 <input type="number" id="maxTokens" value="4096" min="256" max="32000" />
             </div>
             <div class="form-group">
-                <label for="contextLimit">Context Limit</label>
+                <label for="contextLimit">Limite de contexto</label>
                 <input type="number" id="contextLimit" value="200000" min="4000" max="2000000" />
             </div>
+            <div class="form-group">
+                <label for="timeout">Timeout (ms)</label>
+                <input type="number" id="timeout" value="30000" min="5000" step="1000" />
+            </div>
         </div>
     </details>
 
-    <!-- Browser Settings -->
     <details class="settings-section">
-        <summary>🌐 Browser Controls</summary>
+        <summary>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="2" y1="12" x2="22" y2="12" />
+                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+            </svg>
+            Controles do navegador
+        </summary>
         <div class="settings-body">
             <div class="form-group">
-                <label for="enableScreenshots">Screenshots</label>
+                <label for="enableScreenshots">Capturas de tela</label>
                 <select id="enableScreenshots">
-                    <option value="true">Enabled</option>
-                    <option value="false">Disabled</option>
+                    <option value="true">Ativado</option>
+                    <option value="false">Desativado</option>
                 </select>
             </div>
             <div class="form-group">
-                <label for="sendScreenshotsAsImages">Send Screenshots as Images</label>
+                <label for="sendScreenshotsAsImages">Enviar captura como imagem</label>
                 <select id="sendScreenshotsAsImages">
-                    <option value="true">Yes (for vision models)</option>
-                    <option value="false">No (text description only)</option>
+                    <option value="true">Sim</option>
+                    <option value="false">Não</option>
                 </select>
             </div>
             <div class="form-group">
-                <label for="allowedDomains">Allowed Domains</label>
-                <input type="text" id="allowedDomains" placeholder="Leave empty for all domains" />
-                <small>Comma-separated list, e.g.: google.com, github.com</small>
-            </div>
-        </div>
-    </details>
-
-    <!-- Response Settings -->
-    <details class="settings-section">
-        <summary>💬 Response Settings</summary>
-        <div class="settings-body">
-            <div class="form-group">
-                <label for="streamResponses">Stream Responses</label>
-                <select id="streamResponses">
-                    <option value="true">Enabled</option>
-                    <option value="false">Disabled</option>
+                <label for="screenshotQuality">Qualidade da captura</label>
+                <select id="screenshotQuality">
+                    <option value="high">Alta</option>
+                    <option value="low">Baixa</option>
                 </select>
             </div>
             <div class="form-group">
-                <label for="showThinking">Show Reasoning</label>
-                <select id="showThinking">
-                    <option value="true">Show</option>
-                    <option value="false">Hide</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label for="saveHistory">Save History</label>
-                <select id="saveHistory">
-                    <option value="true">Enabled</option>
-                    <option value="false">Disabled</option>
-                </select>
-            </div>
-        </div>
-    </details>
-
-    <!-- Advanced Settings -->
-    <details class="settings-section">
-        <summary>🔧 Advanced</summary>
-        <div class="settings-body">
-            <div class="form-group">
-                <label for="useOrchestrator">Orchestrator Mode</label>
-                <select id="useOrchestrator">
-                    <option value="false">Disabled</option>
-                    <option value="true">Enabled</option>
-                </select>
-                <small>Use a separate model for orchestration</small>
-            </div>
-            <div class="form-group">
-                <label for="orchestratorProfile">Orchestrator Profile</label>
-                <select id="orchestratorProfile">
-                    <option value="">Same as main</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label for="visionProfile">Vision Profile</label>
-                <select id="visionProfile">
-                    <option value="">Same as main</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label for="visionBridge">Vision Bridge</label>
+                <label for="visionBridge">Ponte de visão</label>
                 <select id="visionBridge">
-                    <option value="true">Enabled</option>
-                    <option value="false">Disabled</option>
+                    <option value="true">Ativado</option>
+                    <option value="false">Desativado</option>
                 </select>
-                <small>Describe screenshots for non-vision models</small>
+            </div>
+            <div class="form-group">
+                <label for="visionProfile">Perfil de visão</label>
+                <select id="visionProfile">
+                    <option value="">Mesmo do perfil ativo</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="orchestratorToggle">Orquestrador</label>
+                <select id="orchestratorToggle">
+                    <option value="false">Desativado</option>
+                    <option value="true">Ativado</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="orchestratorProfile">Perfil do orquestrador</label>
+                <select id="orchestratorProfile">
+                    <option value="">Mesmo do perfil ativo</option>
+                </select>
             </div>
         </div>
     </details>
 
-    <!-- System Prompt -->
     <details class="settings-section">
-        <summary>📝 System Prompt</summary>
+        <summary>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            </svg>
+            Configurações de resposta
+        </summary>
         <div class="settings-body">
             <div class="form-group">
-                <label for="systemPrompt">Custom System Prompt</label>
-                <textarea id="systemPrompt" rows="6" placeholder="Leave empty for default..."></textarea>
-                <small>Override the default system prompt (advanced)</small>
+                <label for="streamResponses">Streaming de respostas</label>
+                <select id="streamResponses">
+                    <option value="true">Ativado</option>
+                    <option value="false">Desativado</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="showThinking">Mostrar raciocínio</label>
+                <select id="showThinking">
+                    <option value="true">Mostrar</option>
+                    <option value="false">Ocultar</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="autoScroll">Auto-scroll</label>
+                <select id="autoScroll">
+                    <option value="true">Ativado</option>
+                    <option value="false">Desativado</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="confirmActions">Confirmar ações sensíveis</label>
+                <select id="confirmActions">
+                    <option value="true">Ativado</option>
+                    <option value="false">Desativado</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="saveHistory">Salvar histórico</label>
+                <select id="saveHistory">
+                    <option value="true">Ativado</option>
+                    <option value="false">Desativado</option>
+                </select>
+            </div>
+        </div>
+    </details>
+
+    <details class="settings-section">
+        <summary>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M12 1v22M1 12h22" />
+            </svg>
+            Permissões de ferramentas
+        </summary>
+        <div class="settings-body">
+            <div class="form-group">
+                <label for="permissionRead">Leitura de página</label>
+                <select id="permissionRead">
+                    <option value="true">Permitido</option>
+                    <option value="false">Bloqueado</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="permissionInteract">Interação (click/type)</label>
+                <select id="permissionInteract">
+                    <option value="true">Permitido</option>
+                    <option value="false">Bloqueado</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="permissionNavigate">Navegação</label>
+                <select id="permissionNavigate">
+                    <option value="true">Permitido</option>
+                    <option value="false">Bloqueado</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="permissionTabs">Acesso a abas</label>
+                <select id="permissionTabs">
+                    <option value="true">Permitido</option>
+                    <option value="false">Bloqueado</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="permissionScreenshots">Capturas</label>
+                <select id="permissionScreenshots">
+                    <option value="true">Permitido</option>
+                    <option value="false">Bloqueado</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="allowedDomains">Domínios permitidos</label>
+                <input id="allowedDomains" type="text" placeholder="Ex.: github.com, docs.google.com" />
+                <small>Deixe em branco para permitir todos os domínios.</small>
+            </div>
+        </div>
+    </details>
+
+    <details class="settings-section" id="accountSettingsSection">
+        <summary>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                <circle cx="12" cy="7" r="4" />
+            </svg>
+            Conta e integração
+        </summary>
+        <div class="settings-body">
+            <div id="accountApiBaseGroup" class="form-group">
+                <label for="accountApiBase">Account API Base URL</label>
+                <input id="accountApiBase" type="text" placeholder="https://api.exemplo.com" />
+                <small>Necessário para login, assinatura e portal de cobrança.</small>
+            </div>
+            <div class="settings-actions">
+                <button id="exportSettingsBtn" class="btn btn-secondary" type="button">Exportar configurações</button>
+                <button id="importSettingsBtn" class="btn btn-secondary" type="button">Importar configurações</button>
+                <input id="importSettingsInput" type="file" accept="application/json" class="hidden" />
+            </div>
+        </div>
+    </details>
+
+    <details class="settings-section">
+        <summary>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+            </svg>
+            Prompt do sistema
+        </summary>
+        <div class="settings-body">
+            <div class="form-group">
+                <label for="systemPrompt">Prompt customizado</label>
+                <textarea id="systemPrompt" rows="8" placeholder="Deixe vazio para usar o padrão..."></textarea>
             </div>
         </div>
     </details>

@@ -1,4 +1,4 @@
-import { dedupeThinking } from '../../ai/message-utils.js';
+﻿import { dedupeThinking } from '../../ai/message-utils.js';
 import { SidePanelUI } from './panel-ui.js';
 
 (SidePanelUI.prototype as any).displayToolExecution = function displayToolExecution(
@@ -37,7 +37,7 @@ import { SidePanelUI } from './panel-ui.js';
     this.updateToolMessage(entry, result);
     const isError = result && (result.error || result.success === false);
     if (isError) {
-      this.showErrorBanner(`${toolName}: ${result.error || 'Tool execution failed'}`);
+      this.showErrorBanner(`${toolName}: ${result.error || 'Falha na execucao da ferramenta'}`);
     }
   }
   this.updateActivityToggle();
@@ -71,15 +71,15 @@ import { SidePanelUI } from './panel-ui.js';
   if (entry.details) {
     entry.details.classList.remove('running', 'success', 'error');
     entry.details.classList.add(isError ? 'error' : 'success');
-    if (entry.statusEl) entry.statusEl.textContent = isError ? 'Error' : 'Done';
+    if (entry.statusEl) entry.statusEl.textContent = isError ? 'Erro' : 'Concluido';
 
     if (entry.resultEl) {
       const resultText = this.truncateText(this.safeJsonStringify(result), 2000);
-      entry.resultEl.textContent = resultText || (isError ? 'Tool failed' : 'Done');
+      entry.resultEl.textContent = resultText || (isError ? 'Falha na ferramenta' : 'Concluido');
     }
 
     if (entry.previewEl) {
-      const preview = isError ? result?.error || 'Tool failed' : result?.message || result?.summary || '';
+      const preview = isError ? result?.error || 'Falha na ferramenta' : result?.message || result?.summary || '';
       if (preview) {
         entry.previewEl.textContent = this.truncateText(String(preview), 120);
       }
@@ -95,15 +95,15 @@ import { SidePanelUI } from './panel-ui.js';
     entry.container.classList.remove('running', 'success', 'error');
     entry.container.classList.add(isError ? 'error' : 'success');
   }
-  if (entry.statusEl) entry.statusEl.textContent = isError ? 'Error' : 'Done';
+  if (entry.statusEl) entry.statusEl.textContent = isError ? 'Erro' : 'Concluido';
 
   if (entry.resultEl) {
     const resultText = this.truncateText(this.safeJsonStringify(result), 2000);
-    entry.resultEl.textContent = resultText || (isError ? 'Tool failed' : 'Done');
+    entry.resultEl.textContent = resultText || (isError ? 'Falha na ferramenta' : 'Concluido');
   }
 
   if (entry.previewEl) {
-    const preview = isError ? result?.error || 'Tool failed' : result?.message || result?.summary || '';
+    const preview = isError ? result?.error || 'Falha na ferramenta' : result?.message || result?.summary || '';
     if (preview) {
       entry.previewEl.textContent = this.truncateText(String(preview), 120);
     }
@@ -112,7 +112,7 @@ import { SidePanelUI } from './panel-ui.js';
   if (isError && entry.container) {
     entry.container.classList.add('expanded');
     if (entry.toggleBtn) {
-      entry.toggleBtn.textContent = 'Hide';
+      entry.toggleBtn.textContent = 'Ocultar';
     }
   }
 
@@ -122,42 +122,37 @@ import { SidePanelUI } from './panel-ui.js';
 };
 
 (SidePanelUI.prototype as any).showErrorBanner = function showErrorBanner(message: string) {
-  // Remove any existing error banners to prevent stacking
   document.querySelectorAll('.error-banner').forEach((el) => el.remove());
 
   const banner = document.createElement('div');
   banner.className = 'error-banner';
   banner.innerHTML = `
-      <svg class="error-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <circle cx="12" cy="12" r="10"></circle>
-        <line x1="12" y1="8" x2="12" y2="12"></line>
-        <line x1="12" y1="16" x2="12.01" y2="16"></line>
+    <svg class="error-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <circle cx="12" cy="12" r="10"></circle>
+      <line x1="12" y1="8" x2="12" y2="12"></line>
+      <line x1="12" y1="16" x2="12.01" y2="16"></line>
+    </svg>
+    <span class="error-text">${this.escapeHtml(message)}</span>
+    <button class="error-dismiss" title="Fechar">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="18" y1="6" x2="6" y2="18"></line>
+        <line x1="6" y1="6" x2="18" y2="18"></line>
       </svg>
-      <span class="error-text">${this.escapeHtml(message)}</span>
-      <button class="error-dismiss" title="Dismiss">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <line x1="18" y1="6" x2="6" y2="18"></line>
-          <line x1="6" y1="6" x2="18" y2="18"></line>
-        </svg>
-      </button>
-    `;
+    </button>
+  `;
 
   const dismissButton = banner.querySelector('.error-dismiss');
   dismissButton?.addEventListener('click', () => banner.remove());
-
-  // Append to body for fixed positioning (toast style)
   document.body.appendChild(banner);
 
   setTimeout(() => banner.remove(), 8000);
 };
 
 (SidePanelUI.prototype as any).clearRunIncompleteBanner = function clearRunIncompleteBanner() {
-  // Remove all run-incomplete banners globally
   document.querySelectorAll('.run-incomplete-banner').forEach((el) => el.remove());
 };
 
 (SidePanelUI.prototype as any).clearErrorBanner = function clearErrorBanner() {
-  // Remove all error banners globally
   document.querySelectorAll('.error-banner').forEach((el) => el.remove());
 };
 
@@ -183,18 +178,17 @@ import { SidePanelUI } from './panel-ui.js';
   container.dataset.start = String(Date.now());
 
   const argsPreview = this.getArgsPreview(args);
-  const argsText = this.truncateText(this.safeJsonStringify(args), 1600);
 
   container.innerHTML = `
-      <span class="tool-tree-status"></span>
-      <div class="tool-tree-content">
-        <div class="tool-tree-header">
-          <span class="tool-tree-name">${this.escapeHtml(toolName || 'tool')}</span>
-          <span class="tool-tree-args">${this.escapeHtml(argsPreview || '')}</span>
-        </div>
-        <span class="tool-tree-meta">Running</span>
+    <span class="tool-tree-status"></span>
+    <div class="tool-tree-content">
+      <div class="tool-tree-header">
+        <span class="tool-tree-name">${this.escapeHtml(toolName || 'ferramenta')}</span>
+        <span class="tool-tree-args">${this.escapeHtml(argsPreview || '')}</span>
       </div>
-    `;
+      <span class="tool-tree-meta">Executando</span>
+    </div>
+  `;
 
   return {
     container,
@@ -213,9 +207,9 @@ import { SidePanelUI } from './panel-ui.js';
 
   if (entry.statusEl) {
     if (isError) {
-      entry.statusEl.textContent = 'Error';
+      entry.statusEl.textContent = 'Erro';
     } else {
-      entry.statusEl.textContent = dur > 0 ? `${dur}ms` : 'Done';
+      entry.statusEl.textContent = dur > 0 ? `${dur}ms` : 'Concluido';
     }
   }
 };
@@ -224,24 +218,24 @@ import { SidePanelUI } from './panel-ui.js';
   if (!this.elements.statusMeta) return;
   const labels: string[] = [];
   if (this.pendingToolCount > 0) {
-    labels.push(`${this.pendingToolCount} action${this.pendingToolCount > 1 ? 's' : ''} running`);
+    labels.push(`${this.pendingToolCount} acao${this.pendingToolCount > 1 ? 'es' : ''} em execucao`);
   }
   if (this.isStreaming) {
-    labels.push('Streaming response');
+    labels.push('Resposta em streaming');
   }
   if (this.contextUsage && this.contextUsage.maxContextTokens) {
     const used = Math.max(0, this.contextUsage.approxTokens || 0);
     const max = Math.max(1, this.contextUsage.maxContextTokens || 0);
     const usedLabel = used >= 10000 ? `${(used / 1000).toFixed(1)}k` : `${used}`;
     const maxLabel = max >= 10000 ? `${(max / 1000).toFixed(0)}k` : `${max}`;
-    labels.push(`Context ~ ${usedLabel} / ${maxLabel}`);
+    labels.push(`Contexto ~ ${usedLabel} / ${maxLabel}`);
   }
   const usageLabel = this.buildUsageLabel(this.lastUsage);
   if (usageLabel) {
     labels.push(usageLabel);
   }
   if (labels.length > 0) {
-    this.elements.statusMeta.textContent = labels.join(' · ');
+    this.elements.statusMeta.textContent = labels.join(' | ');
     this.elements.statusMeta.classList.remove('hidden');
   } else {
     this.elements.statusMeta.textContent = '';
@@ -257,15 +251,15 @@ import { SidePanelUI } from './panel-ui.js';
   const hasThinking = Boolean(this.latestThinking);
   const segments: string[] = [];
   if (toolCount > 0) {
-    segments.push(`${toolCount} tool${toolCount === 1 ? '' : 's'}`);
+    segments.push(`${toolCount} ferramenta${toolCount === 1 ? '' : 's'}`);
   }
   if (hasThinking) {
-    segments.push('thinking');
+    segments.push('raciocinio');
   }
   if (this.activeToolName) {
-    segments.push(`${this.activeToolName}…`);
+    segments.push(`${this.activeToolName}...`);
   }
-  toggle.textContent = segments.length ? `Activity · ${segments.join(' · ')}` : 'Activity';
+  toggle.textContent = segments.length ? `Atividade | ${segments.join(' | ')}` : 'Atividade';
   const hasActiveWork = this.pendingToolCount > 0 || this.isStreaming;
   toggle.classList.toggle('active', hasActiveWork);
 };
@@ -300,7 +294,7 @@ import { SidePanelUI } from './panel-ui.js';
     if (!isStreaming) {
       this.latestThinking = null;
     }
-    panel.textContent = isStreaming ? 'Thinking…' : 'No reasoning captured yet.';
+    panel.textContent = isStreaming ? 'Raciocinando...' : 'Sem raciocinio capturado ainda.';
     panel.classList.add('empty');
   }
   panel.classList.toggle('streaming', isStreaming);

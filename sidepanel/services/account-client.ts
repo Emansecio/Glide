@@ -24,7 +24,7 @@ export class AccountClient {
 
   async request(path: string, { method = 'GET', body, auth = false }: RequestOptions = {}): Promise<any> {
     if (!this.baseUrl) {
-      throw new Error('Account API base URL is not configured.');
+      throw new Error('URL base da API de conta nao configurada.');
     }
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -32,7 +32,7 @@ export class AccountClient {
     if (auth) {
       const token = this.getAuthToken();
       if (!token) {
-        throw new Error('Missing access token. Please sign in again.');
+        throw new Error('Token de acesso ausente. Entre novamente.');
       }
       headers.Authorization = `Bearer ${token}`;
     }
@@ -54,7 +54,7 @@ export class AccountClient {
     }
 
     if (!response.ok) {
-      const message = payload?.error || payload?.message || `Request failed (${response.status})`;
+      const message = payload?.error || payload?.message || `Falha na requisicao (${response.status})`;
       throw new Error(message);
     }
 

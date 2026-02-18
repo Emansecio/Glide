@@ -1,29 +1,30 @@
-/* Glide - Clean Dark Theme with Sidebar Layout */
-
 :root {
-  --background: hsl(30, 5%, 10.5%);
-  --foreground: #e8e4dd;
-  --muted: #9a9590;
-  --muted-dim: #6a6560;
-  --border: hsl(30, 5%, 20%);
-  --card: hsl(30, 5%, 12%);
-  --card-hover: hsl(30, 5%, 15%);
-  --success: hsl(142, 45%, 45%);
-  --warning: hsl(38, 85%, 55%);
-  --error: hsl(0, 60%, 55%);
-  --accent: hsl(270, 50%, 55%);
+  color-scheme: dark;
+  --background: #0b0b10;
+  --background-elevated: #11111a;
+  --foreground: #ececf2;
+  --muted: #a0a0b3;
+  --muted-dim: #6f6f85;
+  --border: #2a2a37;
+  --border-strong: #3b3b4b;
+  --card: #151520;
+  --card-hover: #1b1b28;
+  --success: #34d399;
+  --warning: #fbbf24;
+  --error: #ef4444;
+  --accent: #8b5cf6;
+  --accent-strong: #7c3aed;
 
-  --sidebar-width: 280px;
-  --topbar-height: 44px;
-  --radius: 10px;
-  --radius-sm: 6px;
+  --sidebar-width: 320px;
+  --radius-sm: 8px;
+  --radius: 12px;
+  --radius-lg: 18px;
+  --radius-full: 9999px;
 
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  --font-mono: "SF Mono", Monaco, monospace;
-
-  --mascot-fill: var(--card);
-  --mascot-stroke: var(--muted);
-  --mascot-detail: var(--accent);
+  --font-sans: 'Segoe UI Variable Display', 'Segoe UI Variable Text', 'Manrope', 'Segoe UI', system-ui, -apple-system,
+    sans-serif;
+  --font-mono: 'SFMono-Regular', Consolas, Menlo, monospace;
+  --font-mono-ui: 'JetBrains Mono', 'Cascadia Code', 'SFMono-Regular', Consolas, monospace;
 }
 
 *,
@@ -33,13 +34,16 @@
   margin: 0;
   padding: 0;
 }
+
 html,
 body {
   height: 100%;
   overflow: hidden;
 }
+
 body {
-  background: var(--background);
+  background: radial-gradient(circle at 50% -40%, rgba(139, 92, 246, 0.14) 0%, rgba(11, 11, 16, 0) 60%),
+    var(--background);
   color: var(--foreground);
   font-family: var(--font-sans);
   font-size: 13px;
@@ -48,8 +52,8 @@ body {
 }
 
 #appRoot {
-  height: 100%;
   width: 100%;
+  height: 100%;
 }
 
 #modalRoot {
@@ -61,28 +65,44 @@ button,
 input,
 select,
 textarea {
-  font-family: inherit;
-  font-size: inherit;
-  color: inherit;
   border: none;
   outline: none;
   background: none;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
 }
+
+select {
+  background-color: rgba(255, 255, 255, 0.03);
+  color: var(--foreground);
+}
+
+select option,
+select optgroup {
+  background-color: #12121b;
+  color: var(--foreground);
+}
+
 button {
   cursor: pointer;
 }
 
 ::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
 }
-::-webkit-scrollbar-track {
-  background: transparent;
-}
+
 ::-webkit-scrollbar-thumb {
   background: var(--border);
-  border-radius: 9999px;
+  border-radius: 999px;
 }
+
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--muted-dim);
+  background: var(--border-strong);
+}
+
+::selection {
+  background: rgba(139, 92, 246, 0.35);
+  color: #fff;
 }

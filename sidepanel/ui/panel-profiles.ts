@@ -1,10 +1,10 @@
 import { SidePanelUI } from './panel-ui.js';
 
 (SidePanelUI.prototype as any).createNewConfig = async function createNewConfig(name?: string) {
-  const trimmedName = (name || '').trim() || prompt('Enter profile name:') || '';
+  const trimmedName = (name || '').trim() || prompt('Digite o nome do perfil:') || '';
   if (!trimmedName) return;
   if (this.configs[trimmedName]) {
-    alert('Profile already exists!');
+    alert('Este perfil ja existe!');
     return;
   }
 
@@ -25,28 +25,28 @@ import { SidePanelUI } from './panel-ui.js';
 
   this.refreshConfigDropdown();
   this.setActiveConfig(trimmedName, true);
-  this.updateStatus(`Profile "${trimmedName}" created`, 'success');
+  this.updateStatus(`Perfil "${trimmedName}" criado`, 'success');
 };
 
 (SidePanelUI.prototype as any).deleteConfig = async function deleteConfig() {
   if (this.currentConfig === 'default') {
-    alert('Cannot delete default profile');
+    alert('Nao e possivel excluir o perfil padrao');
     return;
   }
 
-  if (confirm(`Delete profile "${this.currentConfig}"?`)) {
+  if (confirm(`Excluir perfil "${this.currentConfig}"?`)) {
     delete this.configs[this.currentConfig];
     this.currentConfig = 'default';
     this.refreshConfigDropdown();
     this.setActiveConfig(this.currentConfig, true);
-    this.updateStatus('Profile deleted', 'success');
+    this.updateStatus('Perfil excluido', 'success');
   }
 };
 
 (SidePanelUI.prototype as any).switchConfig = async function switchConfig() {
   const newConfig = this.elements.activeConfig.value;
   if (!this.configs[newConfig]) {
-    alert('Profile not found');
+    alert('Perfil nao encontrado');
     return;
   }
   this.configs[this.currentConfig] = this.collectCurrentFormProfile();
@@ -88,7 +88,7 @@ import { SidePanelUI } from './panel-ui.js';
   const selects = [this.elements.orchestratorProfile, this.elements.visionProfile];
   selects.forEach((select) => {
     if (!select) return;
-    select.innerHTML = '<option value="">Use active config</option>';
+    select.innerHTML = '<option value="">Usar configuracao ativa</option>';
     names.forEach((name) => {
       const option = document.createElement('option');
       option.value = name;
@@ -111,9 +111,10 @@ import { SidePanelUI } from './panel-ui.js';
   const currentOrchestrator = this.elements.orchestratorProfile?.value;
   const configs = Object.keys(this.configs);
   if (!configs.length) {
-    this.elements.agentGrid.innerHTML = '<div class="history-empty">No profiles yet.</div>';
+    this.elements.agentGrid.innerHTML = '<div class="history-empty">Nenhum perfil ainda.</div>';
     return;
   }
+
   configs.forEach((name) => {
     const card = document.createElement('div');
     card.className = 'agent-card';
@@ -121,35 +122,45 @@ import { SidePanelUI } from './panel-ui.js';
       card.classList.add('editing');
     }
     card.dataset.profile = name;
-    const rolePills = ['main', 'vision', 'orchestrator', 'aux']
-      .map((role) => {
-        const isActive = this.isProfileActiveForRole(name, role, currentVision, currentOrchestrator);
-        const label = this.getRoleLabel(role);
-        return `<span class="role-pill ${isActive ? 'active' : ''} ${role}-pill" data-role="${role}" data-profile="${name}">${label}</span>`;
-      })
-      .join('');
+
     const config = this.configs[name] || {};
-    card.innerHTML = `
-        <div>
-          <h4>${this.escapeHtml(name)}</h4>
-          <span>${this.escapeHtml(config.provider || 'Provider')} · ${this.escapeHtml(config.model || 'Model')}</span>
-        </div>
-        <div class="role-pills">${rolePills}</div>
-      `;
+
+    const details = document.createElement('div');
+    const title = document.createElement('h4');
+    title.textContent = String(name);
+    const meta = document.createElement('span');
+    meta.textContent = `${config.provider || 'Provedor'} - ${config.model || 'Modelo'}`;
+    details.appendChild(title);
+    details.appendChild(meta);
+
+    const pillsWrap = document.createElement('div');
+    pillsWrap.className = 'role-pills';
+    ['main', 'vision', 'orchestrator', 'aux'].forEach((role) => {
+      const isActive = this.isProfileActiveForRole(name, role, currentVision, currentOrchestrator);
+      const label = this.getRoleLabel(role);
+      const pill = document.createElement('span');
+      pill.className = `role-pill ${role}-pill${isActive ? ' active' : ''}`;
+      pill.dataset.role = role;
+      pill.dataset.profile = name;
+      pill.textContent = label;
+      pillsWrap.appendChild(pill);
+    });
+
+    card.appendChild(details);
+    card.appendChild(pillsWrap);
     this.elements.agentGrid.appendChild(card);
   });
 };
-
 (SidePanelUI.prototype as any).getRoleLabel = function getRoleLabel(role: string) {
   switch (role) {
     case 'main':
-      return 'Main';
+      return 'Principal';
     case 'vision':
-      return 'Vision';
+      return 'Visao';
     case 'orchestrator':
-      return 'Orchestrator';
+      return 'Orquestrador';
     default:
-      return 'Team';
+      return 'Equipe';
   }
 };
 
@@ -203,7 +214,7 @@ import { SidePanelUI } from './panel-ui.js';
   if (!name || !this.configs[name]) return;
   this.profileEditorTarget = name;
   const config = this.configs[name];
-  this.elements.profileEditorTitle && (this.elements.profileEditorTitle.textContent = `Editing: ${name}`);
+  this.elements.profileEditorTitle && (this.elements.profileEditorTitle.textContent = `Editando: ${name}`);
   this.elements.profileEditorName && (this.elements.profileEditorName.value = name);
   this.elements.profileEditorProvider.value = config.provider || 'openai';
   this.elements.profileEditorApiKey.value = config.apiKey || '';
@@ -245,7 +256,7 @@ import { SidePanelUI } from './panel-ui.js';
 (SidePanelUI.prototype as any).saveProfileEdits = async function saveProfileEdits() {
   const target = this.profileEditorTarget;
   if (!target || !this.configs[target]) {
-    this.updateStatus('Select a profile to edit', 'warning');
+    this.updateStatus('Selecione um perfil para editar', 'warning');
     return;
   }
   const existing = this.configs[target] || {};
@@ -256,7 +267,7 @@ import { SidePanelUI } from './panel-ui.js';
     this.toggleCustomEndpoint();
   }
   this.renderProfileGrid();
-  this.updateStatus(`Profile "${target}" saved`, 'success');
+  this.updateStatus(`Perfil "${target}" salvo`, 'success');
 };
 
 (SidePanelUI.prototype as any).populateFormFromConfig = function populateFormFromConfig(
@@ -299,6 +310,6 @@ import { SidePanelUI } from './panel-ui.js';
   this.updateModelDisplay();
   this.fetchAvailableModels();
   if (!quiet) {
-    this.updateStatus(`Switched to configuration "${name}"`, 'success');
+    this.updateStatus(`Configuracao alterada para "${name}"`, 'success');
   }
 };

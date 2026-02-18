@@ -7,21 +7,18 @@ const PANEL_SELECTOR = '.right-panel-content';
 
 export const setSidebarOpen = (elements: SidePanelElements, open: boolean) => {
   elements.sidebar?.classList.toggle('closed', !open);
+  elements.sidebar?.setAttribute('aria-hidden', open ? 'false' : 'true');
+  elements.sidebarBackdrop?.classList.toggle('visible', open);
 };
 
 export const showRightPanel = (elements: SidePanelElements, panelName: RightPanelName) => {
   const container = elements.rightPanelPanels ?? elements.rightPanel;
   if (!container) {
-    console.log('[Navigation] showRightPanel: no container found', {
-      rightPanelPanels: elements.rightPanelPanels,
-      rightPanel: elements.rightPanel
-    });
     return;
   }
 
   // Hide all panels
   const panels = container.querySelectorAll(PANEL_SELECTOR);
-  console.log('[Navigation] showRightPanel: found', panels.length, 'panels');
   panels.forEach((panel) => (panel as HTMLElement).classList.add('hidden'));
 
   if (!panelName) return;
@@ -30,15 +27,12 @@ export const showRightPanel = (elements: SidePanelElements, panelName: RightPane
   const targetPanel = container.querySelector(`${PANEL_SELECTOR}[data-panel="${panelName}"]`) as HTMLElement | null;
   if (targetPanel) {
     targetPanel?.classList.remove('hidden');
-    console.log('[Navigation] showRightPanel: showed', panelName);
   } else {
-    console.log('[Navigation] showRightPanel: target panel not found for', panelName);
-    // Try searching in rightPanel directly as fallback
+    // Fallback: try rightPanel directly in case of layout mismatch.
     if (elements.rightPanel) {
       const fallbackPanel = elements.rightPanel.querySelector(`${PANEL_SELECTOR}[data-panel="${panelName}"]`) as HTMLElement | null;
       if (fallbackPanel) {
         fallbackPanel.classList.remove('hidden');
-        console.log('[Navigation] showRightPanel: showed', panelName, '(via fallback)');
       }
     }
   }
@@ -76,17 +70,6 @@ type NavigationHandlers = {
 };
 
 export const bindSidebarNavigation = (elements: SidePanelElements, handlers: NavigationHandlers) => {
-  console.log('[Navigation] Binding sidebar navigation elements checks:', {
-    openSidebarBtn: !!elements.openSidebarBtn,
-    closeSidebarBtn: !!elements.closeSidebarBtn,
-    navChatBtn: !!elements.navChatBtn,
-    navHistoryBtn: !!elements.navHistoryBtn,
-    navSettingsBtn: !!elements.navSettingsBtn,
-    navAccountBtn: !!elements.navAccountBtn,
-    rightPanelPanels: !!elements.rightPanelPanels,
-    rightPanel: !!elements.rightPanel
-  });
-
   elements.openSidebarBtn?.addEventListener('click', () => {
     const sidebar = elements.sidebar;
     if (!sidebar) {
@@ -100,13 +83,11 @@ export const bindSidebarNavigation = (elements: SidePanelElements, handlers: Nav
     }
   });
   elements.closeSidebarBtn?.addEventListener('click', handlers.onClose);
+  elements.sidebarBackdrop?.addEventListener('click', handlers.onClose);
   
   // Bind nav buttons
   elements.navChatBtn?.addEventListener('click', handlers.onChat);
-  elements.navHistoryBtn?.addEventListener('click', () => {
-    console.log('[Navigation] navHistoryBtn clicked!');
-    handlers.onHistory();
-  });
+  elements.navHistoryBtn?.addEventListener('click', handlers.onHistory);
   elements.navSettingsBtn?.addEventListener('click', handlers.onSettings);
   elements.navAccountBtn?.addEventListener('click', handlers.onAccount);
 };

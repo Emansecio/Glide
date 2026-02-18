@@ -10,11 +10,11 @@ import { SidePanelUI } from './panel-ui.js';
   for (const file of files) {
     try {
       const text = await file.text();
-      const trimmed = text.length > maxPerFile ? text.slice(0, maxPerFile) + '\n… (truncated)' : text;
+      const trimmed = text.length > maxPerFile ? `${text.slice(0, maxPerFile)}\n... (truncado)` : text;
       const prefix = `\n\n[File: ${file.name}]\n`;
       this.elements.userInput.value += prefix + trimmed;
     } catch (e) {
-      console.warn('Failed to read file', file.name, e);
+      console.warn('Falha ao ler arquivo', file.name, e);
     }
   }
   input.value = '';
@@ -73,6 +73,9 @@ import { SidePanelUI } from './panel-ui.js';
       }
     });
 
+  const fallbackFavicon =
+    'data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 24 24%27 fill=%27none%27 stroke=%27%23707085%27 stroke-width=%272%27%3E%3Crect x=%273%27 y=%273%27 width=%2718%27 height=%2718%27 rx=%274%27/%3E%3Cpath d=%27M8 12h8%27/%3E%3C/svg%3E';
+
   const renderGroup = (
     label: string,
     color: string,
@@ -82,21 +85,23 @@ import { SidePanelUI } from './panel-ui.js';
     if (!groupTabs.length) return;
     const section = document.createElement('div');
     section.className = 'tab-group';
+    section.dataset.groupId = String(groupId);
     const allSelected = groupTabs.every((tab) => typeof tab.id === 'number' && this.selectedTabs.has(tab.id));
     section.innerHTML = `
-        <div class="tab-group-header" style="--group-color: ${color}">
-          <div class="tab-group-label">
-            <span>${this.escapeHtml(label)}</span>
-            <span class="tab-group-count">${groupTabs.length}</span>
-          </div>
-          <button class="tab-group-toggle" type="button">${allSelected ? 'Clear' : 'Add all'}</button>
+      <div class="tab-group-header" style="--group-color: ${color}">
+        <div class="tab-group-label">
+          <span>${this.escapeHtml(label)}</span>
+          <span class="tab-group-count">${groupTabs.length}</span>
         </div>
-      `;
+        <button class="tab-group-toggle" type="button">${allSelected ? 'Limpar' : 'Adicionar todas'}</button>
+      </div>
+    `;
 
     const toggleBtn = section.querySelector('.tab-group-toggle');
     toggleBtn?.addEventListener('click', (event) => {
       event.stopPropagation();
-      this.toggleGroupSelection(groupTabs, !allSelected);
+      const shouldSelect = groupTabs.some((tab) => typeof tab.id === 'number' && !this.selectedTabs.has(tab.id));
+      this.toggleGroupSelection(groupTabs, shouldSelect);
     });
 
     groupTabs.forEach((tab) => {
@@ -104,15 +109,19 @@ import { SidePanelUI } from './panel-ui.js';
       const isSelected = typeof tabId === 'number' && this.selectedTabs.has(tabId);
       const item = document.createElement('div');
       item.className = `tab-item${isSelected ? ' selected' : ''}`;
+      if (typeof tabId === 'number') {
+        item.dataset.tabId = String(tabId);
+      }
+      item.dataset.groupId = String(groupId);
       const urlLabel = this.formatTabLabel(tab.url || '');
       item.innerHTML = `
-          <div class="tab-item-checkbox"></div>
-          <img class="tab-item-favicon" src="${tab.favIconUrl || 'data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 24 24%27 fill=%27%23666%27%3E%3Crect width=%2724%27 height=%2724%27 rx=%274%27/%3E%3C/svg%3E'}" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 24 24%27 fill=%27%23666%27%3E%3Crect width=%2724%27 height=%2724%27 rx=%274%27/%3E%3C/svg%3E'">
-          <div class="tab-item-text">
-            <span class="tab-item-title">${this.escapeHtml(tab.title || 'Untitled')}</span>
-            ${urlLabel ? `<span class=\"tab-item-url\">${this.escapeHtml(urlLabel)}</span>` : ''}
-          </div>
-        `;
+        <div class="tab-item-checkbox"></div>
+        <img class="tab-item-favicon" src="${tab.favIconUrl || fallbackFavicon}" onerror="this.src='${fallbackFavicon}'">
+        <div class="tab-item-text">
+          <span class="tab-item-title">${this.escapeHtml(tab.title || 'Sem titulo')}</span>
+          ${urlLabel ? `<span class=\"tab-item-url\">${this.escapeHtml(urlLabel)}</span>` : ''}
+        </div>
+      `;
       item.addEventListener('click', () => this.toggleTabSelection(tab, item));
       section.appendChild(item);
     });
@@ -122,18 +131,19 @@ import { SidePanelUI } from './panel-ui.js';
 
   groupedTabs.forEach((groupTabs, groupId) => {
     const group = this.tabGroupInfo.get(groupId);
-    const label = group?.title || `Group ${groupId}`;
+    const label = group?.title || `Grupo ${groupId}`;
     const color = this.mapGroupColor(group?.color);
     renderGroup(label, color, groupTabs, groupId);
   });
 
-  renderGroup('Ungrouped', 'var(--text-tertiary)', ungroupedTabs);
+  renderGroup('Sem grupo', 'var(--muted-dim)', ungroupedTabs);
 };
 
 (SidePanelUI.prototype as any).toggleGroupSelection = function toggleGroupSelection(
   groupTabs: chrome.tabs.Tab[],
   shouldSelect: boolean,
 ) {
+  const changedTabIds: number[] = [];
   groupTabs.forEach((tab) => {
     if (typeof tab.id !== 'number') return;
     if (shouldSelect) {
@@ -141,10 +151,11 @@ import { SidePanelUI } from './panel-ui.js';
     } else {
       this.selectedTabs.delete(tab.id);
     }
+    changedTabIds.push(tab.id);
   });
   this.updateSelectedTabsBar();
   this.updateTabSelectorButton();
-  this.loadTabs();
+  this.syncRenderedTabSelection(changedTabIds);
 };
 
 (SidePanelUI.prototype as any).toggleTabSelection = function toggleTabSelection(
@@ -161,7 +172,45 @@ import { SidePanelUI } from './panel-ui.js';
   }
   this.updateSelectedTabsBar();
   this.updateTabSelectorButton();
-  this.loadTabs();
+  this.updateTabGroupToggleStates();
+};
+
+(SidePanelUI.prototype as any).syncRenderedTabSelection = function syncRenderedTabSelection(tabIds?: number[]) {
+  const tabList = this.elements.tabList as HTMLElement | null;
+  if (!tabList) return;
+
+  if (Array.isArray(tabIds) && tabIds.length > 0) {
+    tabIds.forEach((tabId) => {
+      const items = tabList.querySelectorAll(`.tab-item[data-tab-id="${tabId}"]`);
+      items.forEach((item) => {
+        item.classList.toggle('selected', this.selectedTabs.has(tabId));
+      });
+    });
+  } else {
+    const items = tabList.querySelectorAll('.tab-item[data-tab-id]');
+    items.forEach((item) => {
+      const tabId = Number.parseInt((item as HTMLElement).dataset.tabId || '', 10);
+      if (!Number.isFinite(tabId)) return;
+      item.classList.toggle('selected', this.selectedTabs.has(tabId));
+    });
+  }
+
+  this.updateTabGroupToggleStates();
+};
+
+(SidePanelUI.prototype as any).updateTabGroupToggleStates = function updateTabGroupToggleStates() {
+  const tabList = this.elements.tabList as HTMLElement | null;
+  if (!tabList) return;
+  const groups = tabList.querySelectorAll('.tab-group');
+  groups.forEach((group) => {
+    const items = group.querySelectorAll('.tab-item[data-tab-id]');
+    if (!items.length) return;
+    const allSelected = Array.from(items).every((item) => item.classList.contains('selected'));
+    const toggleButton = group.querySelector('.tab-group-toggle');
+    if (toggleButton) {
+      toggleButton.textContent = allSelected ? 'Limpar' : 'Adicionar todas';
+    }
+  });
 };
 
 (SidePanelUI.prototype as any).buildSelectedTab = function buildSelectedTab(tab: chrome.tabs.Tab) {
@@ -173,8 +222,8 @@ import { SidePanelUI } from './panel-ui.js';
     url: tab.url,
     windowId: tab.windowId,
     groupId: tab.groupId,
-    groupTitle: hasGroup ? group?.title || `Group ${tab.groupId}` : 'Ungrouped',
-    groupColor: hasGroup ? this.mapGroupColor(group?.color) : 'var(--text-tertiary)',
+    groupTitle: hasGroup ? group?.title || `Grupo ${tab.groupId}` : 'Sem grupo',
+    groupColor: hasGroup ? this.mapGroupColor(group?.color) : 'var(--muted-dim)',
   };
 };
 
@@ -195,43 +244,44 @@ import { SidePanelUI } from './panel-ui.js';
   });
 
   grouped.forEach((tabs) => {
-    const groupTitle = tabs[0]?.groupTitle || 'Ungrouped';
-    const groupLabel = this.truncateText(groupTitle, 18) || 'Ungrouped';
-    const groupColor = tabs[0]?.groupColor || 'var(--text-tertiary)';
+    const groupTitle = tabs[0]?.groupTitle || 'Sem grupo';
+    const groupLabel = this.truncateText(groupTitle, 18) || 'Sem grupo';
+    const groupColor = tabs[0]?.groupColor || 'var(--muted-dim)';
     const groupWrap = document.createElement('div');
     groupWrap.className = 'selected-tabs-group';
     groupWrap.innerHTML = `
-        <div class="selected-group-label" style="--group-color: ${groupColor}">
-          <span>${this.escapeHtml(groupLabel)}</span>
-          <span class="selected-group-count">${tabs.length}</span>
-        </div>
-        <div class="selected-tabs-chips"></div>
-      `;
+      <div class="selected-group-label" style="--group-color: ${groupColor}">
+        <span>${this.escapeHtml(groupLabel)}</span>
+        <span class="selected-group-count">${tabs.length}</span>
+      </div>
+      <div class="selected-tabs-chips"></div>
+    `;
 
     const chipsRow = groupWrap.querySelector('.selected-tabs-chips');
     if (!chipsRow) {
       this.elements.selectedTabsBar.appendChild(groupWrap);
       return;
     }
+
     tabs.forEach((tab: any) => {
       const chip = document.createElement('div');
       chip.className = 'selected-tab-chip';
       chip.innerHTML = `
-          <span>${this.escapeHtml(tab.title?.substring(0, 25) || 'Tab')}${tab.title?.length > 25 ? '...' : ''}</span>
-          <button title="Remove">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <line x1="18" y1="6" x2="6" y2="18"></line>
-              <line x1="6" y1="6" x2="18" y2="18"></line>
-            </svg>
-          </button>
-        `;
+        <span>${this.escapeHtml(tab.title?.substring(0, 25) || 'Aba')}${tab.title?.length > 25 ? '...' : ''}</span>
+        <button title="Remover">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      `;
       const removeBtn = chip.querySelector('button');
       removeBtn?.addEventListener('click', (event) => {
         event.stopPropagation();
         this.selectedTabs.delete(tab.id);
         this.updateSelectedTabsBar();
         this.updateTabSelectorButton();
-        this.loadTabs();
+        this.syncRenderedTabSelection([tab.id]);
       });
       chipsRow.appendChild(chip);
     });
@@ -250,7 +300,8 @@ import { SidePanelUI } from './panel-ui.js';
     delete this.elements.tabSelectorBtn.dataset.count;
   }
   if (this.elements.tabSelectorSummary) {
-    this.elements.tabSelectorSummary.textContent = count > 0 ? `${count} selected` : 'No tabs selected';
+    this.elements.tabSelectorSummary.textContent =
+      count > 0 ? `${count} selecionada${count > 1 ? 's' : ''}` : 'Nenhuma aba selecionada';
   }
 };
 
@@ -266,7 +317,7 @@ import { SidePanelUI } from './panel-ui.js';
     cyan: '#24c1e0',
     orange: '#f29900',
   };
-  return palette[colorName] || 'var(--text-tertiary)';
+  return palette[colorName] || 'var(--muted-dim)';
 };
 
 (SidePanelUI.prototype as any).formatTabLabel = function formatTabLabel(url?: string) {
@@ -282,10 +333,10 @@ import { SidePanelUI } from './panel-ui.js';
 (SidePanelUI.prototype as any).getSelectedTabsContext = function getSelectedTabsContext() {
   if (this.selectedTabs.size === 0) return '';
 
-  let context = '\n\n[Context from selected tabs:]\n';
+  let context = '\n\n[Contexto das abas selecionadas:]\n';
   this.selectedTabs.forEach((tab: any) => {
-    const tabTitle = tab.title || 'Untitled';
-    const groupLabel = tab.groupTitle ? `${tab.groupTitle} · ` : '';
+    const tabTitle = tab.title || 'Sem titulo';
+    const groupLabel = tab.groupTitle ? `${tab.groupTitle} - ` : '';
     const urlLabel = tab.url || '';
     context += `- ${groupLabel}"${tabTitle}": ${urlLabel}\n`;
   });

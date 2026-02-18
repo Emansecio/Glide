@@ -14,7 +14,7 @@ import { SidePanelUI } from './panel-ui.js';
     id: this.sessionId,
     startedAt: this.sessionStartedAt,
     updatedAt: Date.now(),
-    title: this.firstUserMessage || 'Session',
+    title: this.firstUserMessage || 'Sessao',
     messageCount: this.displayHistory.length,
     transcript: this.displayHistory.slice(-200),
   };
@@ -28,7 +28,7 @@ import { SidePanelUI } from './panel-ui.js';
     await chrome.storage.local.set({ chatSessions: trimmed });
     this.loadHistoryList();
   } catch (e) {
-    console.error('Failed to persist history:', e);
+    console.error('Falha ao salvar historico:', e);
   }
 };
 
@@ -38,7 +38,7 @@ import { SidePanelUI } from './panel-ui.js';
   const saveEnabled = this.elements.saveHistory?.value !== 'false';
   if (!saveEnabled) {
     this.elements.historyItems.innerHTML =
-      '<div class="history-empty">History is off. Enable “Save History” in Settings to see past chats.</div>';
+      '<div class="history-empty">Historico desativado. Ative "Salvar Historico" nas Configuracoes para ver conversas anteriores.</div>';
     return;
   }
   
@@ -47,7 +47,7 @@ import { SidePanelUI } from './panel-ui.js';
     this.elements.historyItems.innerHTML = '';
     
     if (!chatSessions.length) {
-      this.elements.historyItems.innerHTML = '<div class="history-empty">No saved chats yet.</div>';
+      this.elements.historyItems.innerHTML = '<div class="history-empty">Nenhuma conversa salva ainda.</div>';
       return;
     }
     
@@ -60,14 +60,14 @@ import { SidePanelUI } from './panel-ui.js';
       
       item.innerHTML = `
         <div class="history-item-main">
-          <div class="history-title">${this.escapeHtml(session.title || 'Untitled Session')}</div>
+          <div class="history-title">${this.escapeHtml(session.title || 'Sessao sem titulo')}</div>
           <div class="history-meta">
             <span>${timeAgo}</span>
-            <span class="history-meta-dot">·</span>
-            <span>${msgCount} messages</span>
+            <span class="history-meta-dot">-</span>
+            <span>${msgCount} mensagens</span>
           </div>
         </div>
-        <button class="history-delete" title="Delete" data-session-id="${session.id}">
+        <button class="history-delete" title="Excluir" data-session-id="${session.id}">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="18" y1="6" x2="6" y2="18"></line>
             <line x1="6" y1="6" x2="18" y2="18"></line>
@@ -89,8 +89,8 @@ import { SidePanelUI } from './panel-ui.js';
       this.elements.historyItems.appendChild(item);
     });
   } catch (e) {
-    console.error('Failed to load history:', e);
-    this.elements.historyItems.innerHTML = '<div class="history-empty">Failed to load history.</div>';
+    console.error('Falha ao carregar historico:', e);
+    this.elements.historyItems.innerHTML = '<div class="history-empty">Falha ao carregar historico.</div>';
   }
 };
 
@@ -115,18 +115,18 @@ import { SidePanelUI } from './panel-ui.js';
     await chrome.storage.local.set({ chatSessions: filtered });
     this.loadHistoryList();
   } catch (e) {
-    console.error('Failed to delete session:', e);
+    console.error('Falha ao excluir sessao:', e);
   }
 };
 
 (SidePanelUI.prototype as any).clearAllHistory = async function clearAllHistory() {
-  if (!confirm('Clear all chat history? This cannot be undone.')) return;
+  if (!confirm('Limpar todo o historico de conversa? Esta acao nao pode ser desfeita.')) return;
   
   try {
     await chrome.storage.local.set({ chatSessions: [] });
     this.loadHistoryList();
   } catch (e) {
-    console.error('Failed to clear history:', e);
+    console.error('Falha ao limpar historico:', e);
   }
 };
 
@@ -137,10 +137,10 @@ import { SidePanelUI } from './panel-ui.js';
   const hours = Math.floor(diff / 3600000);
   const days = Math.floor(diff / 86400000);
   
-  if (minutes < 1) return 'Just now';
-  if (minutes < 60) return `${minutes}m ago`;
-  if (hours < 24) return `${hours}h ago`;
-  if (days < 7) return `${days}d ago`;
+  if (minutes < 1) return 'Agora';
+  if (minutes < 60) return `${minutes} min atras`;
+  if (hours < 24) return `${hours} h atras`;
+  if (days < 7) return `${days} d atras`;
   return date.toLocaleDateString();
 };
 
@@ -159,7 +159,7 @@ import { SidePanelUI } from './panel-ui.js';
       const messageDiv = document.createElement('div');
       messageDiv.className = 'message user';
       messageDiv.innerHTML = `
-          <div class="message-header">You</div>
+          <div class="message-header">Voce</div>
           <div class="message-content">${this.escapeHtml(msg.content || '')}</div>
         `;
       this.elements.chatMessages.appendChild(messageDiv);
@@ -168,7 +168,7 @@ import { SidePanelUI } from './panel-ui.js';
       const parsed = extractThinking(rawContent, msg.thinking || null);
       const messageDiv = document.createElement('div');
       messageDiv.className = 'message assistant';
-      let html = `<div class="message-header">Assistant</div>`;
+      let html = `<div class="message-header">Assistente</div>`;
       const showThinking = this.elements.showThinking.value === 'true';
       if (parsed.thinking && showThinking) {
         const cleanedThinking = dedupeThinking(parsed.thinking);
@@ -178,7 +178,7 @@ import { SidePanelUI } from './panel-ui.js';
                 <svg class="chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <polyline points="6 9 12 15 18 9"></polyline>
                 </svg>
-                Thinking
+                Raciocinio
               </button>
               <div class="thinking-content">${this.escapeHtml(cleanedThinking)}</div>
             </div>

@@ -20,6 +20,7 @@ import { SidePanelUI } from './panel-ui.js';
   if (this.elements.modelSelect) {
     this.elements.modelSelect.value = modelName;
   }
+  this.syncModelTrigger();
 };
 
 (SidePanelUI.prototype as any).fetchAvailableModels = async function fetchAvailableModels() {
@@ -27,12 +28,7 @@ import { SidePanelUI } from './panel-ui.js';
   const provider = config.provider || 'anthropic';
   const apiKey = config.apiKey || '';
   const customEndpoint = config.customEndpoint || '';
-  
-  console.log('[Glide] fetchAvailableModels called');
-  console.log('[Glide] currentConfig:', this.currentConfig);
-  console.log('[Glide] config:', { provider, apiKey: apiKey ? '***' : '(empty)', customEndpoint });
 
-  // Hardcoded model lists for providers that don't support /v1/models
   const ANTHROPIC_MODELS = [
     'claude-sonnet-4-20250514',
     'claude-opus-4-20250514',
@@ -65,7 +61,8 @@ import { SidePanelUI } from './panel-ui.js';
     'o4-mini',
   ];
 
-  // Use hardcoded lists for known providers (faster, no API call needed)
+  const OLLAMA_MODELS = ['qwen3', 'qwen3:4b', 'llama3.1', 'mistral', 'deepseek-r1'];
+
   if (provider === 'anthropic') {
     this.populateModelSelect(ANTHROPIC_MODELS, config.model);
     return;
@@ -76,18 +73,21 @@ import { SidePanelUI } from './panel-ui.js';
     return;
   }
 
+  if (provider === 'ollama') {
+    this.populateModelSelect([config.model || OLLAMA_MODELS[0], ...OLLAMA_MODELS], config.model);
+    return;
+  }
+
   if (provider === 'kimi') {
     this.populateModelSelect([config.model || 'kimi-for-coding'], config.model);
     return;
   }
 
   if (provider === 'openai' && !customEndpoint) {
-    // Use hardcoded list for faster loading, but allow API fetch as fallback
     this.populateModelSelect(OPENAI_MODELS, config.model);
     return;
   }
 
-  // For custom providers, try to fetch from /v1/models
   if (!apiKey && provider === 'custom') {
     this.populateModelSelect([config.model || 'gpt-4o'], config.model);
     return;
@@ -95,7 +95,6 @@ import { SidePanelUI } from './panel-ui.js';
 
   let baseUrl = '';
   if (customEndpoint) {
-    // Normalize the endpoint - strip trailing paths to get base URL
     baseUrl = customEndpoint
       .replace(/\/chat\/completions\/?$/i, '')
       .replace(/\/completions\/?$/i, '')
@@ -112,50 +111,41 @@ import { SidePanelUI } from './panel-ui.js';
   }
 
   const modelsUrl = `${baseUrl}/v1/models`;
-  console.log('[Glide] Fetching models from:', modelsUrl);
 
   try {
     const response = await fetch(modelsUrl, {
       method: 'GET',
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
+        Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
     });
 
     if (!response.ok) {
-      console.warn('[Glide] Failed to fetch models:', response.status, response.statusText);
       this.populateModelSelect([config.model || 'gpt-4o'], config.model);
       return;
     }
 
     const data = await response.json();
-    console.log('[Glide] Models response:', data);
-    
-    // Extract models, prioritize active ones
     const allModels = (data.data || []) as Array<{ id: string; active?: boolean }>;
     const activeModels = allModels
       .filter((m) => m.id && m.active === true)
       .map((m) => m.id)
       .sort((a, b) => a.localeCompare(b));
-    
+
     const inactiveModels = allModels
       .filter((m) => m.id && m.active !== true)
       .map((m) => m.id)
       .sort((a, b) => a.localeCompare(b));
-    
-    // Show active models first, then inactive
+
     const models = [...activeModels, ...inactiveModels].filter(Boolean);
-    
-    console.log('[Glide] Found models:', models.length, 'active:', activeModels.length);
 
     if (models.length > 0) {
       this.populateModelSelect(models, config.model);
     } else {
       this.populateModelSelect([config.model || 'gpt-4o'], config.model);
     }
-  } catch (error) {
-    console.error('[Glide] Error fetching models:', error);
+  } catch (_error) {
     this.populateModelSelect([config.model || 'gpt-4o'], config.model);
   }
 };
@@ -164,7 +154,6 @@ import { SidePanelUI } from './panel-ui.js';
   models: string[],
   currentModel?: string,
 ) {
-  // Try to get the select element - it might not be in this.elements if loaded dynamically
   let select = this.elements.modelSelect;
   if (!select) {
     select = document.getElementById('modelSelect') as HTMLSelectElement;
@@ -172,9 +161,8 @@ import { SidePanelUI } from './panel-ui.js';
       this.elements.modelSelect = select;
     }
   }
-  
+
   if (!select) {
-    console.error('[Glide] modelSelect element not found!');
     return;
   }
 
@@ -183,22 +171,18 @@ import { SidePanelUI } from './panel-ui.js';
 
   const normalizedModels = models.filter((model) => Boolean(model && model.trim?.())) as string[];
   const fallbackModel = selectedModel || 'gpt-4o';
-  
-  // Ensure current model is in the list
+
   let finalModels = normalizedModels.length > 0 ? normalizedModels : [fallbackModel];
   if (selectedModel && !finalModels.includes(selectedModel)) {
     finalModels = [selectedModel, ...finalModels];
   }
 
-  console.log('[Glide] Populating model select with', finalModels.length, 'models, selected:', selectedModel);
-
   select.innerHTML = '';
 
-  // Add placeholder only if no model is selected
   if (!selectedModel) {
     const placeholder = document.createElement('option');
     placeholder.value = '';
-    placeholder.textContent = 'Select model';
+    placeholder.textContent = 'Selecionar modelo';
     placeholder.disabled = true;
     placeholder.selected = true;
     select.appendChild(placeholder);
@@ -213,8 +197,113 @@ import { SidePanelUI } from './panel-ui.js';
     }
     select.appendChild(option);
   }
-  
-  console.log('[Glide] Model select now has', select.options.length, 'options');
+
+  this.renderModelMenu();
+  this.syncModelTrigger();
+};
+
+(SidePanelUI.prototype as any).syncModelTrigger = function syncModelTrigger() {
+  const select = this.elements.modelSelect as HTMLSelectElement | null;
+  const valueEl = this.elements.modelSelectValue as HTMLElement | null;
+  if (!select || !valueEl) return;
+
+  const config = this.configs?.[this.currentConfig] || {};
+  const selectedOption = select.selectedOptions?.[0];
+  const text =
+    selectedOption?.textContent?.trim() || select.value || config.model || 'Selecionar modelo';
+  valueEl.textContent = text;
+};
+
+(SidePanelUI.prototype as any).inferModelFamily = function inferModelFamily(modelId: string) {
+  const value = (modelId || '').toLowerCase();
+  if (!value) return 'modelo';
+  if (value.startsWith('gpt') || value.startsWith('o1') || value.startsWith('o3') || value.startsWith('o4')) {
+    return 'openai';
+  }
+  if (value.startsWith('claude')) return 'anthropic';
+  if (value.startsWith('gemini')) return 'google';
+  if (
+    value.includes('llama') ||
+    value.includes('qwen') ||
+    value.includes('mistral') ||
+    value.includes('deepseek') ||
+    value.includes('mixtral')
+  ) {
+    return 'local';
+  }
+  if (value.startsWith('kimi')) return 'kimi';
+  return 'custom';
+};
+
+(SidePanelUI.prototype as any).renderModelMenu = function renderModelMenu() {
+  const select = this.elements.modelSelect as HTMLSelectElement | null;
+  const menu = this.elements.modelSelectMenu as HTMLElement | null;
+  if (!select || !menu) return;
+
+  menu.innerHTML = '';
+
+  const options = Array.from(select.options).filter((option) => option.value && !option.disabled);
+  for (const option of options) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'model-select-option';
+    item.setAttribute('role', 'option');
+    item.dataset.value = option.value;
+
+    const modelText = option.textContent || option.value;
+    const modelName = document.createElement('span');
+    modelName.className = 'model-select-name';
+    modelName.textContent = modelText;
+
+    const modelFamily = document.createElement('span');
+    modelFamily.className = 'model-select-family';
+    modelFamily.textContent = this.inferModelFamily(option.value);
+
+    item.appendChild(modelName);
+    item.appendChild(modelFamily);
+
+    if (option.value === select.value) {
+      item.classList.add('selected');
+      item.setAttribute('aria-selected', 'true');
+    } else {
+      item.setAttribute('aria-selected', 'false');
+    }
+
+    item.addEventListener('click', (event: Event) => {
+      event.stopPropagation();
+      select.value = option.value;
+      this.handleModelSelectChange();
+      this.closeModelMenu();
+    });
+
+    menu.appendChild(item);
+  }
+};
+
+(SidePanelUI.prototype as any).toggleModelMenu = function toggleModelMenu() {
+  const menu = this.elements.modelSelectMenu as HTMLElement | null;
+  const trigger = this.elements.modelSelectTrigger as HTMLButtonElement | null;
+  if (!menu || !trigger) return;
+
+  const isOpen = !menu.classList.contains('hidden');
+  if (isOpen) {
+    this.closeModelMenu();
+    return;
+  }
+
+  this.renderModelMenu();
+  menu.classList.remove('hidden');
+  menu.classList.add('open');
+  trigger.setAttribute('aria-expanded', 'true');
+};
+
+(SidePanelUI.prototype as any).closeModelMenu = function closeModelMenu() {
+  const menu = this.elements.modelSelectMenu as HTMLElement | null;
+  const trigger = this.elements.modelSelectTrigger as HTMLButtonElement | null;
+  if (!menu) return;
+  menu.classList.add('hidden');
+  menu.classList.remove('open');
+  trigger?.setAttribute('aria-expanded', 'false');
 };
 
 (SidePanelUI.prototype as any).handleModelSelectChange = function handleModelSelectChange() {
@@ -232,5 +321,6 @@ import { SidePanelUI } from './panel-ui.js';
     this.elements.model.value = selectedModel;
   }
 
+  this.syncModelTrigger();
   this.persistAllSettings({ silent: true });
 };

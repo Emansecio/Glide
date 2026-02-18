@@ -1,5 +1,7 @@
 import { SidePanelUI } from './panel-ui.js';
 
+const DEFAULT_LOCAL_API_ENDPOINT = 'http://localhost:11434';
+
 (SidePanelUI.prototype as any).toggleSettings = async function toggleSettings(saveOnClose = true) {
   const isOpen = this.elements.settingsPanel ? !this.elements.settingsPanel.classList.contains('hidden') : false;
   if (isOpen) {
@@ -29,25 +31,30 @@ import { SidePanelUI } from './panel-ui.js';
 
 (SidePanelUI.prototype as any).toggleCustomEndpoint = function toggleCustomEndpoint() {
   const provider = this.elements.provider?.value;
-  const isCustom = provider === 'custom' || provider === 'kimi';
+  const requiresEndpoint = provider === 'custom' || provider === 'kimi' || provider === 'ollama';
   
   // Always show the endpoint field, but highlight when required
   if (this.elements.customEndpointGroup) {
     // Add visual emphasis when custom provider selected
-    this.elements.customEndpointGroup.classList.toggle('required', isCustom);
+    this.elements.customEndpointGroup.classList.toggle('required', requiresEndpoint);
   }
   
   // Update placeholder based on provider
   if (this.elements.customEndpoint) {
-    if (provider === 'kimi') {
+    if (provider === 'ollama') {
+      if (!this.elements.customEndpoint.value || this.elements.customEndpoint.value === 'https://openrouter.ai/api/v1') {
+        this.elements.customEndpoint.value = DEFAULT_LOCAL_API_ENDPOINT;
+      }
+      this.elements.customEndpoint.placeholder = DEFAULT_LOCAL_API_ENDPOINT;
+    } else if (provider === 'kimi') {
       if (!this.elements.customEndpoint.value || this.elements.customEndpoint.value === 'https://openrouter.ai/api/v1') {
         this.elements.customEndpoint.value = 'https://api.kimi.com/coding';
       }
       this.elements.customEndpoint.placeholder = 'https://api.kimi.com/coding';
-    } else if (isCustom) {
+    } else if (requiresEndpoint) {
       this.elements.customEndpoint.placeholder = 'https://openrouter.ai/api/v1';
     } else {
-      this.elements.customEndpoint.placeholder = 'Leave empty for default API URL';
+      this.elements.customEndpoint.placeholder = DEFAULT_LOCAL_API_ENDPOINT;
     }
   }
   
@@ -56,19 +63,22 @@ import { SidePanelUI } from './panel-ui.js';
   if (modelHint) {
     switch (provider) {
       case 'anthropic':
-        modelHint.textContent = 'Recommended: claude-sonnet-4-20250514';
+        modelHint.textContent = 'Recomendado: claude-sonnet-4-20250514';
         break;
       case 'openai':
-        modelHint.textContent = 'Recommended: gpt-4o or gpt-4-turbo';
+        modelHint.textContent = 'Recomendado: gpt-4o ou gpt-4-turbo';
         break;
       case 'google':
-        modelHint.textContent = 'Recommended: gemini-2.0-flash or gemini-1.5-pro';
+        modelHint.textContent = 'Recomendado: gemini-2.0-flash ou gemini-1.5-pro';
+        break;
+      case 'ollama':
+        modelHint.textContent = 'Recomendado: qwen3, llama3.1, mistral, deepseek-r1';
         break;
       case 'kimi':
-        modelHint.textContent = 'Recommended: kimi-for-coding (or your Kimi model ID)';
+        modelHint.textContent = 'Recomendado: kimi-for-coding (ou seu ID de modelo Kimi)';
         break;
       case 'custom':
-        modelHint.textContent = 'Enter the model ID from your provider';
+        modelHint.textContent = 'Informe o ID de modelo do seu provedor';
         break;
       default:
         modelHint.textContent = '';
@@ -152,7 +162,7 @@ import { SidePanelUI } from './panel-ui.js';
     provider: 'openai',
     apiKey: '',
     model: 'gpt-4o',
-    customEndpoint: '',
+    customEndpoint: DEFAULT_LOCAL_API_ENDPOINT,
     systemPrompt: this.getDefaultSystemPrompt(),
     temperature: 0.7,
     maxTokens: 4096,
@@ -172,6 +182,9 @@ import { SidePanelUI } from './panel-ui.js';
     default: { ...baseConfig, ...(storedConfigs.default || {}) },
     ...storedConfigs,
   };
+  if (!this.configs.default.customEndpoint) {
+    this.configs.default.customEndpoint = DEFAULT_LOCAL_API_ENDPOINT;
+  }
   this.currentConfig = this.configs[settings.activeConfig] ? settings.activeConfig : 'default';
   this.auxAgentProfiles = settings.auxAgentProfiles || [];
 
@@ -232,8 +245,13 @@ import { SidePanelUI } from './panel-ui.js';
 };
 
 (SidePanelUI.prototype as any).saveSettings = async function saveSettings() {
-  if ((this.elements.provider?.value === 'custom' || this.elements.provider?.value === 'kimi') && !this.validateCustomEndpoint()) {
-    this.updateStatus('Invalid custom endpoint URL', 'error');
+  if (
+    (this.elements.provider?.value === 'custom' ||
+      this.elements.provider?.value === 'kimi' ||
+      this.elements.provider?.value === 'ollama') &&
+    !this.validateCustomEndpoint()
+  ) {
+    this.updateStatus('URL da API inválida', 'error');
     return;
   }
   this.configs[this.currentConfig] = this.collectCurrentFormProfile();
@@ -242,7 +260,7 @@ import { SidePanelUI } from './panel-ui.js';
   // Refresh models after saving settings
   this.fetchAvailableModels();
   
-  this.updateStatus('Settings saved successfully', 'success');
+  this.updateStatus('Configuracoes salvas com sucesso', 'success');
 };
 
 (SidePanelUI.prototype as any).exportSettings = async function exportSettings() {
@@ -279,9 +297,9 @@ import { SidePanelUI } from './panel-ui.js';
     anchor.download = `Glide-settings-${new Date().toISOString().slice(0, 10)}.json`;
     anchor.click();
     URL.revokeObjectURL(url);
-    this.updateStatus('Settings export downloaded', 'success');
+    this.updateStatus('Configuracoes exportadas', 'success');
   } catch (error) {
-    this.updateStatus('Unable to export settings', 'error');
+    this.updateStatus('Nao foi possivel exportar configuracoes', 'error');
   }
 };
 
@@ -322,9 +340,9 @@ import { SidePanelUI } from './panel-ui.js';
     await this.loadSettings();
     this.renderProfileGrid();
     this.updateAccessUI();
-    this.updateStatus('Settings imported successfully', 'success');
+    this.updateStatus('Configuracoes importadas com sucesso', 'success');
   } catch (error) {
-    this.updateStatus('Unable to import settings', 'error');
+    this.updateStatus('Nao foi possivel importar configuracoes', 'error');
   } finally {
     if (input) input.value = '';
   }
@@ -336,7 +354,7 @@ import { SidePanelUI } from './panel-ui.js';
     provider: this.elements.provider?.value || current.provider || 'openai',
     apiKey: this.elements.apiKey?.value || current.apiKey || '',
     model: this.elements.model?.value || current.model || 'gpt-4o',
-    customEndpoint: this.elements.customEndpoint?.value || current.customEndpoint || '',
+    customEndpoint: this.elements.customEndpoint?.value || current.customEndpoint || DEFAULT_LOCAL_API_ENDPOINT,
     systemPrompt: this.elements.systemPrompt?.value || current.systemPrompt || '',
     temperature: Number.parseFloat(this.elements.temperature?.value) || current.temperature || 0.7,
     maxTokens: Number.parseInt(this.elements.maxTokens?.value) || current.maxTokens || 4096,
@@ -400,7 +418,7 @@ import { SidePanelUI } from './panel-ui.js';
   this.updateAccessConfigPrompt();
   this.updateContextUsage();
   if (!silent) {
-    this.updateStatus('Settings saved successfully', 'success');
+    this.updateStatus('Configurações salvas com sucesso', 'success');
   }
 };
 

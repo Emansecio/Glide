@@ -11,6 +11,8 @@ import { SidePanelUI } from './panel-ui.js';
   this.setupResizeObserver();
   // Start with sidebar closed by default
   this.elements.sidebar?.classList.add('closed');
+  this.elements.sidebar?.setAttribute('aria-hidden', 'true');
+  this.elements.sidebarBackdrop?.classList.remove('visible');
   console.log('[Glide] Calling loadSettings...');
   await this.loadSettings();
   console.log('[Glide] loadSettings done, configs:', Object.keys(this.configs), 'current:', this.currentConfig);
@@ -18,7 +20,7 @@ import { SidePanelUI } from './panel-ui.js';
   await this.loadHistoryList();
   await this.loadAccessState();
   if (this.isAccessReady()) {
-    this.updateStatus('Ready', 'success');
+    this.updateStatus('Pronto', 'success');
   }
   this.updateModelDisplay();
   console.log('[Glide] Calling fetchAvailableModels...');
@@ -118,16 +120,6 @@ import { SidePanelUI } from './panel-ui.js';
   });
   this.elements.refreshProfilesBtn?.addEventListener('click', () => this.renderProfileGrid());
 
-  // Agent management grid
-  this.elements.agentGrid?.addEventListener('click', (event) => {
-    const button = (event.target as HTMLElement | null)?.closest('[data-role]');
-    if (!button) return;
-    const role = (button as HTMLElement).dataset.role;
-    const profile = (button as HTMLElement).dataset.profile;
-    this.assignProfileRole(profile, role);
-  });
-  this.elements.refreshProfilesBtn?.addEventListener('click', () => this.renderProfileGrid());
-
   // View toggles
   this.elements.viewChatBtn?.addEventListener('click', () => this.switchView('chat'));
   this.elements.viewHistoryBtn?.addEventListener('click', () => this.switchView('history'));
@@ -157,6 +149,7 @@ import { SidePanelUI } from './panel-ui.js';
   this.elements.sendBtn?.addEventListener('click', () => {
     this.sendMessage();
   });
+  this.elements.newChatBtn?.addEventListener('click', () => this.startNewSession());
 
   // Enter to send (Shift+Enter for newline)
   this.elements.userInput?.addEventListener('keydown', (event: KeyboardEvent) => {
@@ -175,6 +168,23 @@ import { SidePanelUI } from './panel-ui.js';
 
   // Model selector
   this.elements.modelSelect?.addEventListener('change', () => this.handleModelSelectChange());
+  this.elements.modelSelectTrigger?.addEventListener('click', (event: Event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    this.toggleModelMenu();
+  });
+  document.addEventListener('click', (event: Event) => {
+    const target = event.target as HTMLElement | null;
+    const withinSelector = target?.closest('.model-selector');
+    if (!withinSelector) {
+      this.closeModelMenu();
+    }
+  });
+  document.addEventListener('keydown', (event: KeyboardEvent) => {
+    if (event.key === 'Escape') {
+      this.closeModelMenu();
+    }
+  });
 
   // File upload
   this.elements.fileBtn?.addEventListener('click', () => {
@@ -193,6 +203,7 @@ import { SidePanelUI } from './panel-ui.js';
   this.elements.chatMessages?.addEventListener('scroll', () => this.handleChatScroll());
   this.elements.scrollToLatestBtn?.addEventListener('click', () => this.scrollToBottom({ force: true }));
 
+  this.elements.activityToggleBtn?.addEventListener('click', () => this.toggleActivityPanel());
   this.elements.activityCloseBtn?.addEventListener('click', () => this.toggleActivityPanel(false));
 
   // Profile editor controls

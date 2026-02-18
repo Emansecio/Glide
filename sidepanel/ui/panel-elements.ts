@@ -10,6 +10,7 @@ export type SidePanelElements = Record<string, any>;
 export const getSidePanelElements = (): SidePanelElements => ({
   // Sidebar elements
   sidebar: byId<HTMLElement>('sidebar'),
+  sidebarBackdrop: byId<HTMLElement>('sidebarBackdrop'),
   openSidebarBtn: byId<HTMLButtonElement>('openSidebarBtn'),
   closeSidebarBtn: byId<HTMLButtonElement>('closeSidebarBtn'),
   navChatBtn: byId<HTMLButtonElement>('navChatBtn'),
@@ -23,6 +24,7 @@ export const getSidePanelElements = (): SidePanelElements => ({
   // Legacy references (kept for compatibility)
   settingsBtn: byId<HTMLButtonElement>('settingsBtn'),
   accountBtn: byId<HTMLButtonElement>('accountBtn'),
+  newChatBtn: byId<HTMLButtonElement>('newChatBtn'),
   settingsPanel: byId<HTMLElement>('settingsPanel'),
   chatInterface: byId<HTMLElement>('chatInterface'),
   accessPanel: byId<HTMLElement>('accessPanel'),
@@ -137,7 +139,7 @@ export const getSidePanelElements = (): SidePanelElements => ({
   saveHistory: byId<HTMLInputElement>('saveHistory'),
 
   // Form elements - Orchestrator
-  orchestratorToggle: byId<HTMLInputElement>('orchestratorToggle'),
+  orchestratorToggle: byId<HTMLInputElement>('orchestratorToggle') ?? byId<HTMLInputElement>('useOrchestrator'),
   orchestratorProfile: byId<HTMLSelectElement>('orchestratorProfile'),
 
   // Form elements - System prompt
@@ -161,6 +163,9 @@ export const getSidePanelElements = (): SidePanelElements => ({
   sendBtn: byId<HTMLButtonElement>('sendBtn'),
   composer: byId<HTMLElement>('composer'),
   modelSelect: byId<HTMLSelectElement>('modelSelect'),
+  modelSelectTrigger: byId<HTMLButtonElement>('modelSelectTrigger'),
+  modelSelectValue: byId<HTMLElement>('modelSelectValue'),
+  modelSelectMenu: byId<HTMLElement>('modelSelectMenu'),
   fileBtn: byId<HTMLButtonElement>('fileBtn'),
   fileInput: byId<HTMLInputElement>('fileInput'),
   planStatus: byId<HTMLElement>('planStatus'),

@@ -7,11 +7,6 @@ import { SidePanelUI } from './panel-ui.js';
 (SidePanelUI.prototype as any).sendMessage = async function sendMessage() {
   const userMessage = this.elements.userInput.value.trim();
   if (!userMessage) return;
-  if (!this.isAccessReady()) {
-    this.updateAccessUI();
-    this.updateStatus('Sign in required', 'warning');
-    return;
-  }
 
   this.elements.userInput.value = '';
   this.elements.userInput.style.height = '';
@@ -31,6 +26,7 @@ import { SidePanelUI } from './panel-ui.js';
   this.currentPlan = null;
 
   this.displayUserMessage(userMessage);
+  const pendingTurn = this.lastChatTurn;
 
   const displayEntry = createMessage({ role: 'user', content: userMessage });
   if (displayEntry) {
@@ -40,6 +36,7 @@ import { SidePanelUI } from './panel-ui.js';
   const contextEntry = createMessage({ role: 'user', content: fullMessage });
   if (contextEntry) {
     this.contextHistory.push(contextEntry);
+    this.bumpContextUsageWithMessages?.([contextEntry]);
   }
   this.updateContextUsage();
 
@@ -47,19 +44,41 @@ import { SidePanelUI } from './panel-ui.js';
   this.elements.composer?.classList.add('running');
 
   try {
-    chrome.runtime.sendMessage({
+    await chrome.runtime.sendMessage({
       type: 'user_message',
       message: fullMessage,
       conversationHistory: this.contextHistory,
       selectedTabs: Array.from(this.selectedTabs.values()),
       sessionId: this.sessionId,
     });
-    this.persistHistory();
   } catch (error: any) {
+    const errorMessage = error?.message || 'Failed to send message to the background service.';
+
+    if (displayEntry) {
+      this.displayHistory = this.displayHistory.filter((entry: Message) => entry.id !== displayEntry.id);
+    }
+    if (contextEntry) {
+      this.contextHistory = this.contextHistory.filter((entry: Message) => entry.id !== contextEntry.id);
+      this.invalidateContextUsageCache?.();
+    }
+
+    if (pendingTurn && pendingTurn.parentElement) {
+      pendingTurn.remove();
+      this.lastChatTurn = null;
+    }
+
+    this.elements.userInput.value = userMessage;
+    this.elements.userInput.focus();
+    this.updateContextUsage();
+    this.updateChatEmptyState();
     this.stopThinkingTimer?.();
-    this.updateStatus('Error: ' + error.message, 'error');
+    this.pendingToolCount = 0;
+    this.isStreaming = false;
+    this.activeToolName = null;
+    this.updateStatus(`Error: ${errorMessage}`, 'error');
     this.elements.composer?.classList.remove('running');
-    this.displayAssistantMessage('Sorry, an error occurred: ' + error.message);
+    this.showErrorBanner?.(errorMessage);
+    this.updateActivityState();
   }
 };
 

@@ -2,7 +2,14 @@ import { normalizeConversationHistory } from '../../ai/message-schema.js';
 import { dedupeThinking, extractThinking } from '../../ai/message-utils.js';
 import { SidePanelUI } from './panel-ui.js';
 
-(SidePanelUI.prototype as any).persistHistory = async function persistHistory() {
+const HISTORY_PERSIST_DEBOUNCE_MS = 350;
+
+(SidePanelUI.prototype as any).isHistoryPanelVisible = function isHistoryPanelVisible() {
+  const panel = this.elements.historyPanel as HTMLElement | null;
+  return Boolean(panel && !panel.classList.contains('hidden'));
+};
+
+(SidePanelUI.prototype as any).persistHistoryNow = async function persistHistoryNow() {
   // Default to saving history unless explicitly disabled
   const saveEnabled = this.elements.saveHistory?.value !== 'false';
   if (!saveEnabled) return;
@@ -26,10 +33,38 @@ import { SidePanelUI } from './panel-ui.js';
     filtered.unshift(entry);
     const trimmed = filtered.slice(0, 50); // Keep more sessions
     await chrome.storage.local.set({ chatSessions: trimmed });
-    this.loadHistoryList();
+    this.historyListDirty = true;
+    if (this.isHistoryPanelVisible()) {
+      void this.loadHistoryList();
+    }
   } catch (e) {
     console.error('Falha ao salvar historico:', e);
   }
+};
+
+(SidePanelUI.prototype as any).persistHistory = async function persistHistory(
+  { immediate = false }: { immediate?: boolean } = {},
+) {
+  const runPersist = async () => {
+    this.historyPersistDebounceTimerId = null;
+    await this.persistHistoryNow();
+  };
+
+  if (immediate) {
+    if (this.historyPersistDebounceTimerId) {
+      window.clearTimeout(this.historyPersistDebounceTimerId);
+      this.historyPersistDebounceTimerId = null;
+    }
+    await runPersist();
+    return;
+  }
+
+  if (this.historyPersistDebounceTimerId) {
+    window.clearTimeout(this.historyPersistDebounceTimerId);
+  }
+  this.historyPersistDebounceTimerId = window.setTimeout(() => {
+    void runPersist();
+  }, HISTORY_PERSIST_DEBOUNCE_MS);
 };
 
 (SidePanelUI.prototype as any).loadHistoryList = async function loadHistoryList() {
@@ -48,6 +83,7 @@ import { SidePanelUI } from './panel-ui.js';
     
     if (!chatSessions.length) {
       this.elements.historyItems.innerHTML = '<div class="history-empty">Nenhuma conversa salva ainda.</div>';
+      this.historyListDirty = false;
       return;
     }
     
@@ -88,6 +124,7 @@ import { SidePanelUI } from './panel-ui.js';
       
       this.elements.historyItems.appendChild(item);
     });
+    this.historyListDirty = false;
   } catch (e) {
     console.error('Falha ao carregar historico:', e);
     this.elements.historyItems.innerHTML = '<div class="history-empty">Falha ao carregar historico.</div>';
@@ -101,10 +138,11 @@ import { SidePanelUI } from './panel-ui.js';
     const normalized = normalizeConversationHistory(session.transcript || []);
     this.displayHistory = normalized;
     this.contextHistory = normalized;
+    this.invalidateContextUsageCache?.();
     this.sessionId = session.id || `session-${Date.now()}`;
     this.firstUserMessage = session.title || '';
     this.renderConversationHistory();
-    this.updateContextUsage();
+    this.scheduleContextUsageRecompute?.({ force: true });
   }
 };
 
@@ -113,7 +151,10 @@ import { SidePanelUI } from './panel-ui.js';
     const { chatSessions = [] } = await chrome.storage.local.get(['chatSessions']);
     const filtered = chatSessions.filter((s: any) => s.id !== sessionId);
     await chrome.storage.local.set({ chatSessions: filtered });
-    this.loadHistoryList();
+    this.historyListDirty = true;
+    if (this.isHistoryPanelVisible()) {
+      void this.loadHistoryList();
+    }
   } catch (e) {
     console.error('Falha ao excluir sessao:', e);
   }
@@ -124,7 +165,10 @@ import { SidePanelUI } from './panel-ui.js';
   
   try {
     await chrome.storage.local.set({ chatSessions: [] });
-    this.loadHistoryList();
+    this.historyListDirty = true;
+    if (this.isHistoryPanelVisible()) {
+      void this.loadHistoryList();
+    }
   } catch (e) {
     console.error('Falha ao limpar historico:', e);
   }

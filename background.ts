@@ -27,6 +27,27 @@ type RunMeta = {
   sessionId: string;
 };
 
+const DEFAULT_REQUEST_TIMEOUT_MS = 30000;
+
+const resolveTimeoutMs = (value: unknown, fallback = DEFAULT_REQUEST_TIMEOUT_MS) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.max(1000, Math.floor(parsed));
+};
+
+const isAbortError = (error: unknown) => {
+  if (!error || typeof error !== 'object') return false;
+  const name = (error as { name?: string }).name;
+  return name === 'AbortError';
+};
+
+const mapScreenshotQuality = (value: unknown) => {
+  const normalized = String(value || 'high').toLowerCase();
+  if (normalized === 'low') return 50;
+  if (normalized === 'medium') return 70;
+  return 90;
+};
+
 class BackgroundService {
   browserTools: BrowserTools;
   currentSettings: Record<string, any> | null;
@@ -167,7 +188,8 @@ class BackgroundService {
       if (settings.allowedDomains === undefined) settings.allowedDomains = '';
       if (!Array.isArray(settings.auxAgentProfiles)) settings.auxAgentProfiles = [];
 
-      if (!settings.apiKey) {
+      // Ollama nao requer API key (acesso local sem autenticacao)
+      if (!settings.apiKey && settings.provider !== 'ollama') {
         this.sendRuntime(runMeta, {
           type: 'run_error',
           message: 'Please configure your API key in settings',
@@ -259,64 +281,87 @@ class BackgroundService {
 
       const runModelPass = async (messages: Message[]) => {
         const modelMessages = toModelMessages(messages);
+        const timeoutMs = resolveTimeoutMs(orchestratorProfile.timeout ?? settings.timeout);
+        const abortController = new AbortController();
+        let timedOut = false;
+        let streamStopSent = false;
+        const timeoutId = setTimeout(() => {
+          timedOut = true;
+          abortController.abort();
+        }, timeoutMs);
+
         if (streamEnabled) {
           this.sendRuntime(runMeta, { type: 'assistant_stream_start' });
         }
 
-        const result = streamText({
-          model,
-          system: this.enhanceSystemPrompt(orchestratorProfile.systemPrompt || '', context),
-          messages: modelMessages,
-          tools: toolSet,
-          temperature: orchestratorProfile.temperature ?? 0.7,
-          maxOutputTokens: orchestratorProfile.maxTokens ?? 2048,
-          stopWhen: stepCountIs(48),
-          onChunk: ({ chunk }) => {
-            if (chunk.type === 'reasoning-delta') {
-              this.sendRuntime(runMeta, {
-                type: 'assistant_stream_delta',
-                content: chunk.text || '',
-                channel: 'reasoning',
-              });
-            }
-          },
-        });
+        try {
+          const result = streamText({
+            model,
+            system: this.enhanceSystemPrompt(orchestratorProfile.systemPrompt || '', context),
+            messages: modelMessages,
+            tools: toolSet,
+            temperature: orchestratorProfile.temperature ?? 0.7,
+            maxOutputTokens: orchestratorProfile.maxTokens ?? 2048,
+            stopWhen: stepCountIs(48),
+            abortSignal: abortController.signal,
+            onChunk: ({ chunk }) => {
+              if (chunk.type === 'reasoning-delta') {
+                this.sendRuntime(runMeta, {
+                  type: 'assistant_stream_delta',
+                  content: chunk.text || '',
+                  channel: 'reasoning',
+                });
+              }
+            },
+          });
 
-        if (streamEnabled) {
-          try {
-            for await (const textPart of result.textStream) {
-              this.sendRuntime(runMeta, {
-                type: 'assistant_stream_delta',
-                content: textPart || '',
-                channel: 'text',
-              });
+          if (streamEnabled) {
+            try {
+              for await (const textPart of result.textStream) {
+                this.sendRuntime(runMeta, {
+                  type: 'assistant_stream_delta',
+                  content: textPart || '',
+                  channel: 'text',
+                });
+              }
+            } finally {
+              this.sendRuntime(runMeta, { type: 'assistant_stream_stop' });
+              streamStopSent = true;
             }
-          } finally {
+          } else {
+            await result.text;
+          }
+
+          const [text, reasoning, usage, steps] = await Promise.all([
+            result.text,
+            result.reasoningText,
+            result.totalUsage,
+            result.steps,
+          ]);
+
+          const normalizedUsage = {
+            inputTokens: Number(usage?.inputTokens || 0),
+            outputTokens: Number(usage?.outputTokens || 0),
+            totalTokens: Number(usage?.totalTokens || 0),
+          };
+
+          return {
+            text: text || '',
+            reasoningText: reasoning || null,
+            totalUsage: normalizedUsage,
+            toolResults: steps.flatMap((step) => step.toolResults || []),
+          };
+        } catch (error) {
+          if (streamEnabled && !streamStopSent) {
             this.sendRuntime(runMeta, { type: 'assistant_stream_stop' });
           }
-        } else {
-          await result.text;
+          if (timedOut || isAbortError(error)) {
+            throw new Error(`Model request timed out after ${timeoutMs}ms`);
+          }
+          throw error;
+        } finally {
+          clearTimeout(timeoutId);
         }
-
-        const [text, reasoning, usage, steps] = await Promise.all([
-          result.text,
-          result.reasoningText,
-          result.totalUsage,
-          result.steps,
-        ]);
-
-        const normalizedUsage = {
-          inputTokens: Number(usage?.inputTokens || 0),
-          outputTokens: Number(usage?.outputTokens || 0),
-          totalTokens: Number(usage?.totalTokens || 0),
-        };
-
-        return {
-          text: text || '',
-          reasoningText: reasoning || null,
-          totalUsage: normalizedUsage,
-          toolResults: steps.flatMap((step) => step.toolResults || []),
-        };
       };
 
       while (true) {
@@ -474,18 +519,45 @@ class BackgroundService {
           }
           promptText += previousSummary ? UPDATE_SUMMARIZATION_PROMPT : SUMMARIZATION_PROMPT;
 
-          const summaryResult = await generateText({
-            model,
-            system: SUMMARIZATION_SYSTEM_PROMPT,
-            messages: [
-              {
-                role: 'user',
-                content: promptText,
-              },
-            ],
-            temperature: 0.2,
-            maxOutputTokens: Math.floor(0.8 * compactionSettings.reserveTokens),
-          });
+          const compactionTimeoutMs = resolveTimeoutMs(orchestratorProfile.timeout ?? settings.timeout);
+          const compactionAbort = new AbortController();
+          let compactionTimedOut = false;
+          const compactionTimer = setTimeout(() => {
+            compactionTimedOut = true;
+            compactionAbort.abort();
+          }, compactionTimeoutMs);
+
+          let summaryResult: { text: string } | null = null;
+          try {
+            summaryResult = await generateText({
+              model,
+              system: SUMMARIZATION_SYSTEM_PROMPT,
+              messages: [
+                {
+                  role: 'user',
+                  content: promptText,
+                },
+              ],
+              temperature: 0.2,
+              maxOutputTokens: Math.floor(0.8 * compactionSettings.reserveTokens),
+              abortSignal: compactionAbort.signal,
+            });
+          } catch (summaryError) {
+            if (compactionTimedOut || isAbortError(summaryError)) {
+              this.sendRuntime(runMeta, {
+                type: 'run_warning',
+                message: `Context compaction timed out after ${compactionTimeoutMs}ms; keeping current context.`,
+              });
+            } else {
+              console.warn('Context compaction failed:', summaryError);
+            }
+          } finally {
+            clearTimeout(compactionTimer);
+          }
+
+          if (!summaryResult) {
+            return;
+          }
 
           const summaryMessage = buildCompactionSummaryMessage(summaryResult.text, messagesToSummarize.length);
           const compaction = applyCompaction({
@@ -648,8 +720,18 @@ class BackgroundService {
     }
 
     let result: any;
+    let toolArgs = args;
+    if (toolName === 'screenshot') {
+      const defaultFormat = typeof args?.format === 'string' ? args.format : 'jpeg';
+      const defaultQuality = typeof args?.quality === 'number' ? args.quality : mapScreenshotQuality(this.currentSettings?.screenshotQuality);
+      toolArgs = {
+        ...args,
+        format: defaultFormat,
+        quality: defaultQuality,
+      };
+    }
     try {
-      result = await this.browserTools.executeTool(toolName, args);
+      result = await this.browserTools.executeTool(toolName, toolArgs);
     } catch (error) {
       const errorResult = {
         success: false,
@@ -1259,27 +1341,48 @@ Always cite evidence from tools. Finish by calling subagent_complete with a shor
     ];
 
     const subModel = resolveLanguageModel(profileSettings);
-    const result = streamText({
-      model: subModel,
-      system: subAgentSystemPrompt,
-      messages: toModelMessages(subHistory),
-      tools: toolSet,
-      temperature: profileSettings.temperature ?? 0.4,
-      maxOutputTokens: profileSettings.maxTokens ?? 1024,
-      stopWhen: stepCountIs(24),
-    });
+    const subagentTimeoutMs = resolveTimeoutMs(profileSettings.timeout ?? this.currentSettings?.timeout);
+    const subagentAbort = new AbortController();
+    let subagentTimedOut = false;
+    const subagentTimer = setTimeout(() => {
+      subagentTimedOut = true;
+      subagentAbort.abort();
+    }, subagentTimeoutMs);
 
-    const summary = (await result.text) || 'Sub-agent finished without a final summary.';
+    let summary = 'Sub-agent finished without a final summary.';
+    let success = true;
+    try {
+      const result = streamText({
+        model: subModel,
+        system: subAgentSystemPrompt,
+        messages: toModelMessages(subHistory),
+        tools: toolSet,
+        temperature: profileSettings.temperature ?? 0.4,
+        maxOutputTokens: profileSettings.maxTokens ?? 1024,
+        stopWhen: stepCountIs(24),
+        abortSignal: subagentAbort.signal,
+      });
+      summary = (await result.text) || summary;
+    } catch (error) {
+      if (subagentTimedOut || isAbortError(error)) {
+        summary = `Sub-agent timed out after ${subagentTimeoutMs}ms.`;
+      } else {
+        summary = `Sub-agent failed: ${error?.message || String(error)}`;
+      }
+      success = false;
+    } finally {
+      clearTimeout(subagentTimer);
+    }
 
     this.sendRuntime(runMeta, {
       type: 'subagent_complete',
       id: subagentId,
-      success: true,
+      success,
       summary,
     });
 
     return {
-      success: true,
+      success,
       source: 'subagent',
       id: subagentId,
       name: subagentName,

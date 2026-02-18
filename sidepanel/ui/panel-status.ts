@@ -4,10 +4,11 @@ import { SidePanelUI } from './panel-ui.js';
   if (this.elements.statusText) {
     this.elements.statusText.textContent = text;
   }
-  const statusDot = document.getElementById('statusDot');
+  const statusDot = this.elements.statusDot || document.getElementById('statusDot');
   if (statusDot) {
     statusDot.className = 'status-dot';
-    if (type === 'error') statusDot.classList.add('error');
+    if (type === 'success') statusDot.classList.add('success');
+    else if (type === 'error') statusDot.classList.add('error');
     else if (type === 'warning') statusDot.classList.add('warning');
     else if (type === 'active') statusDot.classList.add('active');
   }
@@ -23,11 +24,23 @@ import { SidePanelUI } from './panel-ui.js';
   this.syncModelTrigger();
 };
 
+(SidePanelUI.prototype as any).refreshAvailableModels = function refreshAvailableModels() {
+  void this.fetchAvailableModels();
+};
+
 (SidePanelUI.prototype as any).fetchAvailableModels = async function fetchAvailableModels() {
   const config = this.configs[this.currentConfig] || {};
   const provider = config.provider || 'anthropic';
   const apiKey = config.apiKey || '';
   const customEndpoint = config.customEndpoint || '';
+  const currentModel = config.model;
+
+  if (this.modelsFetchController) {
+    this.modelsFetchController.abort();
+    this.modelsFetchController = null;
+  }
+  const requestId = (this.modelsFetchSeq || 0) + 1;
+  this.modelsFetchSeq = requestId;
 
   const ANTHROPIC_MODELS = [
     'claude-sonnet-4-20250514',
@@ -63,33 +76,81 @@ import { SidePanelUI } from './panel-ui.js';
 
   const OLLAMA_MODELS = ['qwen3', 'qwen3:4b', 'llama3.1', 'mistral', 'deepseek-r1'];
 
+  const isCurrentRequest = (controller?: AbortController | null) => {
+    if (this.modelsFetchSeq !== requestId) return false;
+    if (!controller) return true;
+    return this.modelsFetchController === controller;
+  };
+  const applyModels = (models: string[]) => {
+    if (!isCurrentRequest()) return;
+    this.populateModelSelect(models, currentModel);
+  };
+  const createController = () => {
+    const controller = new AbortController();
+    this.modelsFetchController = controller;
+    return controller;
+  };
+
   if (provider === 'anthropic') {
-    this.populateModelSelect(ANTHROPIC_MODELS, config.model);
+    applyModels(ANTHROPIC_MODELS);
     return;
   }
 
   if (provider === 'google') {
-    this.populateModelSelect(GOOGLE_MODELS, config.model);
+    applyModels(GOOGLE_MODELS);
     return;
   }
 
   if (provider === 'ollama') {
-    this.populateModelSelect([config.model || OLLAMA_MODELS[0], ...OLLAMA_MODELS], config.model);
+    // Tentar buscar modelos da API do Ollama
+    const controller = createController();
+    try {
+      const endpoint = customEndpoint || 'http://localhost:11434';
+      const baseUrl = endpoint.replace(/\/$/, '');
+      const response = await fetch(`${baseUrl}/api/tags`, { signal: controller.signal });
+
+      if (!isCurrentRequest(controller)) return;
+
+      if (response.ok) {
+        const data = await response.json();
+        if (!isCurrentRequest(controller)) return;
+        const models = (data.models || [])
+          .map((m: any) => m.name)
+          .filter(Boolean)
+          .sort();
+
+        if (models.length > 0) {
+          applyModels(models);
+          return;
+        }
+      }
+    } catch (e) {
+      if ((e as { name?: string })?.name === 'AbortError') return;
+      // Silenciosamente falha para o fallback
+    } finally {
+      if (isCurrentRequest(controller)) {
+        this.modelsFetchController = null;
+      }
+    }
+
+    if (!isCurrentRequest()) return;
+    // Fallback: lista hardcoded se a API nao responder
+    applyModels([currentModel || OLLAMA_MODELS[0], ...OLLAMA_MODELS]);
     return;
   }
 
   if (provider === 'kimi') {
-    this.populateModelSelect([config.model || 'kimi-for-coding'], config.model);
+    applyModels([currentModel || 'kimi-for-coding']);
     return;
   }
 
   if (provider === 'openai' && !customEndpoint) {
-    this.populateModelSelect(OPENAI_MODELS, config.model);
+    applyModels(OPENAI_MODELS);
     return;
   }
 
   if (!apiKey && provider === 'custom') {
-    this.populateModelSelect([config.model || 'gpt-4o'], config.model);
+    applyModels([currentModel || 'gpt-4o']);
     return;
   }
 
@@ -106,11 +167,12 @@ import { SidePanelUI } from './panel-ui.js';
   }
 
   if (!baseUrl) {
-    this.populateModelSelect([config.model || 'gpt-4o'], config.model);
+    applyModels([currentModel || 'gpt-4o']);
     return;
   }
 
   const modelsUrl = `${baseUrl}/v1/models`;
+  const controller = createController();
 
   try {
     const response = await fetch(modelsUrl, {
@@ -119,14 +181,18 @@ import { SidePanelUI } from './panel-ui.js';
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
+      signal: controller.signal,
     });
 
+    if (!isCurrentRequest(controller)) return;
+
     if (!response.ok) {
-      this.populateModelSelect([config.model || 'gpt-4o'], config.model);
+      applyModels([currentModel || 'gpt-4o']);
       return;
     }
 
     const data = await response.json();
+    if (!isCurrentRequest(controller)) return;
     const allModels = (data.data || []) as Array<{ id: string; active?: boolean }>;
     const activeModels = allModels
       .filter((m) => m.id && m.active === true)
@@ -141,12 +207,17 @@ import { SidePanelUI } from './panel-ui.js';
     const models = [...activeModels, ...inactiveModels].filter(Boolean);
 
     if (models.length > 0) {
-      this.populateModelSelect(models, config.model);
+      applyModels(models);
     } else {
-      this.populateModelSelect([config.model || 'gpt-4o'], config.model);
+      applyModels([currentModel || 'gpt-4o']);
     }
   } catch (_error) {
-    this.populateModelSelect([config.model || 'gpt-4o'], config.model);
+    if ((_error as { name?: string })?.name === 'AbortError') return;
+    applyModels([currentModel || 'gpt-4o']);
+  } finally {
+    if (isCurrentRequest(controller)) {
+      this.modelsFetchController = null;
+    }
   }
 };
 
@@ -216,23 +287,71 @@ import { SidePanelUI } from './panel-ui.js';
 
 (SidePanelUI.prototype as any).inferModelFamily = function inferModelFamily(modelId: string) {
   const value = (modelId || '').toLowerCase();
-  if (!value) return 'modelo';
+  if (!value) return 'Modelo';
   if (value.startsWith('gpt') || value.startsWith('o1') || value.startsWith('o3') || value.startsWith('o4')) {
-    return 'openai';
+    return 'OpenAI';
   }
-  if (value.startsWith('claude')) return 'anthropic';
-  if (value.startsWith('gemini')) return 'google';
+  if (value.startsWith('claude')) return 'Anthropic';
+  if (value.startsWith('gemini')) return 'Google';
+  if (value.startsWith('kimi')) return 'Kimi';
   if (
     value.includes('llama') ||
     value.includes('qwen') ||
     value.includes('mistral') ||
-    value.includes('deepseek') ||
-    value.includes('mixtral')
+    value.includes('deepseek')
   ) {
-    return 'local';
+    return 'Local';
   }
-  if (value.startsWith('kimi')) return 'kimi';
-  return 'custom';
+  return 'Personalizado';
+};
+
+(SidePanelUI.prototype as any).getVisibleModelOptions = function getVisibleModelOptions() {
+  const menu = this.elements.modelSelectMenu as HTMLElement | null;
+  if (!menu || menu.classList.contains('hidden')) return [] as HTMLButtonElement[];
+  return Array.from(menu.querySelectorAll('.model-option')) as HTMLButtonElement[];
+};
+
+(SidePanelUI.prototype as any).focusModelOptionByIndex = function focusModelOptionByIndex(index: number) {
+  const options = this.getVisibleModelOptions();
+  if (!options.length) return;
+  const normalized = index < 0 ? options.length - 1 : Math.min(index, options.length - 1);
+  options[normalized]?.focus();
+};
+
+(SidePanelUI.prototype as any).focusSelectedModelOption = function focusSelectedModelOption() {
+  const options = this.getVisibleModelOptions();
+  if (!options.length) return;
+  const selectedIndex = options.findIndex((option) => option.classList.contains('selected'));
+  this.focusModelOptionByIndex(selectedIndex >= 0 ? selectedIndex : 0);
+};
+
+(SidePanelUI.prototype as any).moveModelMenuFocus = function moveModelMenuFocus(direction: number) {
+  const options = this.getVisibleModelOptions();
+  if (!options.length) return;
+
+  const activeElement = document.activeElement as HTMLElement | null;
+  let currentIndex = options.findIndex((option) => option === activeElement);
+  if (currentIndex < 0) {
+    const selectedIndex = options.findIndex((option) => option.classList.contains('selected'));
+    currentIndex = selectedIndex >= 0 ? selectedIndex : direction > 0 ? -1 : 0;
+  }
+
+  let nextIndex = currentIndex + direction;
+  if (nextIndex < 0) nextIndex = options.length - 1;
+  if (nextIndex >= options.length) nextIndex = 0;
+  options[nextIndex]?.focus();
+};
+
+(SidePanelUI.prototype as any).selectModelOptionByElement = function selectModelOptionByElement(
+  optionEl: HTMLElement | null,
+) {
+  const select = this.elements.modelSelect as HTMLSelectElement | null;
+  if (!select || !optionEl) return;
+  const value = optionEl.dataset.value || '';
+  if (!value) return;
+  select.value = value;
+  this.handleModelSelectChange();
+  this.closeModelMenu();
 };
 
 (SidePanelUI.prototype as any).renderModelMenu = function renderModelMenu() {
@@ -241,51 +360,85 @@ import { SidePanelUI } from './panel-ui.js';
   if (!select || !menu) return;
 
   menu.innerHTML = '';
+  menu.setAttribute('role', 'listbox');
+  menu.setAttribute('aria-label', 'Modelos disponíveis');
 
   const options = Array.from(select.options).filter((option) => option.value && !option.disabled);
+  if (!options.length) return;
+
+  const grouped = new Map<string, HTMLOptionElement[]>();
   for (const option of options) {
-    const item = document.createElement('button');
-    item.type = 'button';
-    item.className = 'model-select-option';
-    item.setAttribute('role', 'option');
-    item.dataset.value = option.value;
+    const family = this.inferModelFamily(option.value);
+    if (!grouped.has(family)) grouped.set(family, []);
+    grouped.get(family)?.push(option);
+  }
 
-    const modelText = option.textContent || option.value;
-    const modelName = document.createElement('span');
-    modelName.className = 'model-select-name';
-    modelName.textContent = modelText;
+  const preferredOrder = ['OpenAI', 'Anthropic', 'Google', 'Kimi', 'Local', 'Personalizado', 'Modelo'];
+  const dynamicFamilies = Array.from(grouped.keys())
+    .filter((family) => !preferredOrder.includes(family))
+    .sort((a, b) => a.localeCompare(b));
+  const orderedFamilies = [...preferredOrder.filter((family) => grouped.has(family)), ...dynamicFamilies];
 
-    const modelFamily = document.createElement('span');
-    modelFamily.className = 'model-select-family';
-    modelFamily.textContent = this.inferModelFamily(option.value);
+  for (const family of orderedFamilies) {
+    const familyOptions = grouped.get(family);
+    if (!familyOptions?.length) continue;
 
-    item.appendChild(modelName);
-    item.appendChild(modelFamily);
+    const section = document.createElement('section');
+    section.className = 'model-group';
 
-    if (option.value === select.value) {
-      item.classList.add('selected');
-      item.setAttribute('aria-selected', 'true');
-    } else {
-      item.setAttribute('aria-selected', 'false');
+    const sectionLabel = document.createElement('div');
+    sectionLabel.className = 'model-group-label';
+    sectionLabel.textContent = family;
+    section.appendChild(sectionLabel);
+
+    const itemsWrap = document.createElement('div');
+    itemsWrap.className = 'model-group-items';
+
+    for (const option of familyOptions) {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'model-option';
+      item.setAttribute('role', 'option');
+      item.dataset.value = option.value;
+
+      const modelName = document.createElement('span');
+      modelName.className = 'model-option-name';
+      modelName.textContent = option.textContent || option.value;
+      item.appendChild(modelName);
+
+      if (option.value === select.value) {
+        item.classList.add('selected');
+        item.setAttribute('aria-selected', 'true');
+      } else {
+        item.setAttribute('aria-selected', 'false');
+      }
+
+      item.addEventListener('click', (event: Event) => {
+        event.stopPropagation();
+        this.selectModelOptionByElement(item);
+      });
+
+      itemsWrap.appendChild(item);
     }
 
-    item.addEventListener('click', (event: Event) => {
-      event.stopPropagation();
-      select.value = option.value;
-      this.handleModelSelectChange();
-      this.closeModelMenu();
-    });
-
-    menu.appendChild(item);
+    section.appendChild(itemsWrap);
+    menu.appendChild(section);
   }
 };
 
-(SidePanelUI.prototype as any).toggleModelMenu = function toggleModelMenu() {
+(SidePanelUI.prototype as any).isModelMenuOpen = function isModelMenuOpen() {
+  const menu = this.elements.modelSelectMenu as HTMLElement | null;
+  return Boolean(menu && !menu.classList.contains('hidden'));
+};
+
+(SidePanelUI.prototype as any).toggleModelMenu = function toggleModelMenu(
+  focusTarget: 'none' | 'first' | 'last' | 'selected' = 'none',
+) {
   const menu = this.elements.modelSelectMenu as HTMLElement | null;
   const trigger = this.elements.modelSelectTrigger as HTMLButtonElement | null;
   if (!menu || !trigger) return;
 
-  const isOpen = !menu.classList.contains('hidden');
+  const isOpen = this.isModelMenuOpen();
   if (isOpen) {
     this.closeModelMenu();
     return;
@@ -295,15 +448,28 @@ import { SidePanelUI } from './panel-ui.js';
   menu.classList.remove('hidden');
   menu.classList.add('open');
   trigger.setAttribute('aria-expanded', 'true');
+
+  if (focusTarget === 'first') {
+    this.focusModelOptionByIndex(0);
+  } else if (focusTarget === 'last') {
+    this.focusModelOptionByIndex(-1);
+  } else if (focusTarget === 'selected') {
+    this.focusSelectedModelOption();
+  }
 };
 
-(SidePanelUI.prototype as any).closeModelMenu = function closeModelMenu() {
+(SidePanelUI.prototype as any).closeModelMenu = function closeModelMenu(options?: {
+  focusTrigger?: boolean;
+}) {
   const menu = this.elements.modelSelectMenu as HTMLElement | null;
   const trigger = this.elements.modelSelectTrigger as HTMLButtonElement | null;
   if (!menu) return;
   menu.classList.add('hidden');
   menu.classList.remove('open');
   trigger?.setAttribute('aria-expanded', 'false');
+  if (options?.focusTrigger) {
+    trigger?.focus();
+  }
 };
 
 (SidePanelUI.prototype as any).handleModelSelectChange = function handleModelSelectChange() {

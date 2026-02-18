@@ -5,6 +5,7 @@ type HighlightEntry = {
   element: HTMLElement;
   originalOutline: string;
   originalOutlineOffset: string;
+  timerId: ReturnType<typeof setTimeout>;
 };
 
 class ContentScriptHandler {
@@ -94,21 +95,29 @@ class ContentScriptHandler {
     element.style.outline = '3px solid #4f46e5';
     element.style.outlineOffset = '2px';
 
+    // Auto-remove after 3 seconds with tracked timer
+    const timerId = setTimeout(() => {
+      element.style.outline = originalOutline;
+      element.style.outlineOffset = originalOutlineOffset;
+      for (const entry of this.highlightedElements) {
+        if (entry.element === element) {
+          this.highlightedElements.delete(entry);
+          break;
+        }
+      }
+    }, 3000);
+
     this.highlightedElements.add({
       element,
       originalOutline,
       originalOutlineOffset,
+      timerId,
     });
-
-    // Auto-remove after 3 seconds
-    setTimeout(() => {
-      element.style.outline = originalOutline;
-      element.style.outlineOffset = originalOutlineOffset;
-    }, 3000);
   }
 
   unhighlightAll() {
-    this.highlightedElements.forEach(({ element, originalOutline, originalOutlineOffset }) => {
+    this.highlightedElements.forEach(({ element, originalOutline, originalOutlineOffset, timerId }) => {
+      clearTimeout(timerId);
       element.style.outline = originalOutline;
       element.style.outlineOffset = originalOutlineOffset;
     });
@@ -172,6 +181,7 @@ class ContentScriptHandler {
       const label = this.findLabelForInput(input);
       const placeholder =
         input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement ? input.placeholder : '';
+      const isPassword = input instanceof HTMLInputElement && input.type === 'password';
       return {
         index,
         tagName: input.tagName,
@@ -179,7 +189,7 @@ class ContentScriptHandler {
         id: input.id,
         name: input.name,
         placeholder,
-        value: input.value,
+        value: isPassword ? '********' : input.value,
         label: label?.textContent?.trim(),
         selector: this.getOptimalSelector(input),
       };
@@ -251,6 +261,7 @@ class ContentScriptHandler {
   }
 
   getVisibleText() {
+    const MAX_CHARS = 10000;
     // Get all text nodes that are actually visible
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
       acceptNode: (node) => {
@@ -273,12 +284,17 @@ class ContentScriptHandler {
     });
 
     const textParts: string[] = [];
+    let totalLen = 0;
     let node: Node | null;
-    while ((node = walker.nextNode())) {
-      textParts.push(node.textContent?.trim() || '');
+    while ((node = walker.nextNode()) && totalLen < MAX_CHARS) {
+      const text = node.textContent?.trim() || '';
+      if (text) {
+        textParts.push(text);
+        totalLen += text.length + 1;
+      }
     }
 
-    return textParts.join(' ').substring(0, 10000); // Limit to 10KB
+    return textParts.join(' ').substring(0, MAX_CHARS);
   }
 }
 

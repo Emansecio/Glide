@@ -21,9 +21,8 @@
   --radius-lg: 18px;
   --radius-full: 9999px;
 
-  --font-sans: 'Segoe UI Variable Display', 'Segoe UI Variable Text', 'Manrope', 'Segoe UI', system-ui, -apple-system,
-    sans-serif;
-  --font-mono: 'SFMono-Regular', Consolas, Menlo, monospace;
+  --font-sans: 'Segoe UI Variable Text', 'Segoe UI Variable Small', 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
   --font-mono-ui: 'JetBrains Mono', 'Cascadia Code', 'SFMono-Regular', Consolas, monospace;
 }
 

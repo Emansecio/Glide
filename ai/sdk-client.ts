@@ -77,6 +77,27 @@ export function resolveLanguageModel(settings: SDKModelSettings) {
     return customProvider(modelId);
   }
 
+  if (provider === 'ollama') {
+    // Ollama expoe uma API compativel com OpenAI em /v1
+    const baseURL = (settings.customEndpoint || 'http://localhost:11434')
+      .replace(/\/chat\/completions\/?$/i, '')
+      .replace(/\/completions\/?$/i, '')
+      .replace(/\/v1\/models\/?$/i, '')
+      .replace(/\/v1\/?$/i, '')
+      .replace(/\/+$/, '');
+
+    if (!baseURL) {
+      throw new Error('Ollama provider requires a customEndpoint to be configured');
+    }
+
+    const ollamaProvider = createOpenAICompatible({
+      name: 'ollama',
+      apiKey: 'ollama', // Ollama nao requer API key, mas o SDK precisa de um valor nao-vazio
+      baseURL: `${baseURL}/v1`,
+    });
+    return ollamaProvider(modelId);
+  }
+
   const providerInstance = createOpenAI({ apiKey });
   return providerInstance(modelId);
 }

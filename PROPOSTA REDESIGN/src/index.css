@@ -1,0 +1,90 @@
+@import "tailwindcss";
+
+@theme {
+  --color-glide-bg: #0e0e11;
+  --color-glide-surface: #16161a;
+  --color-glide-surface-2: #1c1c22;
+  --color-glide-surface-3: #222228;
+  --color-glide-border: #2a2a32;
+  --color-glide-border-light: #35353f;
+  --color-glide-text: #e8e8ed;
+  --color-glide-text-secondary: #8b8b9e;
+  --color-glide-text-muted: #5a5a6e;
+  --color-glide-purple: #8b5cf6;
+  --color-glide-purple-dark: #6d28d9;
+  --color-glide-purple-light: #a78bfa;
+  --color-glide-purple-glow: rgba(139, 92, 246, 0.25);
+  --color-glide-green: #34d399;
+}
+
+@layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #2a2a32 transparent;
+  }
+
+  body {
+    background: #0e0e11;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-8px); }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(1.05); }
+}
+
+@keyframes orb-rotate {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.animate-float {
+  animation: float 4s ease-in-out infinite;
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 3s ease-in-out infinite;
+}
+
+.animate-orb-rotate {
+  animation: orb-rotate 8s linear infinite;
+}
+
+.orb-glow {
+  box-shadow:
+    0 0 40px rgba(139, 92, 246, 0.3),
+    0 0 80px rgba(139, 92, 246, 0.15),
+    0 0 120px rgba(139, 92, 246, 0.05);
+}
+
+.card-glow-purple {
+  box-shadow:
+    0 0 0 1px rgba(139, 92, 246, 0.3),
+    0 0 20px rgba(139, 92, 246, 0.05);
+}
+
+.btn-glow {
+  box-shadow:
+    0 0 20px rgba(139, 92, 246, 0.3),
+    0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.backdrop-blur-modal {
+  backdrop-filter: blur(12px) saturate(150%);
+  -webkit-backdrop-filter: blur(12px) saturate(150%);
+}
+
+.text-gradient-purple {
+  background: linear-gradient(135deg, #a78bfa, #8b5cf6);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}

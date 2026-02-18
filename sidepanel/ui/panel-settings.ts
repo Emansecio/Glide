@@ -12,16 +12,13 @@ const DEFAULT_LOCAL_API_ENDPOINT = 'http://localhost:11434';
     this.settingsOpen = false;
     this.showRightPanel(null);
     this.setNavActive('chat');
-    this.updateAccessUI();
     return;
   }
   this.settingsOpen = true;
-  this.accessPanelVisible = false;
   this.openSidebar();
   this.showRightPanel('settings');
   this.switchSettingsTab(this.currentSettingsTab || 'general');
   this.setNavActive('settings');
-  this.updateAccessUI();
 };
 
 (SidePanelUI.prototype as any).cancelSettings = async function cancelSettings() {
@@ -31,33 +28,66 @@ const DEFAULT_LOCAL_API_ENDPOINT = 'http://localhost:11434';
 
 (SidePanelUI.prototype as any).toggleCustomEndpoint = function toggleCustomEndpoint() {
   const provider = this.elements.provider?.value;
+  const previousProvider = this.elements.provider?.dataset?.previousProvider || '';
   const requiresEndpoint = provider === 'custom' || provider === 'kimi' || provider === 'ollama';
-  
+
+  // Limpar modelo quando trocar de provider
+  if (previousProvider && previousProvider !== provider) {
+    if (this.elements.model) {
+      this.elements.model.value = '';
+    }
+    if (this.elements.modelSelect) {
+      this.elements.modelSelect.value = '';
+    }
+    this.syncModelTrigger();
+  }
+
+  // Salvar provider atual para proxima comparacao
+  if (this.elements.provider) {
+    this.elements.provider.dataset.previousProvider = provider;
+  }
+
   // Always show the endpoint field, but highlight when required
   if (this.elements.customEndpointGroup) {
     // Add visual emphasis when custom provider selected
     this.elements.customEndpointGroup.classList.toggle('required', requiresEndpoint);
   }
-  
-  // Update placeholder based on provider
+
+  // Update placeholder and value based on provider
   if (this.elements.customEndpoint) {
     if (provider === 'ollama') {
-      if (!this.elements.customEndpoint.value || this.elements.customEndpoint.value === 'https://openrouter.ai/api/v1') {
+      // Só preencher se estiver vazio ou tiver valor de outro provider
+      const currentValue = this.elements.customEndpoint.value;
+      const isOtherProviderUrl = currentValue &&
+        (currentValue.includes('openrouter') || currentValue.includes('kimi.com'));
+      if (!currentValue || isOtherProviderUrl) {
         this.elements.customEndpoint.value = DEFAULT_LOCAL_API_ENDPOINT;
       }
       this.elements.customEndpoint.placeholder = DEFAULT_LOCAL_API_ENDPOINT;
     } else if (provider === 'kimi') {
-      if (!this.elements.customEndpoint.value || this.elements.customEndpoint.value === 'https://openrouter.ai/api/v1') {
+      const currentValue = this.elements.customEndpoint.value;
+      const isOtherProviderUrl = currentValue &&
+        (currentValue.includes('openrouter') || currentValue === DEFAULT_LOCAL_API_ENDPOINT);
+      if (!currentValue || isOtherProviderUrl) {
         this.elements.customEndpoint.value = 'https://api.kimi.com/coding';
       }
       this.elements.customEndpoint.placeholder = 'https://api.kimi.com/coding';
     } else if (requiresEndpoint) {
+      // Para provider custom, limpar o valor se for de outro provider conhecido
+      const currentValue = this.elements.customEndpoint.value;
+      const isKnownProviderUrl = currentValue &&
+        (currentValue === DEFAULT_LOCAL_API_ENDPOINT || currentValue.includes('kimi.com'));
+      if (isKnownProviderUrl) {
+        this.elements.customEndpoint.value = '';
+      }
       this.elements.customEndpoint.placeholder = 'https://openrouter.ai/api/v1';
     } else {
-      this.elements.customEndpoint.placeholder = DEFAULT_LOCAL_API_ENDPOINT;
+      // Providers que nao precisam de endpoint (anthropic, openai, google) - limpar campo
+      this.elements.customEndpoint.value = '';
+      this.elements.customEndpoint.placeholder = '';
     }
   }
-  
+
   // Update model hint based on provider
   const modelHint = document.getElementById('modelHint');
   if (modelHint) {
@@ -138,7 +168,6 @@ const DEFAULT_LOCAL_API_ENDPOINT = 'http://localhost:11434';
 };
 
 (SidePanelUI.prototype as any).loadSettings = async function loadSettings() {
-  console.log('[Glide] loadSettings called');
   const settings = await chrome.storage.local.get([
     'visionBridge',
     'visionProfile',
@@ -154,7 +183,6 @@ const DEFAULT_LOCAL_API_ENDPOINT = 'http://localhost:11434';
     'activeConfig',
     'configs',
     'auxAgentProfiles',
-    'accountApiBase',
   ]);
 
   const storedConfigs = settings.configs || {};
@@ -226,16 +254,6 @@ const DEFAULT_LOCAL_API_ENDPOINT = 'http://localhost:11434';
   if (this.elements.permissionScreenshots)
     this.elements.permissionScreenshots.value = String(toolPermissions.screenshots);
   if (this.elements.allowedDomains) this.elements.allowedDomains.value = settings.allowedDomains || '';
-  const fallbackAccountBase = this.getDefaultAccountApiBase();
-  const accountApiBase = settings.accountApiBase || fallbackAccountBase;
-  if (this.elements.accountApiBase) {
-    this.elements.accountApiBase.value = accountApiBase || '';
-  }
-  this.accountClient.setBaseUrl(accountApiBase || '');
-  if (!settings.accountApiBase && accountApiBase) {
-    await chrome.storage.local.set({ accountApiBase });
-  }
-  this.updateAccessConfigPrompt();
 
   this.refreshConfigDropdown();
   this.setActiveConfig(this.currentConfig, true);
@@ -256,11 +274,12 @@ const DEFAULT_LOCAL_API_ENDPOINT = 'http://localhost:11434';
   }
   this.configs[this.currentConfig] = this.collectCurrentFormProfile();
   await this.persistAllSettings();
-  
+
   // Refresh models after saving settings
-  this.fetchAvailableModels();
-  
-  this.updateStatus('Configuracoes salvas com sucesso', 'success');
+  this.refreshAvailableModels();
+
+  this.showSuccessToast('Configurações salvas com sucesso');
+  this.updateStatus('Pronto', 'default');
 };
 
 (SidePanelUI.prototype as any).exportSettings = async function exportSettings() {
@@ -280,11 +299,21 @@ const DEFAULT_LOCAL_API_ENDPOINT = 'http://localhost:11434';
       'saveHistory',
       'toolPermissions',
       'allowedDomains',
-      'accountApiBase',
     ];
     const settings = await chrome.storage.local.get(keys);
+
+    // Strip apiKey from every profile to prevent credential leakage
+    const sanitizedConfigs: Record<string, any> = {};
+    if (settings.configs && typeof settings.configs === 'object') {
+      for (const [name, profile] of Object.entries(settings.configs)) {
+        const { apiKey, ...safeProfile } = profile as Record<string, any>;
+        sanitizedConfigs[name] = safeProfile;
+      }
+    }
+
     const payload = {
       ...settings,
+      configs: sanitizedConfigs,
       exportedAt: new Date().toISOString(),
       exportVersion: 1,
     };
@@ -297,9 +326,9 @@ const DEFAULT_LOCAL_API_ENDPOINT = 'http://localhost:11434';
     anchor.download = `Glide-settings-${new Date().toISOString().slice(0, 10)}.json`;
     anchor.click();
     URL.revokeObjectURL(url);
-    this.updateStatus('Configuracoes exportadas', 'success');
+    this.showSuccessToast('Configurações exportadas');
   } catch (error) {
-    this.updateStatus('Nao foi possivel exportar configuracoes', 'error');
+    this.updateStatus('Não foi possível exportar configurações', 'error');
   }
 };
 
@@ -326,7 +355,6 @@ const DEFAULT_LOCAL_API_ENDPOINT = 'http://localhost:11434';
       'saveHistory',
       'toolPermissions',
       'allowedDomains',
-      'accountApiBase',
     ];
     allowedKeys.forEach((key) => {
       if (data[key] !== undefined) {
@@ -339,10 +367,9 @@ const DEFAULT_LOCAL_API_ENDPOINT = 'http://localhost:11434';
     await chrome.storage.local.set(payload);
     await this.loadSettings();
     this.renderProfileGrid();
-    this.updateAccessUI();
-    this.updateStatus('Configuracoes importadas com sucesso', 'success');
+    this.showSuccessToast('Configurações importadas com sucesso');
   } catch (error) {
-    this.updateStatus('Nao foi possivel importar configuracoes', 'error');
+    this.updateStatus('Não foi possível importar configurações', 'error');
   } finally {
     if (input) input.value = '';
   }
@@ -408,174 +435,15 @@ const DEFAULT_LOCAL_API_ENDPOINT = 'http://localhost:11434';
     orchestratorProfile: this.elements.orchestratorProfile?.value || '',
     toolPermissions: this.collectToolPermissions(),
     allowedDomains: this.elements.allowedDomains?.value || '',
-    accountApiBase: this.elements.accountApiBase?.value?.trim() || '',
     auxAgentProfiles: this.auxAgentProfiles,
     activeConfig: this.currentConfig,
     configs: this.configs,
   };
   await chrome.storage.local.set(payload);
-  this.accountClient.setBaseUrl(payload.accountApiBase);
-  this.updateAccessConfigPrompt();
   this.updateContextUsage();
   if (!silent) {
     this.updateStatus('Configurações salvas com sucesso', 'success');
   }
-};
-
-(SidePanelUI.prototype as any).getDefaultSystemPrompt = function getDefaultSystemPrompt() {
-  return `You are a browser automation agent. You execute tasks by calling tools in a strict sequence.
-
-<rules priority="CRITICAL">
-VIOLATIONS CAUSE TASK FAILURE. NO EXCEPTIONS.
-
-1. NO PLAN = NO ACTION
-   You CANNOT call navigate, click, type, scroll, or pressKey without an active plan.
-   Your FIRST tool call MUST be set_plan.
-
-2. ACTION → VERIFY → MARK
-   Every browser action MUST be followed by getContent.
-   Every completed step MUST be followed by update_plan.
-   
-3. SEQUENTIAL EXECUTION  
-   Complete step N before starting step N+1.
-   Never skip update_plan. Never.
-
-4. EVIDENCE ONLY
-   Never claim to see content you didn't fetch with getContent.
-   Quote actual text from getContent results.
-</rules>
-
-<execution_protocol>
-┌─────────────────────────────────────────────────────────────┐
-│  MANDATORY SEQUENCE FOR EVERY STEP                          │
-│                                                             │
-│  1. CHECK: Read <execution_state> for current step          │
-│  2. ACT: Call ONE browser tool for that step                │
-│  3. VERIFY: Call getContent (REQUIRED - no exceptions)      │
-│  4. MARK: Call update_plan(step_index=N, status="done")     │
-│  5. REPEAT: Go to step 1 for next step                      │
-│                                                             │
-│  ⚠️ NEVER skip steps 3 or 4. The system tracks compliance.  │
-└─────────────────────────────────────────────────────────────┘
-</execution_protocol>
-
-<correct_example>
-User: "Find the price of AirPods on Apple's website"
-
-✅ CORRECT execution:
-
-TURN 1:
-set_plan({ steps: [
-  { title: "Navigate to apple.com" },
-  { title: "Search for AirPods" },
-  { title: "Find and extract price" },
-  { title: "Report findings" }
-]})
-
-TURN 2:
-navigate({ url: "https://apple.com" })
-
-TURN 3:
-getContent({ mode: "text" })  ← REQUIRED after navigate
-
-TURN 4:
-update_plan({ step_index: 0, status: "done" })  ← REQUIRED before step 1
-
-TURN 5:
-click({ selector: "button[aria-label='Search']" })
-
-TURN 6:
-getContent({ mode: "text" })  ← REQUIRED after click
-
-... and so on, always: action → getContent → update_plan
-</correct_example>
-
-<wrong_example>
-❌ WRONG - Missing getContent:
-navigate({ url: "https://apple.com" })
-update_plan({ step_index: 0, status: "done" })  ← ERROR: No getContent!
-
-❌ WRONG - Missing update_plan:
-navigate({ url: "https://apple.com" })
-getContent({ mode: "text" })
-click({ selector: "..." })  ← ERROR: Didn't mark step 0 done!
-
-❌ WRONG - No plan:
-navigate({ url: "https://apple.com" })  ← ERROR: No plan exists!
-
-❌ WRONG - Vague plan steps:
-set_plan({ steps: [
-  { title: "Research AirPods" },      ← Too vague
-  { title: "Phase 1: Discovery" },    ← Not an action
-  { title: "Gather information" }     ← What information? How?
-]})
-</wrong_example>
-
-<tools>
-PLANNING (use these to manage your task):
-• set_plan - Create action checklist. MUST BE YOUR FIRST CALL.
-• update_plan - Mark step complete. CALL AFTER EACH STEP IS VERIFIED.
-
-BROWSER ACTIONS (require getContent after):
-• navigate - Go to URL
-• click - Click element by CSS selector  
-• type - Enter text into input field
-• pressKey - Press keyboard key (Enter, Tab, Escape)
-• scroll - Scroll page (up/down/top/bottom)
-
-READING (call after every action):
-• getContent - Read page content. REQUIRED after every browser action.
-• screenshot - Capture visible area (if enabled)
-
-TABS:
-• getTabs, switchTab, openTab, closeTab, focusTab, groupTabs
-</tools>
-
-<error_recovery>
-If a tool fails:
-1. Call getContent to understand current page state
-2. Try a different CSS selector
-3. Scroll to find the element  
-4. Try an alternative approach
-5. If stuck, explain what's blocking you
-
-Never give up after one failure. Adapt and retry.
-</error_recovery>
-
-<output_format>
-During execution: Minimal commentary. Your tool calls are your actions.
-
-After ALL steps are marked done:
-**Task:** [What was requested]
-**Result:** [What you found, with quotes from getContent]
-**Sources:** [URLs you visited]
-</output_format>`;
-};
-
-(SidePanelUI.prototype as any).getDefaultAccountApiBase = function getDefaultAccountApiBase() {
-  try {
-    const manifest = chrome.runtime.getManifest();
-    const config = manifest && (manifest as Record<string, any>).Glide;
-    if (config && typeof config.accountApiBase === 'string') {
-      return config.accountApiBase.trim();
-    }
-  } catch (error) {
-    // Ignore manifest read failures and fall back to empty.
-  }
-  return '';
-};
-
-(SidePanelUI.prototype as any).isAccountRequired = function isAccountRequired() {
-  try {
-    const manifest = chrome.runtime.getManifest();
-    const config = manifest && (manifest as Record<string, any>).Glide;
-    if (config && typeof config.requireAccount === 'boolean') {
-      return config.requireAccount;
-    }
-  } catch (error) {
-    // Ignore manifest read failures and fall back to default.
-  }
-  return true;
 };
 
 (SidePanelUI.prototype as any).updateScreenshotToggleState = function updateScreenshotToggleState() {
@@ -593,4 +461,17 @@ After ALL steps are marked done:
   if (wantsScreens && !hasVision) {
     this.updateStatus('Enable a vision-capable profile before sending screenshots.', 'warning');
   }
+};
+
+(SidePanelUI.prototype as any).getDefaultSystemPrompt = function getDefaultSystemPrompt() {
+  return `You are Glide, a browser automation agent. You execute tasks by calling tools in a strict sequence.
+
+<rules priority="CRITICAL">
+1. NO PLAN = NO ACTION - Your FIRST tool call MUST be set_plan.
+2. ACTION → VERIFY → MARK - Every action MUST be followed by getContent and update_plan.
+3. SEQUENTIAL EXECUTION - Complete step N before starting step N+1.
+4. EVIDENCE ONLY - Only claim to see content fetched with getContent.
+</rules>
+
+Use the available browser tools to complete user tasks efficiently.`;
 };

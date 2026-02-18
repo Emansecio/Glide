@@ -144,6 +144,8 @@ export class BrowserTools {
           type: 'object',
           properties: {
             tabId: { type: 'number', description: 'Optional tab id.' },
+            format: { type: 'string', description: 'Optional format: jpeg or png.' },
+            quality: { type: 'number', description: 'Optional JPEG quality (1-100).' },
           },
         },
       },
@@ -221,6 +223,7 @@ export class BrowserTools {
 
   async configureSessionTabs(tabs: chrome.tabs.Tab[], options: GroupOptions = {}) {
     this.sessionTabs.clear();
+    this.currentSessionTabId = null;
     this.sessionTabGroupId = null;
     tabs.forEach((tab) => {
       if (typeof tab.id !== 'number') return;
@@ -511,15 +514,110 @@ export class BrowserTools {
         const base = sel ? document.querySelector<HTMLElement>(sel) : document.body;
         if (!base) return { success: false, error: 'Target not found.' };
         const normalizedType = ['text', 'html', 'title', 'url', 'links'].includes(t) ? t : 'text';
+        const safeLimit = Number.isFinite(limit) ? Math.max(200, Math.floor(limit)) : 8000;
         const truncate = (value: string) => {
           const length = value.length;
-          if (length <= limit) {
+          if (length <= safeLimit) {
             return { content: value, truncated: false, contentLength: length };
           }
-          return { content: value.slice(0, limit), truncated: true, contentLength: length };
+          return { content: value.slice(0, safeLimit), truncated: true, contentLength: length };
+        };
+        const extractVisibleText = (root: HTMLElement, maxLen: number) => {
+          const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+            acceptNode: (node) => {
+              const parent = node.parentElement;
+              if (!parent) return NodeFilter.FILTER_REJECT;
+              const style = window.getComputedStyle(parent);
+              if (
+                style.display === 'none' ||
+                style.visibility === 'hidden' ||
+                style.opacity === '0' ||
+                parent.tagName === 'SCRIPT' ||
+                parent.tagName === 'STYLE'
+              ) {
+                return NodeFilter.FILTER_REJECT;
+              }
+              return node.textContent?.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+            },
+          });
+
+          const chunks: string[] = [];
+          let consumed = 0;
+          let truncated = false;
+          let node: Node | null;
+          while ((node = walker.nextNode())) {
+            const text = node.textContent?.trim() || '';
+            if (!text) continue;
+            const remaining = maxLen - consumed;
+            if (remaining <= 0) {
+              truncated = true;
+              break;
+            }
+            if (text.length > remaining) {
+              chunks.push(text.slice(0, remaining));
+              consumed += remaining;
+              truncated = true;
+              break;
+            }
+            chunks.push(text);
+            consumed += text.length + 1;
+          }
+
+          const content = chunks.join(' ').trim();
+          return {
+            content,
+            truncated,
+            contentLength: content.length,
+          };
+        };
+        const extractHtmlPreview = (root: HTMLElement, maxLen: number) => {
+          const escapeAttr = (value: string) => value.replace(/"/g, '&quot;');
+          const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+          let content = '';
+          let truncated = false;
+          let node: Node | null;
+
+          while ((node = walker.nextNode()) && content.length < maxLen) {
+            let chunk = '';
+            if (node.nodeType === Node.ELEMENT_NODE) {
+              const element = node as Element;
+              const attrs = Array.from(element.attributes)
+                .slice(0, 4)
+                .map((attr) => `${attr.name}="${escapeAttr(attr.value)}"`)
+                .join(' ');
+              chunk = attrs
+                ? `<${element.tagName.toLowerCase()} ${attrs}>`
+                : `<${element.tagName.toLowerCase()}>`;
+            } else {
+              chunk = node.textContent?.trim() || '';
+            }
+
+            if (!chunk) continue;
+            const remaining = maxLen - content.length;
+            if (remaining <= 0) {
+              truncated = true;
+              break;
+            }
+            if (chunk.length > remaining) {
+              content += chunk.slice(0, remaining);
+              truncated = true;
+              break;
+            }
+            content += chunk;
+          }
+
+          if (!truncated && content.length >= maxLen) {
+            truncated = true;
+          }
+
+          return {
+            content,
+            truncated,
+            contentLength: content.length,
+          };
         };
         if (normalizedType === 'html') {
-          const result = truncate(base.innerHTML);
+          const result = extractHtmlPreview(base, safeLimit);
           return { success: true, ...result };
         }
         if (normalizedType === 'title') {
@@ -531,16 +629,42 @@ export class BrowserTools {
           return { success: true, ...result };
         }
         if (normalizedType === 'links') {
-          const links = Array.from(base.querySelectorAll('a'))
-            .slice(0, 200)
-            .map((link) => ({
-              text: link.textContent || '',
-              href: link.href,
-            }));
-          const result = truncate(JSON.stringify(links));
-          return { success: true, items: links.length, ...result };
+          const maxItems = 200;
+          const links: Array<{ text: string; href: string }> = [];
+          const anchors = base.getElementsByTagName('a');
+          let estimatedLength = 2; // []
+          let truncated = false;
+
+          for (let i = 0; i < anchors.length && links.length < maxItems; i += 1) {
+            const link = anchors[i];
+            const item = {
+              text: (link.textContent || '').trim(),
+              href: link.href || '',
+            };
+            const serializedItem = JSON.stringify(item);
+            const projected = estimatedLength + serializedItem.length + (links.length > 0 ? 1 : 0);
+            if (projected > safeLimit) {
+              truncated = true;
+              break;
+            }
+            links.push(item);
+            estimatedLength = projected;
+          }
+
+          if (!truncated && (anchors.length > links.length || links.length >= maxItems)) {
+            truncated = anchors.length > links.length;
+          }
+
+          const content = JSON.stringify(links);
+          return {
+            success: true,
+            items: links.length,
+            content,
+            truncated,
+            contentLength: content.length,
+          };
         }
-        const result = truncate(base.innerText || '');
+        const result = extractVisibleText(base, safeLimit);
         return { success: true, ...result };
       },
       [type, selector, maxChars],
@@ -552,8 +676,31 @@ export class BrowserTools {
     const tabId = await this.resolveTabId(args);
     if (!tabId) return { success: false, error: 'No active tab.' };
     const tab = await chrome.tabs.get(tabId);
-    const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
-    return { success: true, dataUrl };
+    const requestedFormat = String(args.format || 'jpeg').toLowerCase();
+    const format = requestedFormat === 'png' ? 'png' : 'jpeg';
+    const quality =
+      typeof args.quality === 'number'
+        ? Math.max(1, Math.min(100, Math.round(args.quality)))
+        : 90;
+
+    if (format === 'png') {
+      const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+      return { success: true, dataUrl, format: 'png' };
+    }
+
+    try {
+      const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality });
+      return { success: true, dataUrl, format: 'jpeg', quality };
+    } catch (error) {
+      const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+      return {
+        success: true,
+        dataUrl,
+        format: 'png',
+        fallbackFrom: 'jpeg',
+        fallbackReason: error?.message || String(error),
+      };
+    }
   }
 
   private async getTabs() {

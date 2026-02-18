@@ -169,7 +169,7 @@ function estimateTokens(message: Message): number {
   if (Array.isArray(message.content)) {
     for (const part of message.content) {
       if (!part || typeof part !== 'object') continue;
-      if (part.type === 'image' || part.type === 'image_url' || part.type === 'image_url') {
+      if (part.type === 'image' || part.type === 'image_url') {
         tokens += 1200;
       }
       if (part.source?.data) {

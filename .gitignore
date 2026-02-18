@@ -1,4 +1,4 @@
-# Node modules (if added later)
+# Dependencies
 node_modules/
 
 # Build artifacts
@@ -34,6 +34,27 @@ tmp/
 temp/
 *.tmp
 
+# Images in root directory (screenshots, references)
+/*.png
+/*.jpg
+/*.jpeg
+/*.gif
+/*.svg
+/*.webp
 
-.claude
+# Documentation files (personal/AI context)
+AGENTS.md
+CLAUDE.md
 .osgrep
+
+# Claude Code specific
+.claude/
+
+# Project planning files (internal)
+CODE_REVIEW_REPORT.md
+
+# Keep example images in assets
+!assets/**/*.png
+!assets/**/*.jpg
+!assets/**/*.svg
+!icons/**/*.png

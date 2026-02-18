@@ -5,7 +5,9 @@ import { bindSidebarNavigation } from './panel-navigation.js';
 import { SidePanelUI } from './panel-ui.js';
 
 (SidePanelUI.prototype as any).init = async function init() {
-  console.log('[Glide] init() starting...');
+  const _debug = typeof process !== 'undefined' && process.env?.NODE_ENV === 'development';
+  this._debug = _debug;
+  if (_debug) console.log('[Glide] init() starting...');
   this.setupEventListeners();
   this.setupPlanDrawer();
   this.setupResizeObserver();
@@ -13,20 +15,17 @@ import { SidePanelUI } from './panel-ui.js';
   this.elements.sidebar?.classList.add('closed');
   this.elements.sidebar?.setAttribute('aria-hidden', 'true');
   this.elements.sidebarBackdrop?.classList.remove('visible');
-  console.log('[Glide] Calling loadSettings...');
+  if (_debug) console.log('[Glide] Calling loadSettings...');
   await this.loadSettings();
-  console.log('[Glide] loadSettings done, configs:', Object.keys(this.configs), 'current:', this.currentConfig);
-  console.log('[Glide] Config details:', JSON.stringify(this.configs[this.currentConfig] || {}).slice(0, 200));
-  await this.loadHistoryList();
-  await this.loadAccessState();
-  if (this.isAccessReady()) {
-    this.updateStatus('Pronto', 'success');
+  if (_debug) {
+    console.log('[Glide] loadSettings done, configs:', Object.keys(this.configs), 'current:', this.currentConfig);
+    console.log('[Glide] Config details:', JSON.stringify(this.configs[this.currentConfig] || {}).slice(0, 200));
   }
+  await this.loadHistoryList();
+  this.updateStatus('Pronto', 'success');
   this.updateModelDisplay();
-  console.log('[Glide] Calling fetchAvailableModels...');
-  this.fetchAvailableModels();
   this.updateChatEmptyState?.();
-  console.log('[Glide] init() complete');
+  if (_debug) console.log('[Glide] init() complete');
 };
 
 (SidePanelUI.prototype as any).setupEventListeners = function setupEventListeners() {
@@ -36,40 +35,12 @@ import { SidePanelUI } from './panel-ui.js';
     onChat: () => this.openChatView(),
     onHistory: () => this.openHistoryPanel(),
     onSettings: () => this.openSettingsPanel(),
-    onAccount: () => this.openAccountPanel(),
   });
 
   this.elements.settingsBtn?.addEventListener('click', () => {
     this.openSettingsPanel();
   });
 
-  this.elements.accountBtn?.addEventListener('click', () => {
-    this.toggleAccessPanel();
-  });
-
-  this.elements.authStartBtn?.addEventListener('click', (event) => {
-    event?.preventDefault?.();
-    this.startEmailAuth();
-  });
-  this.elements.authForm?.addEventListener('submit', (event) => {
-    event.preventDefault();
-    this.startEmailAuth();
-  });
-  this.elements.authOpenBtn?.addEventListener('click', () => this.openAuthPage());
-  this.elements.authTokenSaveBtn?.addEventListener('click', () => this.saveAccessToken());
-  this.elements.authOpenSettingsBtn?.addEventListener('click', () =>
-    this.openAccountSettings({ focusAccountApi: true }),
-  );
-  this.elements.billingStartBtn?.addEventListener('click', () => this.startSubscription());
-  this.elements.billingManageBtn?.addEventListener('click', () => this.manageBilling());
-  this.elements.authLogoutBtn?.addEventListener('click', () => this.signOut());
-  this.elements.accountRefreshBtn?.addEventListener('click', () => this.refreshAccountData());
-  this.elements.accountCheckoutBtn?.addEventListener('click', () => this.startSubscription());
-  this.elements.accountPortalBtn?.addEventListener('click', () => this.manageBilling());
-  this.elements.accountOpenSettingsBtn?.addEventListener('click', () => this.openSettingsFromAccount());
-  this.elements.accountOpenProfilesBtn?.addEventListener('click', () => this.openProfilesFromAccount());
-  this.elements.accountOpenHistoryBtn?.addEventListener('click', () => this.openHistoryFromAccount());
-  this.elements.accountLogoutBtn?.addEventListener('click', () => this.signOut());
 
   this.elements.startNewSessionBtn?.addEventListener('click', () => this.startNewSession());
   this.elements.clearHistoryBtn?.addEventListener('click', () => this.clearAllHistory());
@@ -173,9 +144,64 @@ import { SidePanelUI } from './panel-ui.js';
     event.stopPropagation();
     this.toggleModelMenu();
   });
+  this.elements.modelSelectTrigger?.addEventListener('keydown', (event: KeyboardEvent) => {
+    if (event.key === 'Enter' || event.key === ' ' || event.key === 'Spacebar') {
+      event.preventDefault();
+      this.toggleModelMenu('selected');
+      return;
+    }
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      if (this.isModelMenuOpen?.()) {
+        this.moveModelMenuFocus(1);
+      } else {
+        this.toggleModelMenu('first');
+      }
+      return;
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      if (this.isModelMenuOpen?.()) {
+        this.moveModelMenuFocus(-1);
+      } else {
+        this.toggleModelMenu('last');
+      }
+      return;
+    }
+    if (event.key === 'Escape' && this.isModelMenuOpen?.()) {
+      event.preventDefault();
+      this.closeModelMenu({ focusTrigger: true });
+    }
+  });
+  this.elements.modelSelectMenu?.addEventListener('keydown', (event: KeyboardEvent) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      this.closeModelMenu({ focusTrigger: true });
+      return;
+    }
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      this.moveModelMenuFocus(1);
+      return;
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      this.moveModelMenuFocus(-1);
+      return;
+    }
+    if (event.key === 'Enter' || event.key === ' ' || event.key === 'Spacebar') {
+      const target = event.target as HTMLElement | null;
+      const option = target?.closest('.model-option') as HTMLElement | null;
+      if (!option) return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.selectModelOptionByElement(option);
+    }
+  });
   document.addEventListener('click', (event: Event) => {
     const target = event.target as HTMLElement | null;
-    const withinSelector = target?.closest('.model-selector');
+    const withinSelector = target?.closest('.model-picker');
     if (!withinSelector) {
       this.closeModelMenu();
     }
@@ -225,12 +251,20 @@ import { SidePanelUI } from './panel-ui.js';
 
 (SidePanelUI.prototype as any).setupResizeObserver = function setupResizeObserver() {
   if (!this.elements.chatMessages || typeof ResizeObserver === 'undefined') return;
+  this.destroyResizeObserver();
   this.chatResizeObserver = new ResizeObserver(() => {
     if (this.shouldAutoScroll() && this.isNearBottom) {
       this.scrollToBottom();
     }
   });
   this.chatResizeObserver.observe(this.elements.chatMessages);
+};
+
+(SidePanelUI.prototype as any).destroyResizeObserver = function destroyResizeObserver() {
+  if (this.chatResizeObserver) {
+    this.chatResizeObserver.disconnect();
+    this.chatResizeObserver = null;
+  }
 };
 
 (SidePanelUI.prototype as any).handleRuntimeMessage = function handleRuntimeMessage(message: any) {
@@ -243,7 +277,6 @@ import { SidePanelUI } from './panel-ui.js';
     if (message.channel === 'reasoning') {
       const delta = message.content || '';
       this.streamingReasoning = `${this.streamingReasoning}${delta}`;
-      this.updateThinkingPanel(this.streamingReasoning, true);
       this.updateStreamReasoning(delta);
       return;
     }
@@ -339,16 +372,19 @@ import { SidePanelUI } from './panel-ui.js';
     });
     if (assistantEntry) {
       this.contextHistory.push(assistantEntry);
+      this.bumpContextUsageWithMessages?.([assistantEntry]);
     }
     return;
   }
   const normalized = normalizeConversationHistory(responseMessages as unknown as Message[]);
   this.contextHistory.push(...normalized);
+  this.bumpContextUsageWithMessages?.(normalized);
 };
 
 (SidePanelUI.prototype as any).handleContextCompaction = function handleContextCompaction(message: any) {
   const normalized = normalizeConversationHistory(message.contextMessages as unknown as Message[]);
   this.contextHistory = normalized;
+  this.invalidateContextUsageCache?.();
   this.sessionId = message.newSessionId || this.sessionId;
 
   const summaryText = message.summary || 'Context compacted.';

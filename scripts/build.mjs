@@ -9,7 +9,7 @@ const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, '..');
 
 const distDir = path.join(rootDir, 'dist');
-const serverDistDir = path.join(rootDir, 'server', 'dist');
+
 
 const ensureDir = (dir) => fs.mkdirSync(dir, { recursive: true });
 const cleanDir = (dir) => {
@@ -41,10 +41,8 @@ const copyDirFiltered = (src, dest, filter) => {
 
 const run = async () => {
   cleanDir(distDir);
-  cleanDir(serverDistDir);
 
   execSync('tsc -p tsconfig.json --noEmit', { stdio: 'inherit' });
-  execSync('tsc -p server/tsconfig.json', { stdio: 'inherit' });
 
   // Build background and sidepanel as ESM (they support modules)
   await esbuild.build({
@@ -100,10 +98,6 @@ const run = async () => {
   copyDirFiltered(path.join(rootDir, 'sidepanel', 'styles'), path.join(distDir, 'sidepanel', 'styles'));
   copyDirFiltered(path.join(rootDir, 'sidepanel', 'templates'), path.join(distDir, 'sidepanel', 'templates'));
   copyDirFiltered(path.join(rootDir, 'icons'), path.join(distDir, 'icons'));
-
-  copyDirFiltered(path.join(rootDir, 'server', 'public'), path.join(serverDistDir, 'public'), (srcPath) => {
-    return !srcPath.endsWith('.ts');
-  });
 };
 
 run().catch((error) => {

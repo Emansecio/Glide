@@ -234,7 +234,8 @@
 }
 
 .plan-drawer {
-  margin: 0 12px;
+  margin: 8px auto 0;
+  max-width: min(760px, calc(100% - 24px));
   border: 1px solid var(--border);
   border-bottom: none;
   border-radius: 12px 12px 0 0;

@@ -2,10 +2,6 @@ import { setSidebarOpen, showRightPanel as showRightPanelContent, updateNavActiv
 import { SidePanelUI } from './panel-ui.js';
 
 (SidePanelUI.prototype as any).switchView = function switchView(view: 'chat' | 'history') {
-  if (!this.isAccessReady()) {
-    this.updateAccessUI();
-    return;
-  }
   this.currentView = view;
   if (!this.elements.chatInterface || !this.elements.historyPanel) return;
   if (view === 'history') {
@@ -32,60 +28,43 @@ import { SidePanelUI } from './panel-ui.js';
 };
 
 (SidePanelUI.prototype as any).showRightPanel = function showRightPanel(
-  panelName: 'history' | 'settings' | 'account' | null,
+  panelName: 'history' | 'settings' | null,
 ) {
   showRightPanelContent(this.elements, panelName);
 };
 
 (SidePanelUI.prototype as any).setNavActive = function setNavActive(
-  navName: 'chat' | 'history' | 'settings' | 'account',
+  navName: 'chat' | 'history' | 'settings',
 ) {
   updateNavActive(this.elements, navName);
 };
 
 (SidePanelUI.prototype as any).openChatView = function openChatView() {
   this.settingsOpen = false;
-  this.accessPanelVisible = false;
   this.showRightPanel(null);
   this.switchView('chat');
   this.setNavActive('chat');
-  this.updateAccessUI();
 };
 
 (SidePanelUI.prototype as any).openHistoryPanel = function openHistoryPanel() {
   this.settingsOpen = false;
-  this.accessPanelVisible = false;
   this.openSidebar();
   this.showRightPanel('history');
   this.setNavActive('history');
-  this.loadHistoryList(); // Refresh history when opening panel
-  this.updateAccessUI();
+  if (this.historyListDirty) {
+    this.loadHistoryList();
+  }
 };
 
 (SidePanelUI.prototype as any).openSettingsPanel = function openSettingsPanel() {
   this.settingsOpen = true;
-  this.accessPanelVisible = false;
   this.openSidebar();
   this.showRightPanel('settings');
   this.switchSettingsTab(this.currentSettingsTab || 'general');
   this.setNavActive('settings');
-  this.updateAccessUI();
-};
-
-(SidePanelUI.prototype as any).openAccountPanel = function openAccountPanel() {
-  this.settingsOpen = false;
-  this.accessPanelVisible = true;
-  this.openSidebar();
-  this.showRightPanel('account');
-  this.setNavActive('account');
-  this.updateAccessUI();
 };
 
 (SidePanelUI.prototype as any).startNewSession = function startNewSession() {
-  if (!this.isAccessReady()) {
-    this.updateAccessUI();
-    return;
-  }
   this.displayHistory = [];
   this.contextHistory = [];
   this.sessionId = `session-${Date.now()}`;
@@ -99,6 +78,7 @@ import { SidePanelUI } from './panel-ui.js';
     totalTokens: 0,
   };
   this.currentPlan = null;
+  this.invalidateContextUsageCache?.();
   this.hidePlanDrawer();
   this.stopThinkingTimer?.();
   this.subagents.clear();
@@ -110,6 +90,6 @@ import { SidePanelUI } from './panel-ui.js';
   this.hideAgentNav();
   this.updateStatus('Ready for a new session', 'success');
   this.switchView('chat');
-  this.updateContextUsage();
+  this.scheduleContextUsageRecompute?.({ force: true });
   this.scrollToBottom({ force: true });
 };

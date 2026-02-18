@@ -1,7 +1,7 @@
 import type { SidePanelElements } from './panel-elements.js';
 
-export type RightPanelName = 'history' | 'settings' | 'account' | null;
-export type NavName = 'chat' | 'history' | 'settings' | 'account';
+export type RightPanelName = 'history' | 'settings' | null;
+export type NavName = 'chat' | 'history' | 'settings';
 
 const PANEL_SELECTOR = '.right-panel-content';
 
@@ -42,7 +42,6 @@ export const updateNavActive = (elements: SidePanelElements, navName: NavName) =
   elements.navChatBtn?.classList.remove('active');
   elements.navHistoryBtn?.classList.remove('active');
   elements.navSettingsBtn?.classList.remove('active');
-  elements.navAccountBtn?.classList.remove('active');
 
   switch (navName) {
     case 'chat':
@@ -54,9 +53,6 @@ export const updateNavActive = (elements: SidePanelElements, navName: NavName) =
     case 'settings':
       elements.navSettingsBtn?.classList.add('active');
       break;
-    case 'account':
-      elements.navAccountBtn?.classList.add('active');
-      break;
   }
 };
 
@@ -66,7 +62,6 @@ type NavigationHandlers = {
   onChat: () => void;
   onHistory: () => void;
   onSettings: () => void;
-  onAccount: () => void;
 };
 
 export const bindSidebarNavigation = (elements: SidePanelElements, handlers: NavigationHandlers) => {
@@ -84,10 +79,9 @@ export const bindSidebarNavigation = (elements: SidePanelElements, handlers: Nav
   });
   elements.closeSidebarBtn?.addEventListener('click', handlers.onClose);
   elements.sidebarBackdrop?.addEventListener('click', handlers.onClose);
-  
+
   // Bind nav buttons
   elements.navChatBtn?.addEventListener('click', handlers.onChat);
   elements.navHistoryBtn?.addEventListener('click', handlers.onHistory);
   elements.navSettingsBtn?.addEventListener('click', handlers.onSettings);
-  elements.navAccountBtn?.addEventListener('click', handlers.onAccount);
 };

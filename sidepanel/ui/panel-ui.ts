@@ -1,8 +1,7 @@
 import type { Message } from '../../ai/message-schema.js';
 import type { RunPlan } from '../../types/plan.js';
-import { AccountClient } from '../services/account-client.js';
 import { getSidePanelElements } from './panel-elements.js';
-import type { AuthState, BillingOverview, Entitlement, UsageStats } from './panel-types.js';
+import type { UsageStats } from './panel-types.js';
 
 export class SidePanelUI {
   elements: Record<string, any>;
@@ -22,6 +21,8 @@ export class SidePanelUI {
   isStreaming: boolean;
   thinkingStartedAt: number | null;
   thinkingTimerId: number | null;
+  streamTextRenderTimerId: number | null;
+  streamReasoningRenderTimerId: number | null;
   streamingState: {
     container: HTMLElement;
     eventsEl: HTMLElement | null;
@@ -30,6 +31,7 @@ export class SidePanelUI {
     reasoningEventEl?: HTMLElement | null;
     textBuffer?: string;
     reasoningBuffer?: string;
+    reasoningRawBuffer?: string;
     planEl?: HTMLElement | null;
     planListEl?: HTMLOListElement | null;
     planMetaEl?: HTMLElement | null;
@@ -42,19 +44,21 @@ export class SidePanelUI {
     maxContextTokens: number;
     percent: number;
   };
+  contextCharCount: number;
+  contextTrackedMessageCount: number;
+  contextUsageDebounceTimerId: number | null;
   sessionTokensUsed: number;
   lastUsage: UsageStats | null;
   sessionTokenTotals: UsageStats;
+  historyPersistDebounceTimerId: number | null;
+  historyListDirty: boolean;
   auxAgentProfiles: string[];
   currentView: 'chat' | 'history';
   currentSettingsTab: 'general' | 'profiles';
   profileEditorTarget: string;
-  authState: AuthState;
-  entitlement: Entitlement;
-  billingOverview: BillingOverview | null;
-  accessPanelVisible: boolean;
   settingsOpen: boolean;
-  accountClient: AccountClient;
+  modelsFetchController: AbortController | null;
+  modelsFetchSeq: number;
   subagents: Map<string, { name: string; status: string; messages: any[]; tasks?: string[] }>;
   activeAgent: string;
   activityPanelOpen: boolean;
@@ -85,6 +89,8 @@ export class SidePanelUI {
     this.isStreaming = false;
     this.thinkingStartedAt = null;
     this.thinkingTimerId = null;
+    this.streamTextRenderTimerId = null;
+    this.streamReasoningRenderTimerId = null;
     this.streamingState = null;
     this.userScrolledUp = false;
     this.isNearBottom = true;
@@ -94,6 +100,9 @@ export class SidePanelUI {
       maxContextTokens: 196000,
       percent: 0,
     };
+    this.contextCharCount = 0;
+    this.contextTrackedMessageCount = 0;
+    this.contextUsageDebounceTimerId = null;
     this.sessionTokensUsed = 0;
     this.lastUsage = null;
     this.sessionTokenTotals = {
@@ -101,19 +110,15 @@ export class SidePanelUI {
       outputTokens: 0,
       totalTokens: 0,
     };
+    this.historyPersistDebounceTimerId = null;
+    this.historyListDirty = false;
     this.auxAgentProfiles = [];
     this.currentView = 'chat';
     this.currentSettingsTab = 'general';
     this.profileEditorTarget = 'default';
-    this.authState = { status: 'signed_out' };
-    this.entitlement = { active: false, plan: 'none' };
-    this.billingOverview = null;
-    this.accessPanelVisible = false;
     this.settingsOpen = false;
-    this.accountClient = new AccountClient({
-      baseUrl: '',
-      getAuthToken: () => this.authState?.accessToken || '',
-    });
+    this.modelsFetchController = null;
+    this.modelsFetchSeq = 0;
     this.subagents = new Map();
     this.activeAgent = 'main';
     this.activityPanelOpen = false;

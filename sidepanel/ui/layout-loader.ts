@@ -29,10 +29,6 @@ export const loadPanelLayout = async () => {
     settingsPanel,
     settingsGeneral,
     settingsProfiles,
-    accountPanel,
-    accountAuth,
-    accountBilling,
-    accountMain,
     tabSelector,
   ] = await Promise.all([
     loadTemplate('sidebar-shell.html'),
@@ -41,10 +37,6 @@ export const loadPanelLayout = async () => {
     loadTemplate('panels/settings.html'),
     loadTemplate('panels/settings-general.html'),
     loadTemplate('panels/settings-profiles.html'),
-    loadTemplate('panels/account.html'),
-    loadTemplate('panels/account-auth.html'),
-    loadTemplate('panels/account-billing.html'),
-    loadTemplate('panels/account-main.html'),
     loadTemplate('tab-selector.html'),
   ]);
 
@@ -56,13 +48,10 @@ export const loadPanelLayout = async () => {
   appContainer.insertAdjacentHTML('beforeend', mainContent.trim());
 
   const rightPanels = appContainer.querySelector('#rightPanelPanels') as HTMLElement | null;
-  rightPanels?.insertAdjacentHTML('beforeend', (historyPanel + settingsPanel + accountPanel).trim());
+  rightPanels?.insertAdjacentHTML('beforeend', (historyPanel + settingsPanel).trim());
 
   replaceWithHtml(appContainer, '#settingsTabGeneral', settingsGeneral);
   replaceWithHtml(appContainer, '#settingsTabProfiles', settingsProfiles);
-  replaceWithHtml(appContainer, '#authPanel', accountAuth);
-  replaceWithHtml(appContainer, '#billingPanel', accountBilling);
-  replaceWithHtml(appContainer, '#accountPanel', accountMain);
 
   const modalRoot = document.getElementById('modalRoot');
   if (modalRoot) {

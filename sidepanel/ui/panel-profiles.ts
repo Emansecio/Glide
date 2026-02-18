@@ -25,7 +25,7 @@ import { SidePanelUI } from './panel-ui.js';
 
   this.refreshConfigDropdown();
   this.setActiveConfig(trimmedName, true);
-  this.updateStatus(`Perfil "${trimmedName}" criado`, 'success');
+  this.showSuccessToast(`Perfil "${trimmedName}" criado`);
 };
 
 (SidePanelUI.prototype as any).deleteConfig = async function deleteConfig() {
@@ -39,7 +39,7 @@ import { SidePanelUI } from './panel-ui.js';
     this.currentConfig = 'default';
     this.refreshConfigDropdown();
     this.setActiveConfig(this.currentConfig, true);
-    this.updateStatus('Perfil excluido', 'success');
+    this.showSuccessToast('Perfil excluído');
   }
 };
 
@@ -267,7 +267,7 @@ import { SidePanelUI } from './panel-ui.js';
     this.toggleCustomEndpoint();
   }
   this.renderProfileGrid();
-  this.updateStatus(`Perfil "${target}" salvo`, 'success');
+  this.showSuccessToast(`Perfil "${target}" salvo`);
 };
 
 (SidePanelUI.prototype as any).populateFormFromConfig = function populateFormFromConfig(
@@ -291,7 +291,7 @@ import { SidePanelUI } from './panel-ui.js';
   if (this.elements.enableScreenshots) this.elements.enableScreenshots.value = config.enableScreenshots ? 'true' : 'false';
   if (this.elements.sendScreenshotsAsImages) this.elements.sendScreenshotsAsImages.value = config.sendScreenshotsAsImages ? 'true' : 'false';
   if (this.elements.screenshotQuality) this.elements.screenshotQuality.value = config.screenshotQuality || 'high';
-  if (this.elements.streamResponses) this.elements.streamResponses.value = config.streamResponses !== false ? 'true' : 'true';
+  if (this.elements.streamResponses) this.elements.streamResponses.value = config.streamResponses !== false ? 'true' : 'false';
   if (this.elements.showThinking) this.elements.showThinking.value = config.showThinking !== false ? 'true' : 'false';
   if (this.elements.autoScroll) this.elements.autoScroll.value = config.autoScroll !== false ? 'true' : 'false';
   if (this.elements.confirmActions) this.elements.confirmActions.value = config.confirmActions !== false ? 'true' : 'false';
@@ -308,8 +308,8 @@ import { SidePanelUI } from './panel-ui.js';
   this.updateScreenshotToggleState?.();
   this.editProfile?.(name, true);
   this.updateModelDisplay();
-  this.fetchAvailableModels();
+  this.refreshAvailableModels();
   if (!quiet) {
-    this.updateStatus(`Configuracao alterada para "${name}"`, 'success');
+    this.showSuccessToast(`Configuração alterada para "${name}"`);
   }
 };

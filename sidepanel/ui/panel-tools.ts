@@ -156,6 +156,48 @@ import { SidePanelUI } from './panel-ui.js';
   document.querySelectorAll('.error-banner').forEach((el) => el.remove());
 };
 
+(SidePanelUI.prototype as any).showSuccessToast = function showSuccessToast(message: string, duration = 3000) {
+  // Remover toasts existentes
+  document.querySelectorAll('.success-toast').forEach((el) => {
+    el.classList.add('hiding');
+    setTimeout(() => el.remove(), 150);
+  });
+
+  const toast = document.createElement('div');
+  toast.className = 'success-toast';
+  toast.innerHTML = `
+    <svg class="toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+      <polyline points="20 6 9 17 4 12"></polyline>
+    </svg>
+    <span class="toast-text">${this.escapeHtml(message)}</span>
+    <button class="toast-dismiss" title="Fechar">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="18" y1="6" x2="6" y2="18"></line>
+        <line x1="6" y1="6" x2="18" y2="18"></line>
+      </svg>
+    </button>
+  `;
+
+  const dismissBtn = toast.querySelector('.toast-dismiss');
+  dismissBtn?.addEventListener('click', () => {
+    toast.classList.add('hiding');
+    setTimeout(() => toast.remove(), 150);
+  });
+
+  document.body.appendChild(toast);
+
+  // Auto-remove
+  const autoRemoveTimeout = setTimeout(() => {
+    if (toast.parentElement) {
+      toast.classList.add('hiding');
+      setTimeout(() => toast.remove(), 150);
+    }
+  }, duration);
+
+  // Limpar timeout se manualmente fechado
+  dismissBtn?.addEventListener('click', () => clearTimeout(autoRemoveTimeout));
+};
+
 (SidePanelUI.prototype as any).getArgsPreview = function getArgsPreview(args: any) {
   if (!args) return '';
   if (args.url) return args.url.substring(0, 30) + (args.url.length > 30 ? '...' : '');

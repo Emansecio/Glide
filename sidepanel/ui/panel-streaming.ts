@@ -2,6 +2,9 @@ import { dedupeThinking } from '../../ai/message-utils.js';
 import type { RunPlan } from '../../types/plan.js';
 import { SidePanelUI } from './panel-ui.js';
 
+const STREAM_TEXT_RENDER_INTERVAL_MS = 50;
+const STREAM_REASONING_RENDER_INTERVAL_MS = 100;
+
 const formatElapsed = (elapsedMs: number) => {
   const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
   const minutes = Math.floor(totalSeconds / 60);
@@ -28,6 +31,59 @@ const formatElapsed = (elapsedMs: number) => {
   this.updateActivityState();
 };
 
+(SidePanelUI.prototype as any).clearStreamingRenderTimers = function clearStreamingRenderTimers() {
+  if (this.streamTextRenderTimerId) {
+    window.clearTimeout(this.streamTextRenderTimerId);
+    this.streamTextRenderTimerId = null;
+  }
+  if (this.streamReasoningRenderTimerId) {
+    window.clearTimeout(this.streamReasoningRenderTimerId);
+    this.streamReasoningRenderTimerId = null;
+  }
+};
+
+(SidePanelUI.prototype as any).scheduleStreamingTextRender = function scheduleStreamingTextRender() {
+  if (this.streamTextRenderTimerId) return;
+  this.streamTextRenderTimerId = window.setTimeout(() => {
+    this.streamTextRenderTimerId = null;
+    this.flushStreamingTextRender();
+  }, STREAM_TEXT_RENDER_INTERVAL_MS);
+};
+
+(SidePanelUI.prototype as any).flushStreamingTextRender = function flushStreamingTextRender() {
+  if (!this.streamingState?.textEventEl) return;
+  const text = this.streamingState.textBuffer || '';
+  this.streamingState.textEventEl.innerHTML = this.renderMarkdown(text);
+  this.scrollToBottom();
+};
+
+(SidePanelUI.prototype as any).scheduleStreamingReasoningRender = function scheduleStreamingReasoningRender() {
+  if (this.streamReasoningRenderTimerId) return;
+  this.streamReasoningRenderTimerId = window.setTimeout(() => {
+    this.streamReasoningRenderTimerId = null;
+    this.flushStreamingReasoningRender();
+  }, STREAM_REASONING_RENDER_INTERVAL_MS);
+};
+
+(SidePanelUI.prototype as any).flushStreamingReasoningRender = function flushStreamingReasoningRender() {
+  if (!this.streamingState?.reasoningEventEl) return;
+  const raw = this.streamingState.reasoningRawBuffer || '';
+  if (!raw.trim()) return;
+
+  const cleaned = dedupeThinking(raw);
+  this.streamingState.reasoningBuffer = cleaned;
+  this.streamingState.reasoningEventEl.textContent = cleaned;
+
+  const panel = this.elements.thinkingPanel as HTMLElement | null;
+  if (panel) {
+    this.latestThinking = cleaned;
+    panel.textContent = cleaned;
+    panel.classList.remove('empty');
+    panel.classList.add('streaming');
+  }
+  this.scrollToBottom();
+};
+
 (SidePanelUI.prototype as any).startThinkingTimer = function startThinkingTimer() {
   if (this.thinkingTimerId) {
     window.clearInterval(this.thinkingTimerId);
@@ -47,10 +103,12 @@ const formatElapsed = (elapsedMs: number) => {
     this.thinkingTimerId = null;
   }
   this.thinkingStartedAt = null;
+  this.clearStreamingRenderTimers();
 };
 
 (SidePanelUI.prototype as any).startStreamingMessage = function startStreamingMessage() {
   if (this.streamingState) return;
+  this.clearStreamingRenderTimers();
   const container = document.createElement('div');
   container.className = 'message assistant streaming';
   container.innerHTML = `
@@ -69,6 +127,7 @@ const formatElapsed = (elapsedMs: number) => {
     reasoningEventEl: null,
     textBuffer: '',
     reasoningBuffer: '',
+    reasoningRawBuffer: '',
     planEl: null,
     planListEl: null,
     planMetaEl: null,
@@ -93,20 +152,23 @@ const formatElapsed = (elapsedMs: number) => {
   }
 
   this.streamingState.textBuffer = `${this.streamingState.textBuffer || ''}${content || ''}`;
-  if (this.streamingState.textEventEl) {
-    this.streamingState.textEventEl.innerHTML = this.renderMarkdown(this.streamingState.textBuffer || '');
-  }
-
-  this.scrollToBottom();
+  this.scheduleStreamingTextRender();
 };
 
 (SidePanelUI.prototype as any).completeStreamingMessage = function completeStreamingMessage() {
   if (!this.streamingState?.container) return;
+
+  this.flushStreamingTextRender();
+  this.flushStreamingReasoningRender();
+  this.clearStreamingRenderTimers();
+
   const indicator = this.streamingState.container.querySelector('.typing-indicator');
   if (indicator) indicator.remove();
   this.streamingState.container.classList.remove('streaming');
-  if (this.streamingReasoning) {
-    this.updateThinkingPanel(this.streamingReasoning, false);
+
+  const finalReasoning = this.streamingState.reasoningBuffer || '';
+  if (finalReasoning) {
+    this.updateThinkingPanel(finalReasoning, false);
   } else {
     this.updateThinkingPanel(null, false);
   }
@@ -115,7 +177,7 @@ const formatElapsed = (elapsedMs: number) => {
 (SidePanelUI.prototype as any).updateStreamReasoning = function updateStreamReasoning(delta: string | null) {
   if (!this.streamingState?.eventsEl) return;
   if (delta === null || delta === undefined) return;
-  if (!delta.trim() && !this.streamingState.reasoningBuffer) return;
+  if (!delta.trim() && !this.streamingState.reasoningRawBuffer) return;
 
   if (this.streamingState.lastEventType !== 'reasoning') {
     const reasoningEvent = document.createElement('div');
@@ -129,16 +191,12 @@ const formatElapsed = (elapsedMs: number) => {
       '.stream-reasoning-content',
     ) as HTMLElement | null;
     this.streamingState.reasoningBuffer = '';
+    this.streamingState.reasoningRawBuffer = '';
     this.streamingState.lastEventType = 'reasoning';
   }
 
-  const nextBuffer = `${this.streamingState.reasoningBuffer || ''}${delta}`;
-  this.streamingState.reasoningBuffer = nextBuffer;
-  const cleaned = dedupeThinking(nextBuffer);
-  if (this.streamingState.reasoningEventEl) {
-    this.streamingState.reasoningEventEl.textContent = cleaned;
-  }
-  this.scrollToBottom();
+  this.streamingState.reasoningRawBuffer = `${this.streamingState.reasoningRawBuffer || ''}${delta}`;
+  this.scheduleStreamingReasoningRender();
 };
 
 (SidePanelUI.prototype as any).applyPlanUpdate = function applyPlanUpdate(plan: RunPlan) {
@@ -208,6 +266,7 @@ const formatElapsed = (elapsedMs: number) => {
   const container = this.streamingState.container;
 
   this.completeStreamingMessage();
+  this.clearStreamingRenderTimers();
   this.streamingState = null;
   this.isStreaming = false;
   this.updateActivityState();

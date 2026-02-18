@@ -128,7 +128,7 @@ import { SidePanelUI } from './panel-ui.js';
 };
 
 (SidePanelUI.prototype as any).loadSettings = async function loadSettings() {
-  console.log('[Parchi] loadSettings called');
+  console.log('[Glide] loadSettings called');
   const settings = await chrome.storage.local.get([
     'visionBridge',
     'visionProfile',
@@ -276,7 +276,7 @@ import { SidePanelUI } from './panel-ui.js';
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
-    anchor.download = `parchi-settings-${new Date().toISOString().slice(0, 10)}.json`;
+    anchor.download = `Glide-settings-${new Date().toISOString().slice(0, 10)}.json`;
     anchor.click();
     URL.revokeObjectURL(url);
     this.updateStatus('Settings export downloaded', 'success');
@@ -537,7 +537,7 @@ After ALL steps are marked done:
 (SidePanelUI.prototype as any).getDefaultAccountApiBase = function getDefaultAccountApiBase() {
   try {
     const manifest = chrome.runtime.getManifest();
-    const config = manifest && (manifest as Record<string, any>).parchi;
+    const config = manifest && (manifest as Record<string, any>).Glide;
     if (config && typeof config.accountApiBase === 'string') {
       return config.accountApiBase.trim();
     }
@@ -550,7 +550,7 @@ After ALL steps are marked done:
 (SidePanelUI.prototype as any).isAccountRequired = function isAccountRequired() {
   try {
     const manifest = chrome.runtime.getManifest();
-    const config = manifest && (manifest as Record<string, any>).parchi;
+    const config = manifest && (manifest as Record<string, any>).Glide;
     if (config && typeof config.requireAccount === 'boolean') {
       return config.requireAccount;
     }

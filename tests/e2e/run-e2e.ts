@@ -32,7 +32,7 @@ function assert(condition: unknown, message: string) {
 
 const repoRoot = path.resolve(process.cwd());
 const extensionPath = path.join(repoRoot, 'dist');
-const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parchi-e2e-'));
+const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'Glide-e2e-'));
 
 const timeoutMs = Number(process.env.E2E_TIMEOUT || 20000);
 const slowMo = Number(process.env.E2E_SLOWMO || 0);
@@ -64,7 +64,7 @@ async function seedAccessState(worker: import('playwright').Worker): Promise<voi
     await chrome.storage.local.set({
       authState: {
         status: 'signed_in',
-        email: 'qa@parchi.dev',
+        email: 'qa@Glide.dev',
         accessToken: 'test-token',
       },
       entitlement: {
@@ -81,7 +81,7 @@ async function sendRuntimeMessage(worker: import('playwright').Worker, message: 
 }
 
 test('Side panel loads and shows ready state', async ({ panel }) => {
-  await panel.waitForSelector('text=Parchi', { timeout: timeoutMs });
+  await panel.waitForSelector('text=Glide', { timeout: timeoutMs });
   await panel.waitForFunction(
     () => {
       const el = document.querySelector('#statusText');
@@ -407,7 +407,7 @@ test('Color scheme uses neutral grays', async ({ panel }) => {
 
 async function run() {
   log('╔════════════════════════════════════════╗', 'info');
-  log('║          Parchi - E2E Tests           ║', 'info');
+  log('║          Glide - E2E Tests           ║', 'info');
   log('╚════════════════════════════════════════╝', 'info');
 
   let context;

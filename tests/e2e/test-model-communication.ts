@@ -41,7 +41,7 @@ function assert(condition: unknown, message: string) {
 
 const repoRoot = path.resolve(process.cwd());
 const extensionPath = path.join(repoRoot, 'dist');
-const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parchi-model-test-'));
+const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'Glide-model-test-'));
 
 const timeoutMs = Number(process.env.E2E_TIMEOUT || 30000);
 const slowMo = Number(process.env.E2E_SLOWMO || 0);

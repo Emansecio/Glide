@@ -11,10 +11,10 @@ import { chromium } from 'playwright';
 
 const repoRoot = process.cwd();
 const extensionPath = path.join(repoRoot, 'dist');
-const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parchi-test-'));
+const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'Glide-test-'));
 
 async function main() {
-  console.log('🚀 Starting Parchi agent test...');
+  console.log('🚀 Starting Glide agent test...');
   console.log('📁 Extension path:', extensionPath);
   
   const context = await chromium.launchPersistentContext(userDataDir, {

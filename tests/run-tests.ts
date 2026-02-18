@@ -39,7 +39,7 @@ async function runCommand(command: string, description: string) {
 
 async function main() {
   log('╔════════════════════════════════════════╗', 'info');
-  log('║           Parchi - Test Suite         ║', 'info');
+  log('║           Glide - Test Suite         ║', 'info');
   log('╚════════════════════════════════════════╝', 'info');
 
   let allPassed = true;

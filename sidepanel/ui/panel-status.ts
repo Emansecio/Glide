@@ -28,9 +28,9 @@ import { SidePanelUI } from './panel-ui.js';
   const apiKey = config.apiKey || '';
   const customEndpoint = config.customEndpoint || '';
   
-  console.log('[Parchi] fetchAvailableModels called');
-  console.log('[Parchi] currentConfig:', this.currentConfig);
-  console.log('[Parchi] config:', { provider, apiKey: apiKey ? '***' : '(empty)', customEndpoint });
+  console.log('[Glide] fetchAvailableModels called');
+  console.log('[Glide] currentConfig:', this.currentConfig);
+  console.log('[Glide] config:', { provider, apiKey: apiKey ? '***' : '(empty)', customEndpoint });
 
   // Hardcoded model lists for providers that don't support /v1/models
   const ANTHROPIC_MODELS = [
@@ -112,7 +112,7 @@ import { SidePanelUI } from './panel-ui.js';
   }
 
   const modelsUrl = `${baseUrl}/v1/models`;
-  console.log('[Parchi] Fetching models from:', modelsUrl);
+  console.log('[Glide] Fetching models from:', modelsUrl);
 
   try {
     const response = await fetch(modelsUrl, {
@@ -124,13 +124,13 @@ import { SidePanelUI } from './panel-ui.js';
     });
 
     if (!response.ok) {
-      console.warn('[Parchi] Failed to fetch models:', response.status, response.statusText);
+      console.warn('[Glide] Failed to fetch models:', response.status, response.statusText);
       this.populateModelSelect([config.model || 'gpt-4o'], config.model);
       return;
     }
 
     const data = await response.json();
-    console.log('[Parchi] Models response:', data);
+    console.log('[Glide] Models response:', data);
     
     // Extract models, prioritize active ones
     const allModels = (data.data || []) as Array<{ id: string; active?: boolean }>;
@@ -147,7 +147,7 @@ import { SidePanelUI } from './panel-ui.js';
     // Show active models first, then inactive
     const models = [...activeModels, ...inactiveModels].filter(Boolean);
     
-    console.log('[Parchi] Found models:', models.length, 'active:', activeModels.length);
+    console.log('[Glide] Found models:', models.length, 'active:', activeModels.length);
 
     if (models.length > 0) {
       this.populateModelSelect(models, config.model);
@@ -155,7 +155,7 @@ import { SidePanelUI } from './panel-ui.js';
       this.populateModelSelect([config.model || 'gpt-4o'], config.model);
     }
   } catch (error) {
-    console.error('[Parchi] Error fetching models:', error);
+    console.error('[Glide] Error fetching models:', error);
     this.populateModelSelect([config.model || 'gpt-4o'], config.model);
   }
 };
@@ -174,7 +174,7 @@ import { SidePanelUI } from './panel-ui.js';
   }
   
   if (!select) {
-    console.error('[Parchi] modelSelect element not found!');
+    console.error('[Glide] modelSelect element not found!');
     return;
   }
 
@@ -190,7 +190,7 @@ import { SidePanelUI } from './panel-ui.js';
     finalModels = [selectedModel, ...finalModels];
   }
 
-  console.log('[Parchi] Populating model select with', finalModels.length, 'models, selected:', selectedModel);
+  console.log('[Glide] Populating model select with', finalModels.length, 'models, selected:', selectedModel);
 
   select.innerHTML = '';
 
@@ -214,7 +214,7 @@ import { SidePanelUI } from './panel-ui.js';
     select.appendChild(option);
   }
   
-  console.log('[Parchi] Model select now has', select.options.length, 'options');
+  console.log('[Glide] Model select now has', select.options.length, 'options');
 };
 
 (SidePanelUI.prototype as any).handleModelSelectChange = function handleModelSelectChange() {

@@ -24,7 +24,7 @@ type BillingOverview = {
   }>;
 };
 
-const ACCESS_TOKEN_KEY = 'parchi_access_token';
+const ACCESS_TOKEN_KEY = 'Glide_access_token';
 
 const elements = {
   authCard: document.getElementById('authCard') as HTMLElement | null,

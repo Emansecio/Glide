@@ -306,7 +306,7 @@ class ExtensionValidator {
 
   async run() {
     this.log('╔════════════════════════════════════════╗', 'info');
-    this.log('║  Parchi - Extension Validator  ║', 'info');
+    this.log('║  Glide - Extension Validator  ║', 'info');
     this.log('╚════════════════════════════════════════╝', 'info');
 
     this.validateManifest();

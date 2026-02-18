@@ -230,12 +230,12 @@ export class BrowserTools {
       }
     });
     if (tabs.length > 0) {
-      // Create session tab group with "Parchi" title and blue color
-      await this.ensureSessionTabGroup({ title: options.title || 'Parchi', color: options.color || 'blue' });
+      // Create session tab group with "Glide" title and blue color
+      await this.ensureSessionTabGroup({ title: options.title || 'Glide', color: options.color || 'blue' });
     }
   }
 
-  async ensureSessionTabGroup(options: GroupOptions = { title: 'Parchi', color: 'blue' }) {
+  async ensureSessionTabGroup(options: GroupOptions = { title: 'Glide', color: 'blue' }) {
     const sessionTabIds = Array.from(this.sessionTabs.keys());
     if (sessionTabIds.length === 0) return;
 
@@ -247,7 +247,7 @@ export class BrowserTools {
         // Create new group
         const groupId = await chrome.tabs.group({ tabIds: sessionTabIds });
         await chrome.tabGroups.update(groupId, {
-          title: options.title || 'Parchi',
+          title: options.title || 'Glide',
           color: options.color || 'blue',
           collapsed: false,
         });

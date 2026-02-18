@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Parchi",
+  "name": "Glide",
   "version": "0.2.0",
   "description": "Warm-paper browser automation assistant with configurable LLM/vision profiles and enterprise-ready controls",
   "permissions": [
@@ -16,7 +16,7 @@
     "<all_urls>"
   ],
   "action": {
-    "default_title": "Parchi Panel"
+    "default_title": "Glide Panel"
   },
   "background": {
     "service_worker": "background.js",
@@ -38,7 +38,7 @@
       "all_frames": false
     }
   ],
-  "parchi": {
+  "Glide": {
     "requireAccount": false
   }
 }

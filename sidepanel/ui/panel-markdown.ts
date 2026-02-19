@@ -5,6 +5,19 @@ import { SidePanelUI } from './panel-ui.js';
 
   const escape = (value = '') => this.escapeHtmlBasic(value);
   const escapeAttr = (value = '') => this.escapeAttribute(value);
+  const hasScheme = (value = '') => /^[a-zA-Z][a-zA-Z\d+.-]*:/.test(String(value).trim());
+  const sanitizeUrl = (value = '', options: { allowMailto?: boolean } = {}) => {
+    const raw = String(value || '').trim();
+    if (!raw || !hasScheme(raw)) return null;
+    try {
+      const parsed = new URL(raw);
+      const allowed = options.allowMailto ? ['http:', 'https:', 'mailto:'] : ['http:', 'https:'];
+      if (!allowed.includes(parsed.protocol.toLowerCase())) return null;
+      return parsed.toString();
+    } catch {
+      return null;
+    }
+  };
 
   let working = String(text).replace(/\r\n/g, '\n');
   const codeBlocks: string[] = [];
@@ -20,12 +33,19 @@ import { SidePanelUI } from './panel-ui.js';
     let html = escape(value);
     html = html.replace(
       /!\[([^\]]*)\]\(([^)]+)\)/g,
-      (_: string, alt: string, url: string) => `<img alt="${escape(alt)}" src="${escapeAttr(url)}">`,
+      (_: string, alt: string, url: string) => {
+        const safeUrl = sanitizeUrl(url);
+        if (!safeUrl) return alt ? escape(alt) : '';
+        return `<img alt="${escape(alt)}" src="${escapeAttr(safeUrl)}">`;
+      },
     );
     html = html.replace(
       /\[([^\]]+)\]\(([^)]+)\)/g,
-      (_: string, label: string, url: string) =>
-        `<a href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer">${label}</a>`,
+      (_: string, label: string, url: string) => {
+        const safeUrl = sanitizeUrl(url, { allowMailto: true });
+        if (!safeUrl) return label;
+        return `<a href="${escapeAttr(safeUrl)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+      },
     );
     html = html.replace(/`([^`]+)`/g, (_: string, code: string) => `<code>${escape(code)}</code>`);
     html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');

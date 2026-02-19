@@ -391,6 +391,67 @@ test('Tool calls appear in collapsible Tools section', async ({ panel, worker })
   });
 });
 
+test('Tool failure metadata is handled without breaking activity logs', async ({ panel, worker }) => {
+  const runId = `run-tool-meta-${Date.now()}`;
+  const now = Date.now();
+  const toolId = 'tool-meta-1';
+
+  await sendRuntimeMessage(worker, {
+    type: 'tool_execution_start',
+    schemaVersion: 1,
+    runId,
+    timestamp: now,
+    tool: 'click',
+    id: toolId,
+    args: { selector: '#missing-button' },
+  });
+
+  await panel.waitForSelector(`.tool-tree-item[data-id="${toolId}"].running`, {
+    state: 'attached',
+    timeout: timeoutMs,
+  });
+
+  await sendRuntimeMessage(worker, {
+    type: 'tool_execution_result',
+    schemaVersion: 1,
+    runId,
+    timestamp: now + 1,
+    tool: 'click',
+    id: toolId,
+    args: { selector: '#missing-button' },
+    recoveryStage: 'screenshot',
+    evidenceConfidence: 'low',
+    failureClass: 'selector',
+    result: {
+      success: false,
+      code: 'ELEMENT_NOT_FOUND',
+      error: 'Element not found: #missing-button',
+      nextHint: 'Call getContent({ mode: "structure" }) and retry with text selectors.',
+      recoveryStage: 'screenshot',
+      evidenceConfidence: 'low',
+      failureClass: 'selector',
+    },
+  });
+
+  await panel.waitForSelector(`.tool-tree-item[data-id="${toolId}"].error`, {
+    state: 'attached',
+    timeout: timeoutMs,
+  });
+
+  const statusText = await panel.$eval(`.tool-tree-item[data-id="${toolId}"] .tool-tree-meta`, (el) =>
+    (el.textContent || '').trim(),
+  );
+  assert(statusText.includes('Erro'), 'Tool status should show error');
+
+  await panel.waitForFunction(
+    () => {
+      const banner = document.querySelector('.error-banner .error-text');
+      return Boolean(banner && banner.textContent?.includes('Element not found'));
+    },
+    { timeout: timeoutMs },
+  );
+});
+
 test('Color scheme uses neutral grays', async ({ panel }) => {
   // Get computed background color of body
   const bgColor = await panel.$eval('body', (el) => getComputedStyle(el).backgroundColor);

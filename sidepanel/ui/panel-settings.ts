@@ -203,6 +203,9 @@ const normalizeProfileEndpoint = (profile: Record<string, any> = {}) => {
     'activeConfig',
     'configs',
     'auxAgentProfiles',
+    'autoRecoveryMode',
+    'screenshotOnFailure',
+    'screenshotRetention',
   ]);
 
   const storedConfigs = settings.configs || {};
@@ -223,7 +226,10 @@ const normalizeProfileEndpoint = (profile: Record<string, any> = {}) => {
     autoScroll: true,
     confirmActions: true,
     saveHistory: true,
-    enableScreenshots: false,
+    enableScreenshots: true,
+    autoRecoveryMode: 'balanced',
+    screenshotOnFailure: true,
+    screenshotRetention: 'ephemeral',
   };
 
   this.configs = {
@@ -269,7 +275,7 @@ const normalizeProfileEndpoint = (profile: Record<string, any> = {}) => {
     interact: true,
     navigate: true,
     tabs: true,
-    screenshots: false,
+    screenshots: true,
   };
   const toolPermissions = {
     ...defaultPermissions,
@@ -327,6 +333,9 @@ const normalizeProfileEndpoint = (profile: Record<string, any> = {}) => {
       'saveHistory',
       'toolPermissions',
       'allowedDomains',
+      'autoRecoveryMode',
+      'screenshotOnFailure',
+      'screenshotRetention',
     ];
     const settings = await chrome.storage.local.get(keys);
 
@@ -383,6 +392,9 @@ const normalizeProfileEndpoint = (profile: Record<string, any> = {}) => {
       'saveHistory',
       'toolPermissions',
       'allowedDomains',
+      'autoRecoveryMode',
+      'screenshotOnFailure',
+      'screenshotRetention',
     ];
     allowedKeys.forEach((key) => {
       if (data[key] !== undefined) {
@@ -428,7 +440,7 @@ const normalizeProfileEndpoint = (profile: Record<string, any> = {}) => {
     maxTokens: Number.parseInt(this.elements.maxTokens?.value) || current.maxTokens || 4096,
     contextLimit: Number.parseInt(this.elements.contextLimit?.value) || current.contextLimit || 200000,
     timeout: Number.parseInt(this.elements.timeout?.value) || current.timeout || 30000,
-    enableScreenshots: this.elements.enableScreenshots?.value === 'true' || current.enableScreenshots || false,
+    enableScreenshots: this.elements.enableScreenshots?.value === 'true' || current.enableScreenshots !== false,
     sendScreenshotsAsImages:
       this.elements.sendScreenshotsAsImages?.value === 'true' || current.sendScreenshotsAsImages || false,
     screenshotQuality: this.elements.screenshotQuality?.value || current.screenshotQuality || 'high',
@@ -437,6 +449,9 @@ const normalizeProfileEndpoint = (profile: Record<string, any> = {}) => {
     autoScroll: this.elements.autoScroll?.value === 'true',
     confirmActions: this.elements.confirmActions?.value === 'true',
     saveHistory: this.elements.saveHistory?.value === 'true',
+    autoRecoveryMode: current.autoRecoveryMode || 'balanced',
+    screenshotOnFailure: current.screenshotOnFailure !== false,
+    screenshotRetention: current.screenshotRetention || 'ephemeral',
   };
 };
 
@@ -446,7 +461,9 @@ const normalizeProfileEndpoint = (profile: Record<string, any> = {}) => {
     interact: this.elements.permissionInteract?.value !== 'false',
     navigate: this.elements.permissionNavigate?.value !== 'false',
     tabs: this.elements.permissionTabs?.value !== 'false',
-    screenshots: this.elements.permissionScreenshots?.value === 'true',
+    screenshots: this.elements.permissionScreenshots
+      ? this.elements.permissionScreenshots.value !== 'false'
+      : true,
   };
 };
 
@@ -472,7 +489,7 @@ const normalizeProfileEndpoint = (profile: Record<string, any> = {}) => {
     maxTokens: activeProfile.maxTokens || 4096,
     contextLimit: activeProfile.contextLimit || 200000,
     timeout: activeProfile.timeout || 30000,
-    enableScreenshots: activeProfile.enableScreenshots ?? false,
+    enableScreenshots: activeProfile.enableScreenshots ?? true,
     sendScreenshotsAsImages: activeProfile.sendScreenshotsAsImages ?? false,
     screenshotQuality: activeProfile.screenshotQuality || 'high',
     showThinking: activeProfile.showThinking !== false,
@@ -480,6 +497,9 @@ const normalizeProfileEndpoint = (profile: Record<string, any> = {}) => {
     autoScroll: activeProfile.autoScroll !== false,
     confirmActions: activeProfile.confirmActions !== false,
     saveHistory: activeProfile.saveHistory !== false,
+    autoRecoveryMode: activeProfile.autoRecoveryMode || 'balanced',
+    screenshotOnFailure: activeProfile.screenshotOnFailure !== false,
+    screenshotRetention: activeProfile.screenshotRetention || 'ephemeral',
     visionBridge: this.elements.visionBridge?.value === 'true',
     visionProfile: this.elements.visionProfile?.value || '',
     useOrchestrator: this.elements.orchestratorToggle?.value === 'true',
@@ -523,6 +543,8 @@ const normalizeProfileEndpoint = (profile: Record<string, any> = {}) => {
 2. ACTION → VERIFY → MARK - Every action MUST be followed by getContent and update_plan.
 3. SEQUENTIAL EXECUTION - Complete step N before starting step N+1.
 4. EVIDENCE ONLY - Only claim to see content fetched with getContent.
+5. FAILURE RECOVERY - If an action fails or page state is ambiguous, call screenshot() before finalizing.
+6. RESILIENCE - Use getContent({ mode: "structure" }) and retry with alternative selectors when actions fail.
 </rules>
 
 Use the available browser tools to complete user tasks efficiently.`;

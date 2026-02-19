@@ -114,16 +114,27 @@ const formatElapsed = (elapsedMs: number) => {
   container.innerHTML = `
       <div class="message-content streaming-content markdown-body">
         <div class="typing-indicator"><span></span><span></span><span></span></div>
-        <div class="stream-events"></div>
+        <div class="execution-human-summary hidden"></div>
+        <details class="execution-details hidden">
+          <summary class="execution-details-summary">
+            <span class="execution-details-title">Ver detalhes tecnicos da execucao</span>
+            <span class="execution-details-meta">Em execucao</span>
+          </summary>
+          <div class="stream-events"></div>
+        </details>
+        <div class="stream-main-text stream-event-text"></div>
       </div>
     `;
 
   this.elements.chatMessages.appendChild(container);
+  const executionDetailsEl = container.querySelector('.execution-details') as HTMLDetailsElement | null;
+  const executionSummaryTitleEl = container.querySelector('.execution-details-title') as HTMLElement | null;
+  const executionSummaryMetaEl = container.querySelector('.execution-details-meta') as HTMLElement | null;
   this.streamingState = {
     container,
     eventsEl: container.querySelector('.stream-events') as HTMLElement | null,
     lastEventType: undefined,
-    textEventEl: null,
+    textEventEl: container.querySelector('.stream-main-text') as HTMLElement | null,
     reasoningEventEl: null,
     textBuffer: '',
     reasoningBuffer: '',
@@ -131,7 +142,13 @@ const formatElapsed = (elapsedMs: number) => {
     planEl: null,
     planListEl: null,
     planMetaEl: null,
+    executionDetailsEl,
+    executionSummaryTitleEl,
+    executionSummaryMetaEl,
+    executionHumanSummaryEl: container.querySelector('.execution-human-summary') as HTMLElement | null,
+    executionTurnKey: null,
   };
+  this.updateExecutionDetailsHeader?.();
   this.updateThinkingPanel(null, true);
   this.scrollToBottom();
 };
@@ -140,16 +157,7 @@ const formatElapsed = (elapsedMs: number) => {
   if (!this.streamingState) {
     this.startStreamingMessage();
   }
-  if (!this.streamingState?.eventsEl) return;
-
-  if (this.streamingState.lastEventType !== 'text') {
-    const textEvent = document.createElement('div');
-    textEvent.className = 'stream-event stream-event-text';
-    this.streamingState.eventsEl.appendChild(textEvent);
-    this.streamingState.textEventEl = textEvent;
-    this.streamingState.textBuffer = '';
-    this.streamingState.lastEventType = 'text';
-  }
+  if (!this.streamingState?.textEventEl) return;
 
   this.streamingState.textBuffer = `${this.streamingState.textBuffer || ''}${content || ''}`;
   this.scheduleStreamingTextRender();
@@ -178,6 +186,7 @@ const formatElapsed = (elapsedMs: number) => {
   if (!this.streamingState?.eventsEl) return;
   if (delta === null || delta === undefined) return;
   if (!delta.trim() && !this.streamingState.reasoningRawBuffer) return;
+  this.ensureStreamingExecutionDetailsVisible?.();
 
   if (this.streamingState.lastEventType !== 'reasoning') {
     const reasoningEvent = document.createElement('div');

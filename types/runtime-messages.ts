@@ -20,6 +20,15 @@ export type RetryCounts = {
   finalize: number;
 };
 
+export const toolFailureClasses = ['selector', 'timing', 'permission', 'navigation', 'unknown'] as const;
+export type ToolFailureClass = (typeof toolFailureClasses)[number];
+
+export const toolRecoveryStages = ['none', 'structure', 'retry', 'screenshot', 'vision'] as const;
+export type ToolRecoveryStage = (typeof toolRecoveryStages)[number];
+
+export const toolEvidenceConfidence = ['low', 'medium', 'high'] as const;
+export type ToolEvidenceConfidence = (typeof toolEvidenceConfidence)[number];
+
 export type UserRunStart = RuntimeMessageBase & {
   type: 'user_run_start';
   message: string;
@@ -52,6 +61,9 @@ export type ToolExecutionResult = RuntimeMessageBase & {
   id?: string;
   args?: Record<string, unknown>;
   result: unknown;
+  recoveryStage?: ToolRecoveryStage;
+  evidenceConfidence?: ToolEvidenceConfidence;
+  failureClass?: ToolFailureClass;
 };
 
 export type PlanUpdate = RuntimeMessageBase & {

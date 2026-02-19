@@ -37,11 +37,6 @@ import { SidePanelUI } from './panel-ui.js';
     onSettings: () => this.openSettingsPanel(),
   });
 
-  this.elements.settingsBtn?.addEventListener('click', () => {
-    this.openSettingsPanel();
-  });
-
-
   this.elements.startNewSessionBtn?.addEventListener('click', () => this.startNewSession());
   this.elements.clearHistoryBtn?.addEventListener('click', () => this.clearAllHistory());
 
@@ -231,6 +226,9 @@ import { SidePanelUI } from './panel-ui.js';
 
   this.elements.activityToggleBtn?.addEventListener('click', () => this.toggleActivityPanel());
   this.elements.activityCloseBtn?.addEventListener('click', () => this.toggleActivityPanel(false));
+  this.elements.exportExecutionLogBtn?.addEventListener('click', () => {
+    void this.exportExecutionLog?.();
+  });
 
   // Profile editor controls
   this.elements.profileEditorProvider?.addEventListener('change', () => this.toggleProfileEditorEndpoint());
@@ -256,6 +254,7 @@ import { SidePanelUI } from './panel-ui.js';
     if (this.shouldAutoScroll() && this.isNearBottom) {
       this.scrollToBottom();
     }
+    this.updateActivityState();
   });
   this.chatResizeObserver.observe(this.elements.chatMessages);
 };
@@ -299,23 +298,25 @@ import { SidePanelUI } from './panel-ui.js';
   }
 
   if (message.type === 'tool_execution_start') {
+    this.trackExecutionTurnStart?.(message);
     this.pendingToolCount += 1;
     this.clearErrorBanner();
     this.updateActivityState();
     this.activeToolName = message.tool || null;
-    this.displayToolExecution(message.tool, message.args, null, message.id);
+    this.displayToolExecution(message.tool, message.args, null, message.id, message);
     return;
   }
   if (message.type === 'tool_execution_result') {
+    this.trackExecutionToolResult?.(message);
     this.pendingToolCount = Math.max(0, this.pendingToolCount - 1);
     this.updateActivityState();
     this.activeToolName = null;
-    this.displayToolExecution(message.tool, message.args, message.result, message.id);
+    this.displayToolExecution(message.tool, message.args, message.result, message.id, message);
     return;
   }
 
   if (message.type === 'assistant_final') {
-    this.displayAssistantMessage(message.content, message.thinking, message.usage, message.model);
+    this.displayAssistantMessage(message.content, message.thinking, message.usage, message.model, message);
     this.appendContextMessages(message.responseMessages, message.content, message.thinking);
     if (message.usage?.inputTokens) {
       this.updateContextUsage(message.usage.inputTokens);
@@ -333,6 +334,7 @@ import { SidePanelUI } from './panel-ui.js';
   }
 
   if (message.type === 'run_error') {
+    this.consumeExecutionTurnSummary?.(message.runId, message.turnId);
     this.stopThinkingTimer?.();
     this.elements.composer?.classList.remove('running');
     this.pendingToolCount = 0;

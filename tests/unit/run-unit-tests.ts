@@ -557,6 +557,9 @@ function testRuntimeMessages(runner: TestRunner) {
         id: 'tool-1',
         args: { selector: '#id' },
         result: { success: true },
+        recoveryStage: 'retry',
+        evidenceConfidence: 'medium',
+        failureClass: 'selector',
       },
       { ...base, type: 'plan_update', plan },
       {

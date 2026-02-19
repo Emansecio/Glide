@@ -298,5 +298,9 @@ class ContentScriptHandler {
   }
 }
 
-// Initialize content script
-const contentScriptHandler = new ContentScriptHandler();
+// Fix 2: Guard against reinjectio — prevents duplicate listeners on content script reloads.
+const GLIDE_INIT_FLAG = '__glide_content_init__';
+if (!(window as unknown as Record<string, boolean>)[GLIDE_INIT_FLAG]) {
+  (window as unknown as Record<string, boolean>)[GLIDE_INIT_FLAG] = true;
+  new ContentScriptHandler();
+}

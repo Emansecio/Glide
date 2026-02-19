@@ -3,10 +3,170 @@ import { dedupeThinking, extractThinking } from '../../ai/message-utils.js';
 import { SidePanelUI } from './panel-ui.js';
 
 const HISTORY_PERSIST_DEBOUNCE_MS = 350;
+const HISTORY_MAX_SESSIONS = 50;
+const HISTORY_MAX_MESSAGES_PER_SESSION = 200;
+const HISTORY_MAX_CHARS_PER_FIELD = 4000;
+const HISTORY_MAX_SESSION_BYTES = 200 * 1024;
+const HISTORY_MAX_TOTAL_BYTES = 4 * 1024 * 1024;
+const HISTORY_STORAGE_RETRY_MAX = 2;
+const historyTextEncoder = new TextEncoder();
 
 (SidePanelUI.prototype as any).isHistoryPanelVisible = function isHistoryPanelVisible() {
   const panel = this.elements.historyPanel as HTMLElement | null;
   return Boolean(panel && !panel.classList.contains('hidden'));
+};
+
+(SidePanelUI.prototype as any).measureHistoryBytes = function measureHistoryBytes(value: unknown) {
+  try {
+    return historyTextEncoder.encode(JSON.stringify(value)).length;
+  } catch {
+    return historyTextEncoder.encode(String(value)).length;
+  }
+};
+
+(SidePanelUI.prototype as any).truncateHistoryField = function truncateHistoryField(value: unknown, limit = HISTORY_MAX_CHARS_PER_FIELD) {
+  const text = String(value ?? '');
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit)}...`;
+};
+
+(SidePanelUI.prototype as any).sanitizeHistoryMessage = function sanitizeHistoryMessage(message: any) {
+  if (!message || typeof message !== 'object') return null;
+  const role = String(message.role || '');
+  if (!role) return null;
+
+  const contentRaw = typeof message.content === 'string' ? message.content : this.safeJsonStringify(message.content);
+  const content = this.truncateHistoryField(contentRaw, HISTORY_MAX_CHARS_PER_FIELD);
+  const thinking = message.thinking
+    ? this.truncateHistoryField(message.thinking, Math.floor(HISTORY_MAX_CHARS_PER_FIELD / 2))
+    : undefined;
+
+  const sanitized: Record<string, any> = {
+    id: message.id || undefined,
+    createdAt: message.createdAt || undefined,
+    role,
+    content,
+  };
+
+  if (thinking) {
+    sanitized.thinking = thinking;
+  }
+
+  if (Array.isArray(message.toolCalls) && message.toolCalls.length > 0) {
+    sanitized.toolCalls = message.toolCalls.slice(0, 10).map((call: any) => ({
+      id: this.truncateHistoryField(call?.id || '', 120),
+      name: this.truncateHistoryField(call?.name || '', 120),
+      args: this.truncateHistoryField(this.safeJsonStringify(call?.args || {}), HISTORY_MAX_CHARS_PER_FIELD),
+    }));
+  }
+
+  if (message.toolCallId) {
+    sanitized.toolCallId = this.truncateHistoryField(message.toolCallId, 120);
+  }
+  if (message.toolName) {
+    sanitized.toolName = this.truncateHistoryField(message.toolName, 120);
+  }
+  if (message.name) {
+    sanitized.name = this.truncateHistoryField(message.name, 120);
+  }
+
+  if (message.meta && typeof message.meta === 'object') {
+    sanitized.meta = {
+      kind: this.truncateHistoryField(message.meta.kind || '', 40),
+      source: this.truncateHistoryField(message.meta.source || '', 120),
+    };
+  }
+
+  if (message.usage && typeof message.usage === 'object') {
+    sanitized.usage = {
+      inputTokens: Number(message.usage.inputTokens || 0),
+      outputTokens: Number(message.usage.outputTokens || 0),
+      totalTokens: Number(message.usage.totalTokens || 0),
+    };
+  }
+
+  return sanitized;
+};
+
+(SidePanelUI.prototype as any).buildHistoryTranscript = function buildHistoryTranscript(history: any[]) {
+  const source = Array.isArray(history) ? history.slice(-HISTORY_MAX_MESSAGES_PER_SESSION) : [];
+  const sanitized = source
+    .map((message: any) => this.sanitizeHistoryMessage(message))
+    .filter((message: any) => Boolean(message));
+
+  const compacted: any[] = [];
+  let totalBytes = 0;
+  for (let i = sanitized.length - 1; i >= 0; i -= 1) {
+    const item = sanitized[i];
+    const size = this.measureHistoryBytes(item);
+    if (compacted.length > 0 && totalBytes + size > HISTORY_MAX_SESSION_BYTES) break;
+    compacted.unshift(item);
+    totalBytes += size;
+  }
+  return compacted;
+};
+
+(SidePanelUI.prototype as any).pruneHistorySessions = function pruneHistorySessions(sessions: any[]) {
+  const source = Array.isArray(sessions) ? sessions : [];
+  const pruned: any[] = [];
+  let totalBytes = 0;
+
+  for (const session of source) {
+    if (pruned.length >= HISTORY_MAX_SESSIONS) break;
+    if (!session || typeof session !== 'object') continue;
+
+    const normalized = {
+      id: this.truncateHistoryField(session.id || '', 160),
+      startedAt: Number(session.startedAt || Date.now()),
+      updatedAt: Number(session.updatedAt || Date.now()),
+      title: this.truncateHistoryField(session.title || 'Sessao', 180),
+      messageCount: Number(session.messageCount || 0),
+      transcript: this.buildHistoryTranscript(session.transcript || []),
+    };
+
+    const bytes = this.measureHistoryBytes(normalized);
+    if (pruned.length > 0 && totalBytes + bytes > HISTORY_MAX_TOTAL_BYTES) {
+      continue;
+    }
+
+    pruned.push(normalized);
+    totalBytes += bytes;
+  }
+
+  return pruned;
+};
+
+(SidePanelUI.prototype as any).buildHistoryPersistSignature = function buildHistoryPersistSignature(entry: any) {
+  const signaturePayload = {
+    id: entry.id,
+    title: entry.title,
+    messageCount: entry.messageCount,
+    transcript: entry.transcript,
+  };
+  return this.safeJsonStringify(signaturePayload);
+};
+
+(SidePanelUI.prototype as any).saveHistorySessionsWithRetry = async function saveHistorySessionsWithRetry(sessions: any[]) {
+  let lastError: unknown = null;
+  let current = Array.isArray(sessions) ? sessions.slice() : [];
+
+  for (let attempt = 0; attempt <= HISTORY_STORAGE_RETRY_MAX; attempt += 1) {
+    try {
+      await chrome.storage.local.set({ chatSessions: current });
+      return current;
+    } catch (error) {
+      lastError = error;
+      const message = String(error?.message || error || '').toLowerCase();
+      const isQuotaError = message.includes('quota');
+      if (!isQuotaError || current.length <= 1 || attempt >= HISTORY_STORAGE_RETRY_MAX) {
+        break;
+      }
+      const nextLength = Math.max(1, Math.floor(current.length * 0.7));
+      current = current.slice(0, nextLength);
+    }
+  }
+
+  throw lastError || new Error('Falha ao salvar historico');
 };
 
 (SidePanelUI.prototype as any).persistHistoryNow = async function persistHistoryNow() {
@@ -16,23 +176,32 @@ const HISTORY_PERSIST_DEBOUNCE_MS = 350;
   
   // Only persist if there's actual content
   if (!this.displayHistory || this.displayHistory.length === 0) return;
+
+  const transcript = this.buildHistoryTranscript(this.displayHistory);
+  if (!transcript.length) return;
   
   const entry = {
     id: this.sessionId,
     startedAt: this.sessionStartedAt,
     updatedAt: Date.now(),
-    title: this.firstUserMessage || 'Sessao',
+    title: this.truncateHistoryField(this.firstUserMessage || 'Sessao', 180),
     messageCount: this.displayHistory.length,
-    transcript: this.displayHistory.slice(-200),
+    transcript,
   };
+
+  const signature = this.buildHistoryPersistSignature(entry);
+  if (signature === this.lastPersistedHistorySignature) {
+    return;
+  }
   
   try {
     const existing = await chrome.storage.local.get(['chatSessions']);
     const sessions = existing.chatSessions || [];
     const filtered = sessions.filter((s: any) => s.id !== entry.id);
     filtered.unshift(entry);
-    const trimmed = filtered.slice(0, 50); // Keep more sessions
-    await chrome.storage.local.set({ chatSessions: trimmed });
+    const trimmed = this.pruneHistorySessions(filtered);
+    await this.saveHistorySessionsWithRetry(trimmed);
+    this.lastPersistedHistorySignature = signature;
     this.historyListDirty = true;
     if (this.isHistoryPanelVisible()) {
       void this.loadHistoryList();

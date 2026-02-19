@@ -7,9 +7,7 @@ import esbuild from 'esbuild';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, '..');
-
 const distDir = path.join(rootDir, 'dist');
-
 
 const ensureDir = (dir) => fs.mkdirSync(dir, { recursive: true });
 const cleanDir = (dir) => {
@@ -39,12 +37,11 @@ const copyDirFiltered = (src, dest, filter) => {
   });
 };
 
-const run = async () => {
-  cleanDir(distDir);
-
+const runTypeCheck = () => {
   execSync('tsc -p tsconfig.json --noEmit', { stdio: 'inherit' });
+};
 
-  // Build background and sidepanel as ESM (they support modules)
+const buildExtensionBundles = async () => {
   await esbuild.build({
     entryPoints: [path.join(rootDir, 'background.ts'), path.join(rootDir, 'sidepanel', 'panel.ts')],
     outdir: distDir,
@@ -57,7 +54,6 @@ const run = async () => {
     logLevel: 'info',
   });
 
-  // Build content script as IIFE (content scripts don't support ESM)
   await esbuild.build({
     entryPoints: [path.join(rootDir, 'content.ts')],
     outdir: distDir,
@@ -70,6 +66,19 @@ const run = async () => {
     logLevel: 'info',
   });
 
+  const manifestPath = path.join(rootDir, 'manifest.json');
+  const manifestDest = path.join(distDir, 'manifest.json');
+  const manifestData = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  ensureDir(path.dirname(manifestDest));
+  fs.writeFileSync(manifestDest, JSON.stringify(manifestData, null, 2));
+  copyFile(path.join(rootDir, 'sidepanel', 'panel.html'), path.join(distDir, 'sidepanel', 'panel.html'));
+  copyFile(path.join(rootDir, 'sidepanel', 'panel.css'), path.join(distDir, 'sidepanel', 'panel.css'));
+  copyDirFiltered(path.join(rootDir, 'sidepanel', 'styles'), path.join(distDir, 'sidepanel', 'styles'));
+  copyDirFiltered(path.join(rootDir, 'sidepanel', 'templates'), path.join(distDir, 'sidepanel', 'templates'));
+  copyDirFiltered(path.join(rootDir, 'icons'), path.join(distDir, 'icons'));
+};
+
+const buildTestBundles = async () => {
   await esbuild.build({
     entryPoints: [
       path.join(rootDir, 'tests', 'run-tests.ts'),
@@ -87,17 +96,34 @@ const run = async () => {
     logLevel: 'info',
     external: ['chromium-bidi/lib/cjs/bidiMapper/BidiMapper', 'chromium-bidi/lib/cjs/cdp/CdpConnection'],
   });
+};
 
-  const manifestPath = path.join(rootDir, 'manifest.json');
-  const manifestDest = path.join(distDir, 'manifest.json');
-  const manifestData = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-  ensureDir(path.dirname(manifestDest));
-  fs.writeFileSync(manifestDest, JSON.stringify(manifestData, null, 2));
-  copyFile(path.join(rootDir, 'sidepanel', 'panel.html'), path.join(distDir, 'sidepanel', 'panel.html'));
-  copyFile(path.join(rootDir, 'sidepanel', 'panel.css'), path.join(distDir, 'sidepanel', 'panel.css'));
-  copyDirFiltered(path.join(rootDir, 'sidepanel', 'styles'), path.join(distDir, 'sidepanel', 'styles'));
-  copyDirFiltered(path.join(rootDir, 'sidepanel', 'templates'), path.join(distDir, 'sidepanel', 'templates'));
-  copyDirFiltered(path.join(rootDir, 'icons'), path.join(distDir, 'icons'));
+const getBuildTarget = () => {
+  const arg = process.argv.find((value) => value.startsWith('--target='));
+  const target = arg ? arg.split('=')[1] : 'ext';
+  if (!['ext', 'test', 'all'].includes(target)) {
+    throw new Error(`Invalid build target: "${target}". Use --target=ext|test|all`);
+  }
+  return target;
+};
+
+const run = async () => {
+  const target = getBuildTarget();
+
+  if (target === 'ext' || target === 'all') {
+    cleanDir(distDir);
+  } else {
+    ensureDir(distDir);
+  }
+
+  runTypeCheck();
+
+  if (target === 'ext' || target === 'all') {
+    await buildExtensionBundles();
+  }
+  if (target === 'test' || target === 'all') {
+    await buildTestBundles();
+  }
 };
 
 run().catch((error) => {

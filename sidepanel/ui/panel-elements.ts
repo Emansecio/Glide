@@ -20,7 +20,6 @@ export const getSidePanelElements = (): SidePanelElements => ({
   rightPanelPanels: byId<HTMLElement>('rightPanelPanels') ?? bySelector<HTMLElement>('.right-panel-panels'),
 
   // Legacy references (kept for compatibility)
-  settingsBtn: byId<HTMLButtonElement>('settingsBtn'),
   newChatBtn: byId<HTMLButtonElement>('newChatBtn'),
   settingsPanel: byId<HTMLElement>('settingsPanel'),
   chatInterface: byId<HTMLElement>('chatInterface'),
@@ -30,6 +29,7 @@ export const getSidePanelElements = (): SidePanelElements => ({
   activityPanel: byId<HTMLElement>('activityPanel'),
   activityCloseBtn: byId<HTMLButtonElement>('activityCloseBtn'),
   activityToggleBtn: byId<HTMLButtonElement>('activityToggleBtn'),
+  exportExecutionLogBtn: byId<HTMLButtonElement>('exportExecutionLogBtn'),
   toolLog: byId<HTMLElement>('toolLog'),
   thinkingPanel: byId<HTMLElement>('thinkingPanel'),
   agentNav: byId<HTMLElement>('agentNav'),

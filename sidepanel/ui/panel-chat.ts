@@ -7,6 +7,12 @@ import { SidePanelUI } from './panel-ui.js';
 (SidePanelUI.prototype as any).sendMessage = async function sendMessage() {
   const userMessage = this.elements.userInput.value.trim();
   if (!userMessage) return;
+  const runInProgress =
+    this.elements.composer?.classList.contains('running') || this.isStreaming || this.pendingToolCount > 0;
+  if (runInProgress) {
+    this.updateStatus('Aguarde a resposta atual terminar antes de enviar outra mensagem', 'warning');
+    return;
+  }
 
   this.elements.userInput.value = '';
   this.elements.userInput.style.height = '';
@@ -17,6 +23,7 @@ import { SidePanelUI } from './panel-ui.js';
   this.pendingToolCount = 0;
   this.isStreaming = false;
   this.activeToolName = null;
+  this.activeExecutionTurnKey = null;
   this.clearRunIncompleteBanner();
   this.updateActivityState();
 
@@ -126,12 +133,15 @@ import { SidePanelUI } from './panel-ui.js';
   thinking: string | null = null,
   usage: UsagePayload | null = null,
   model: string | null = null,
+  runtimeMeta: { runId?: string; turnId?: string } | null = null,
 ) {
   this.stopThinkingTimer?.();
   const streamResult = this.finishStreamingMessage();
   const streamedContainer = streamResult?.container;
+  const streamMainTextEl = streamedContainer?.querySelector('.stream-main-text') as HTMLElement | null;
   const streamEventsEl = streamedContainer?.querySelector('.stream-events') as HTMLElement | null;
   const hasStreamEvents = Boolean(streamEventsEl && streamEventsEl.children.length > 0);
+  const executionSummary = this.consumeExecutionTurnSummary?.(runtimeMeta?.runId, runtimeMeta?.turnId) || null;
   let normalizedUsage = this.normalizeUsage(usage);
   const modelLabel = model || this.getActiveModelLabel();
   const combinedThinking = [streamResult?.thinking, thinking].filter(Boolean).join('\n\n') || null;
@@ -192,15 +202,11 @@ import { SidePanelUI } from './panel-ui.js';
       metaEl.textContent = messageMeta;
     }
 
-    if (content && content.trim() !== '' && streamEventsEl) {
-      const hasTextEvent = streamEventsEl.querySelector('.stream-event-text');
-      if (!hasTextEvent) {
-        const textEvent = document.createElement('div');
-        textEvent.className = 'stream-event stream-event-text';
-        textEvent.innerHTML = this.renderMarkdown(content);
-        streamEventsEl.appendChild(textEvent);
-      }
+    if (content && content.trim() !== '' && streamMainTextEl) {
+      streamMainTextEl.innerHTML = this.renderMarkdown(content);
     }
+    this.renderExecutionSemanticSummary?.(executionSummary, streamedContainer);
+    this.finalizeExecutionDetails?.(executionSummary, streamedContainer);
 
     this.scrollToBottom();
     this.updateStatus('Ready', 'success');
@@ -218,6 +224,30 @@ import { SidePanelUI } from './panel-ui.js';
   let html = `<div class="message-header">Assistant</div>`;
   if (messageMeta) {
     html += `<div class="message-meta">${this.escapeHtml(messageMeta)}</div>`;
+  }
+
+  const semanticRows = this.buildExecutionSemanticRows?.(executionSummary) || [];
+  if (semanticRows.length > 0) {
+    const summaryItems = semanticRows
+      .map((row: any, index: number) => {
+        const statusLabel = row.status === 'error' ? 'Erro' : row.status === 'ok' ? 'OK' : 'Pendente';
+        return `
+          <li class="execution-human-item ${row.status}">
+            <span class="execution-human-index">${index + 1}.</span>
+            <span class="execution-human-text">
+              <strong>${this.escapeHtml(row.label)}:</strong> ${this.escapeHtml(row.description)}
+              <span class="execution-human-meta">(${row.count}x, ${statusLabel})</span>
+            </span>
+          </li>
+        `;
+      })
+      .join('');
+    html += `
+      <div class="execution-human-summary">
+        <div class="execution-human-title">Plano de Execucao</div>
+        <ol class="execution-human-list">${summaryItems}</ol>
+      </div>
+    `;
   }
 
   const showThinking = this.elements.showThinking.value === 'true';

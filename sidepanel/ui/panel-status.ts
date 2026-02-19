@@ -1,5 +1,7 @@
 import { SidePanelUI } from './panel-ui.js';
 
+const MODEL_FETCH_TIMEOUT_MS = 8000;
+
 (SidePanelUI.prototype as any).updateStatus = function updateStatus(text: string, type = 'default') {
   if (this.elements.statusText) {
     this.elements.statusText.textContent = text;
@@ -120,6 +122,15 @@ import { SidePanelUI } from './panel-ui.js';
     if (!isCurrentRequest()) return;
     this.populateModelSelect(models, currentModel, sourceFamily);
   };
+  const setModelFetchError = (code: string | null, message = '') => {
+    this.lastModelFetchError = code
+      ? {
+          code,
+          message,
+          timestamp: Date.now(),
+        }
+      : null;
+  };
   const hasConnectionForSource = (() => {
     if (provider === 'ollama') {
       return Boolean(customEndpoint);
@@ -135,6 +146,7 @@ import { SidePanelUI } from './panel-ui.js';
     return Boolean(apiKey || customEndpoint);
   })();
   if (!hasConnectionForSource) {
+    setModelFetchError(null);
     applyModels([]);
     return;
   }
@@ -145,11 +157,17 @@ import { SidePanelUI } from './panel-ui.js';
   };
   const fetchOllamaModels = async (endpoint: string) => {
     const controller = createController();
+    let timeoutReached = false;
+    const timeoutId = window.setTimeout(() => {
+      timeoutReached = true;
+      controller.abort();
+    }, MODEL_FETCH_TIMEOUT_MS);
     try {
       const baseUrl = endpoint.replace(/\/$/, '');
       const response = await fetch(`${baseUrl}/api/tags`, { signal: controller.signal });
       if (!isCurrentRequest(controller)) return;
       if (!response.ok) {
+        setModelFetchError(null);
         applyModels([], 'Ollama');
         return;
       }
@@ -159,11 +177,20 @@ import { SidePanelUI } from './panel-ui.js';
         .map((m: any) => m.name)
         .filter(Boolean)
         .sort();
+      setModelFetchError(null);
       applyModels(models, 'Ollama');
     } catch (error) {
-      if ((error as { name?: string })?.name === 'AbortError') return;
+      if ((error as { name?: string })?.name === 'AbortError') {
+        if (timeoutReached) {
+          setModelFetchError('MODEL_FETCH_TIMEOUT', `Timeout after ${MODEL_FETCH_TIMEOUT_MS}ms`);
+          applyModels(currentModel ? [currentModel] : [], 'Ollama');
+        }
+        return;
+      }
+      setModelFetchError(null);
       applyModels([], 'Ollama');
     } finally {
+      window.clearTimeout(timeoutId);
       if (isCurrentRequest(controller)) {
         this.modelsFetchController = null;
       }
@@ -173,12 +200,14 @@ import { SidePanelUI } from './panel-ui.js';
   if (provider === 'anthropic') {
     // Anthropic does not expose a stable public model-list endpoint for this flow.
     // Keep only the user-configured model instead of guessing a static catalog.
+    setModelFetchError(null);
     applyModels(currentModel ? [currentModel] : [], 'Anthropic');
     return;
   }
 
   if (provider === 'google') {
     // Same approach as Anthropic: no static guesses.
+    setModelFetchError(null);
     applyModels(currentModel ? [currentModel] : [], 'Google');
     return;
   }
@@ -190,6 +219,7 @@ import { SidePanelUI } from './panel-ui.js';
 
   if (provider === 'kimi') {
     // Kimi flow is anthropic-compatible; keep current configured model only.
+    setModelFetchError(null);
     applyModels(currentModel ? [currentModel] : [], 'Kimi');
     return;
   }
@@ -207,6 +237,7 @@ import { SidePanelUI } from './panel-ui.js';
   }
 
   if (!baseUrl) {
+    setModelFetchError(null);
     applyModels(currentModel ? [currentModel] : []);
     return;
   }
@@ -214,6 +245,11 @@ import { SidePanelUI } from './panel-ui.js';
   const sourceFamilyForEndpoint = this.resolveModelFamilyBySource(provider, baseUrl);
   const modelsUrl = `${baseUrl}/v1/models`;
   const controller = createController();
+  let timeoutReached = false;
+  const timeoutId = window.setTimeout(() => {
+    timeoutReached = true;
+    controller.abort();
+  }, MODEL_FETCH_TIMEOUT_MS);
 
   try {
     const response = await fetch(modelsUrl, {
@@ -228,6 +264,7 @@ import { SidePanelUI } from './panel-ui.js';
     if (!isCurrentRequest(controller)) return;
 
     if (!response.ok) {
+      setModelFetchError(null);
       applyModels(currentModel ? [currentModel] : [], sourceFamilyForEndpoint);
       return;
     }
@@ -248,14 +285,24 @@ import { SidePanelUI } from './panel-ui.js';
     const models = [...activeModels, ...inactiveModels].filter(Boolean);
 
     if (models.length > 0) {
+      setModelFetchError(null);
       applyModels(models, sourceFamilyForEndpoint);
     } else {
+      setModelFetchError(null);
       applyModels(currentModel ? [currentModel] : [], sourceFamilyForEndpoint);
     }
   } catch (_error) {
-    if ((_error as { name?: string })?.name === 'AbortError') return;
+    if ((_error as { name?: string })?.name === 'AbortError') {
+      if (timeoutReached) {
+        setModelFetchError('MODEL_FETCH_TIMEOUT', `Timeout after ${MODEL_FETCH_TIMEOUT_MS}ms`);
+        applyModels(currentModel ? [currentModel] : [], sourceFamilyForEndpoint);
+      }
+      return;
+    }
+    setModelFetchError(null);
     applyModels(currentModel ? [currentModel] : [], sourceFamilyForEndpoint);
   } finally {
+    window.clearTimeout(timeoutId);
     if (isCurrentRequest(controller)) {
       this.modelsFetchController = null;
     }

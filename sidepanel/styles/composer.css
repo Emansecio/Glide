@@ -13,6 +13,7 @@
   overflow: visible;
   box-shadow: 0 20px 36px rgba(0, 0, 0, 0.42);
   transition: border-color 180ms ease, box-shadow 180ms ease;
+  container-type: inline-size;
 }
 
 .composer:focus-within {
@@ -26,13 +27,13 @@
 
 .composer textarea {
   width: 100%;
-  min-height: 62px;
+  min-height: 52px;
   max-height: 170px;
   resize: none;
   border: none;
   background: transparent;
   color: var(--foreground);
-  padding: 14px 14px 10px;
+  padding: 8px 14px 10px;
   font-size: 14px;
   line-height: 1.5;
 }
@@ -41,10 +42,34 @@
   color: var(--muted-dim);
 }
 
-.composer-toolbar {
+.composer-context-tools {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 6px;
+  padding: 8px 10px 0;
+}
+
+.composer-context-tools .tool-item {
+  width: 28px;
+  height: 28px;
+  color: var(--muted-dim);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 150ms ease;
+}
+
+.composer-context-tools .tool-item:hover {
+  color: var(--foreground);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.composer-toolbar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: 'left center right';
+  align-items: center;
   gap: 12px;
   padding: 8px 10px;
   border-top: 1px solid rgba(255, 255, 255, 0.04);
@@ -53,10 +78,11 @@
 
 /* Actions Left: System Controls */
 .composer-actions-left {
+  grid-area: left;
   display: flex;
   align-items: center;
   gap: 6px;
-  flex: 0 0 auto;
+  min-width: 0;
 }
 
 .action-item {
@@ -79,11 +105,9 @@
 }
 
 .activity-toggle {
-  height: 28px;
-  padding: 0 10px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  width: 32px;
+  height: 32px;
+  padding: 0;
   background: transparent;
   border: 1px solid transparent;
 }
@@ -100,11 +124,12 @@
 
 /* Center Meta: Status */
 .composer-meta {
-  flex: 1 1 auto;
+  grid-area: center;
   display: flex;
   justify-content: center;
   min-width: 0;
   padding: 0 8px;
+  overflow: hidden;
 }
 
 .status-bar {
@@ -112,6 +137,7 @@
   align-items: center;
   gap: 8px;
   max-width: 100%;
+  min-width: 0;
 }
 
 .status-dot {
@@ -148,6 +174,8 @@
   font-weight: 500;
   color: var(--muted);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .status-meta {
@@ -157,23 +185,17 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 120px;
+  max-width: min(220px, 40vw);
 }
 
-/* Actions Right: Input Tools & Sending */
+/* Actions Right: Sending & Model */
 .composer-actions-right {
+  grid-area: right;
   display: flex;
   align-items: center;
   gap: 10px;
-  flex: 0 0 auto;
-}
-
-.input-tools {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding-right: 8px;
-  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  min-width: 0;
+  flex-wrap: nowrap;
 }
 
 .tool-item {
@@ -190,7 +212,8 @@
 /* Model Picker Redesign */
 .model-picker {
   position: relative;
-  min-width: 140px;
+  min-width: 118px;
+  width: clamp(118px, 24vw, 210px);
 }
 
 .model-trigger {
@@ -220,7 +243,9 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 180px;
+  min-width: 0;
+  max-width: none;
+  flex: 1 1 auto;
 }
 
 .chevron-icon {
@@ -237,7 +262,7 @@
   position: absolute;
   bottom: calc(100% + 10px);
   right: 0;
-  width: 240px;
+  width: min(240px, calc(100vw - 30px));
   max-height: 320px;
   overflow-y: auto;
   padding: 6px;
@@ -249,7 +274,7 @@
   z-index: 100;
 }
 
-.model-group + .model-group {
+.model-group+.model-group {
   margin-top: 6px;
   padding-top: 6px;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
@@ -313,6 +338,8 @@
   color: #fff;
   box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3);
   transition: all 200ms cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  flex-shrink: 0;
+  align-self: center;
 }
 
 .send-action:hover {
@@ -328,30 +355,137 @@
   transform: none;
 }
 
-@media (max-width: 600px) {
+@container (max-width: 700px) {
   .composer-toolbar {
-    flex-wrap: wrap;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'left right'
+      'center center';
     height: auto;
     padding: 10px;
+    row-gap: 8px;
   }
 
   .composer-actions-left {
-    order: 1;
+    width: 100%;
   }
 
   .composer-actions-right {
-    order: 2;
+    justify-self: end;
   }
 
   .composer-meta {
-    order: 3;
-    flex: 1 0 100%;
-    margin-top: 8px;
+    justify-content: flex-start;
+    width: 100%;
     padding-top: 8px;
     border-top: 1px solid rgba(255, 255, 255, 0.04);
   }
 
+  .status-bar {
+    width: 100%;
+  }
+
+  .status-meta {
+    flex: 1 1 auto;
+    max-width: none;
+  }
+}
+
+@container (max-width: 560px) {
+  .status-meta {
+    display: none;
+  }
+
+  .model-picker {
+    min-width: 108px;
+    width: clamp(108px, 32vw, 150px);
+  }
+
   #modelSelectValue {
-    max-width: 100px;
+    max-width: 120px;
+  }
+}
+
+@container (max-width: 430px) {
+  .composer-toolbar {
+    gap: 8px;
+  }
+
+  .composer-actions-right {
+    gap: 7px;
+  }
+
+  .model-picker {
+    min-width: 92px;
+    width: 92px;
+  }
+
+  .chevron-icon {
+    display: none;
+  }
+
+  #modelSelectValue {
+    max-width: 92px;
+    font-size: 11px;
+  }
+
+  .send-action {
+    width: 32px;
+    height: 32px;
+  }
+}
+
+@container (max-width: 360px) {
+  .composer-toolbar {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      'left'
+      'right'
+      'center';
+  }
+
+  .composer-actions-right {
+    justify-self: start;
+  }
+
+  .composer-meta {
+    padding-top: 6px;
+  }
+}
+
+@media (max-width: 480px) {
+  .model-dropdown {
+    position: fixed;
+    top: auto;
+    bottom: 0;
+    right: 0;
+    left: 0;
+    width: 100vw;
+    max-height: 55vh;
+    border-radius: 20px 20px 0 0;
+    border: none;
+    border-top: 1px solid var(--border-strong);
+    padding: 14px 10px 20px;
+    box-shadow: 0 -12px 48px rgba(0, 0, 0, 0.6);
+    background: rgba(14, 14, 22, 0.98);
+    backdrop-filter: blur(16px);
+    animation: sheet-up 250ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  .model-option {
+    padding: 12px 14px;
+    border-radius: 12px;
+  }
+
+  @keyframes sheet-up {
+    from {
+      transform: translateY(100%);
+      opacity: 0;
+    }
+
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
   }
 }

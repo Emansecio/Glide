@@ -78,6 +78,8 @@ import { SidePanelUI } from './panel-ui.js';
     totalTokens: 0,
   };
   this.currentPlan = null;
+  this.executionTurnSummaries = new Map();
+  this.activeExecutionTurnKey = null;
   this.invalidateContextUsageCache?.();
   this.hidePlanDrawer();
   this.stopThinkingTimer?.();

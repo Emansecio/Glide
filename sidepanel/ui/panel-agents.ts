@@ -19,35 +19,66 @@ import { SidePanelUI } from './panel-ui.js';
 };
 
 (SidePanelUI.prototype as any).renderAgentNav = function renderAgentNav() {
-  if (!this.elements.agentNav) return;
+  const agentNav = this.elements.agentNav as HTMLElement | null;
+  if (!agentNav) return;
 
   if (this.subagents.size === 0) {
     this.hideAgentNav();
     return;
   }
 
-  this.elements.agentNav.classList.remove('hidden');
+  const createNavItem = (options: {
+    id: string;
+    label: string;
+    isMain?: boolean;
+    statusClass?: string;
+    active?: boolean;
+  }) => {
+    const item = document.createElement('div');
+    item.className = [
+      'agent-nav-item',
+      options.isMain ? 'main-agent' : 'sub-agent',
+      options.statusClass || '',
+      options.active ? 'active' : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+    item.dataset.agent = options.id;
 
-  let html = `
-      <div class="agent-nav-item main-agent ${this.activeAgent === 'main' ? 'active' : ''}" data-agent="main">
-        <span class="agent-status"></span>
-        <span>Main</span>
-      </div>
-    `;
+    const status = document.createElement('span');
+    status.className = 'agent-status';
+    const label = document.createElement('span');
+    label.textContent = options.label;
+
+    item.append(status, label);
+    return item;
+  };
+
+  agentNav.classList.remove('hidden');
+  agentNav.innerHTML = '';
+  agentNav.appendChild(
+    createNavItem({
+      id: 'main',
+      label: 'Main',
+      isMain: true,
+      active: this.activeAgent === 'main',
+    }),
+  );
 
   this.subagents.forEach((agent: any, id: string) => {
     const statusClass = agent.status === 'running' ? 'running' : agent.status === 'completed' ? 'completed' : 'error';
-    html += `
-        <div class="agent-nav-item sub-agent ${statusClass} ${this.activeAgent === id ? 'active' : ''}" data-agent="${id}">
-          <span class="agent-status"></span>
-          <span>${agent.name}</span>
-        </div>
-      `;
+    const safeName = String(agent?.name || `Sub-${this.subagents.size + 1}`);
+    agentNav.appendChild(
+      createNavItem({
+        id,
+        label: safeName,
+        statusClass,
+        active: this.activeAgent === id,
+      }),
+    );
   });
 
-  this.elements.agentNav.innerHTML = html;
-
-  this.elements.agentNav.querySelectorAll('.agent-nav-item').forEach((item: Element) => {
+  agentNav.querySelectorAll('.agent-nav-item').forEach((item: Element) => {
     item.addEventListener('click', () => {
       const agentId = (item as HTMLElement).dataset.agent;
       this.switchAgent(agentId);

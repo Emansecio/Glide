@@ -55,6 +55,46 @@ export class BrowserTools {
       groupTabs: true,
       describeSessionTabs: true,
     };
+    this.bindTabLifecycleListeners();
+  }
+
+  private bindTabLifecycleListeners() {
+    if (!chrome?.tabs?.onRemoved?.addListener) return;
+    chrome.tabs.onRemoved.addListener((tabId) => {
+      this.sessionTabs.delete(tabId);
+      if (this.currentSessionTabId === tabId) {
+        const nextId = this.sessionTabs.keys().next().value;
+        this.currentSessionTabId = typeof nextId === 'number' ? nextId : null;
+      }
+      if (this.sessionTabs.size === 0) {
+        this.sessionTabGroupId = null;
+      }
+    });
+  }
+
+  private async pruneSessionTabs() {
+    const tabs = await chrome.tabs.query({ currentWindow: true });
+    const activeIds = new Set<number>();
+    tabs.forEach((tab) => {
+      if (typeof tab.id === 'number') {
+        activeIds.add(tab.id);
+      }
+    });
+
+    for (const tabId of Array.from(this.sessionTabs.keys())) {
+      if (!activeIds.has(tabId)) {
+        this.sessionTabs.delete(tabId);
+      }
+    }
+
+    if (this.currentSessionTabId !== null && !activeIds.has(this.currentSessionTabId)) {
+      const nextId = this.sessionTabs.keys().next().value;
+      this.currentSessionTabId = typeof nextId === 'number' ? nextId : null;
+    }
+
+    if (this.sessionTabs.size === 0) {
+      this.sessionTabGroupId = null;
+    }
   }
 
   getToolDefinitions(): ToolDefinition[] {
@@ -90,6 +130,7 @@ export class BrowserTools {
           properties: {
             selector: { type: 'string', description: 'CSS selector to click.' },
             tabId: { type: 'number', description: 'Optional tab id.' },
+            retries: { type: 'number', description: 'Optional retry attempts for dynamic pages (1-5).' },
           },
           required: ['selector'],
         },
@@ -103,6 +144,7 @@ export class BrowserTools {
             selector: { type: 'string', description: 'CSS selector for the input.' },
             text: { type: 'string', description: 'Text to enter.' },
             tabId: { type: 'number', description: 'Optional tab id.' },
+            retries: { type: 'number', description: 'Optional retry attempts for dynamic pages (1-5).' },
           },
           required: ['selector', 'text'],
         },
@@ -138,9 +180,12 @@ export class BrowserTools {
         input_schema: {
           type: 'object',
           properties: {
-            type: { type: 'string', description: 'text, html, title, url, or links.' },
+            type: { type: 'string', description: 'text, html, title, url, links, or structure.' },
+            mode: { type: 'string', description: 'Alias for type. Supports structure.' },
             selector: { type: 'string', description: 'Optional selector to scope content.' },
             tabId: { type: 'number', description: 'Optional tab id.' },
+            maxChars: { type: 'number', description: 'Maximum output size in characters.' },
+            maxItems: { type: 'number', description: 'Maximum items per structured section.' },
           },
         },
       },
@@ -288,24 +333,25 @@ export class BrowserTools {
           return await this.getContent(args);
         case 'screenshot':
           return await this.screenshot(args);
-      case 'getTabs':
-        return await this.getTabs();
-      case 'closeTab':
-        return await this.closeTab(args);
-      case 'switchTab':
-        return await this.focusTab(args);
-      case 'focusTab':
-        return await this.focusTab(args);
-      case 'groupTabs':
-        return await this.groupTabs(args);
-      case 'describeSessionTabs':
-        return {
-          success: true,
-          tabs: this.getSessionTabSummaries(),
-          tabCount: this.sessionTabs.size,
-          maxTabs: MAX_SESSION_TABS,
-          canOpenMore: this.sessionTabs.size < MAX_SESSION_TABS,
-        };
+        case 'getTabs':
+          return await this.getTabs();
+        case 'closeTab':
+          return await this.closeTab(args);
+        case 'switchTab':
+          return await this.focusTab(args);
+        case 'focusTab':
+          return await this.focusTab(args);
+        case 'groupTabs':
+          return await this.groupTabs(args);
+        case 'describeSessionTabs':
+          await this.pruneSessionTabs();
+          return {
+            success: true,
+            tabs: this.getSessionTabSummaries(),
+            tabCount: this.sessionTabs.size,
+            maxTabs: MAX_SESSION_TABS,
+            canOpenMore: this.sessionTabs.size < MAX_SESSION_TABS,
+          };
         default:
           return { success: false, error: `Unknown tool: ${toolName}` };
       }
@@ -404,7 +450,13 @@ export class BrowserTools {
 
     for (let i = 0; i < candidateIds.length; i += 1) {
       const tab = await this.safeGetTab(candidateIds[i]);
-      if (!tab) continue;
+      if (!tab) {
+        this.sessionTabs.delete(candidateIds[i]);
+        if (this.currentSessionTabId === candidateIds[i]) {
+          this.currentSessionTabId = null;
+        }
+        continue;
+      }
       this.trackTab(tab);
       candidates.push(tab);
       if (!selected && this.isHttpUrl(tab.url)) {
@@ -421,7 +473,8 @@ export class BrowserTools {
     }
 
     const fallbackUsed = selectedIndex > 0 || (requestedTabId !== null && requestedTabId !== selected.id);
-    this.currentSessionTabId = selected.id;
+    // Fix 8: Do NOT mutate this.currentSessionTabId here as a side-effect.
+    // Callers that need to persist the resolved tab (navigate, openTab, focusTab) do so explicitly.
     this.trackTab(selected);
     return {
       ok: true as const,
@@ -441,14 +494,21 @@ export class BrowserTools {
     return active?.id ?? null;
   }
 
-  private async runInTab(tabId: number, func: (...args: any[]) => unknown, args: any[] = []): Promise<any> {
+  private async runInTab(tabId: number, func: (...args: any[]) => unknown, args: any[] = [], timeoutMs = 8000): Promise<any> {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => reject(new Error(`Script execution timed out after ${timeoutMs}ms`)), timeoutMs);
+    });
     try {
-      const results = await chrome.scripting.executeScript({
-        target: { tabId },
-        func,
-        args,
-      });
-      return results?.[0]?.result ?? null;
+      const results = await Promise.race([
+        chrome.scripting.executeScript({
+          target: { tabId },
+          func,
+          args,
+        }),
+        timeoutPromise,
+      ]);
+      return (results as chrome.scripting.InjectionResult[])?.[0]?.result ?? null;
     } catch (error) {
       const message = error?.message || String(error) || 'Script execution failed.';
       const normalized = message.toLowerCase();
@@ -465,40 +525,45 @@ export class BrowserTools {
         };
       }
       throw error;
+    } finally {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
     }
   }
 
   private async navigate(args: Record<string, any>) {
     const tabId = await this.resolveTabId(args);
     if (!tabId) return { success: false, error: 'No active tab.' };
-    
+
     const url = args.url;
     if (!url || typeof url !== 'string') {
       return { success: false, error: 'Missing or invalid url parameter.' };
     }
-    
+
     // Validate URL format
     if (!url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('chrome://')) {
-      return { 
-        success: false, 
+      return {
+        success: false,
         error: `Invalid URL: "${url}". URLs must start with http://, https://, or chrome://`,
         hint: 'For Google searches, use: https://www.google.com/search?q=your+query',
       };
     }
-    
+
     try {
       await chrome.tabs.update(tabId, { url });
       this.currentSessionTabId = tabId;
       return { success: true, tabId, url };
     } catch (error) {
-      return { 
-        success: false, 
+      return {
+        success: false,
         error: `Navigation failed: ${error?.message || String(error)}`,
       };
     }
   }
 
   private async openTab(args: Record<string, any>) {
+    await this.pruneSessionTabs();
     // Enforce tab limit to prevent runaway tab creation
     if (this.sessionTabs.size >= MAX_SESSION_TABS) {
       return {
@@ -507,22 +572,22 @@ export class BrowserTools {
         hint: 'Use closeTab({ tabId: <id> }) to close a tab, or navigate({ url: "..." }) to reuse current tab.',
       };
     }
-    
+
     // Validate URL
     const url = args.url;
     if (!url || typeof url !== 'string') {
       return { success: false, error: 'Missing or invalid url parameter.' };
     }
-    
+
     // Check if it looks like a valid URL
     if (!url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('chrome://')) {
-      return { 
-        success: false, 
+      return {
+        success: false,
         error: `Invalid URL: "${url}". URLs must start with http://, https://, or chrome://`,
         hint: 'Use navigate({ url: "https://google.com/search?q=..." }) for searches.',
       };
     }
-    
+
     try {
       const tab = await chrome.tabs.create({ url, active: true });
       if (tab.id) {
@@ -533,8 +598,8 @@ export class BrowserTools {
       }
       return { success: true, tabId: tab.id, url };
     } catch (error) {
-      return { 
-        success: false, 
+      return {
+        success: false,
         error: `Failed to open tab: ${error?.message || String(error)}`,
         hint: 'Try using navigate() on current tab instead.',
       };
@@ -567,15 +632,118 @@ export class BrowserTools {
     const { resolution } = resolved;
     const tabId = resolution.tabId;
     const selector = String(args.selector || '');
+    const retries =
+      typeof args.retries === 'number'
+        ? Math.max(1, Math.min(5, Math.round(args.retries)))
+        : 3;
     const result = await this.runInTab(
       tabId,
-      (sel) => {
-        const el = document.querySelector<HTMLElement>(sel);
-        if (!el) return { success: false, error: 'Element not found.' };
-        el.click();
-        return { success: true };
+      async (sel, maxAttempts) => {
+        const selectorText = String(sel || '').trim();
+        const attempts = Number.isFinite(maxAttempts) ? Math.max(1, Math.floor(maxAttempts)) : 3;
+        const sleep = (ms: number) => new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
+        const normalize = (value: string) => String(value || '').replace(/\s+/g, ' ').trim();
+        const clickableQuery =
+          'button, a[href], [role="tab"], [role="button"], [role="link"], input[type="submit"], input[type="button"], [onclick]';
+
+        const textHint = (() => {
+          const quoted = selectorText.match(/["']([^"']+)["']/);
+          if (quoted?.[1]) return quoted[1].trim();
+          const bare = selectorText.replace(/^[#.]/, '').replace(/[_-]+/g, ' ').trim();
+          if (!bare || bare.length < 3) return '';
+          if (/[ >:[\]()]/.test(selectorText)) return '';
+          return bare;
+        })();
+
+        const clickCandidate = (element: HTMLElement | null, strategy: string) => {
+          if (!element) return null;
+          element.scrollIntoView({ block: 'center', inline: 'center' });
+          element.click();
+          return {
+            success: true,
+            strategy,
+            matched: normalize(element.textContent || element.getAttribute('aria-label') || '').slice(0, 100),
+          };
+        };
+
+        const findClickables = () =>
+          Array.from(document.querySelectorAll<HTMLElement>(clickableQuery));
+
+        const findByText = (query: string) => {
+          const needle = normalize(query).toLowerCase();
+          if (!needle) return null;
+          return (
+            findClickables().find((element) => {
+              const text = normalize(element.textContent || '').toLowerCase();
+              const aria = normalize(element.getAttribute('aria-label') || '').toLowerCase();
+              const title = normalize(element.getAttribute('title') || '').toLowerCase();
+              const value = normalize((element as HTMLInputElement).value || '').toLowerCase();
+              return text.includes(needle) || aria.includes(needle) || title.includes(needle) || value.includes(needle);
+            }) || null
+          );
+        };
+
+        const findByAttributeHint = (hint: string) => {
+          const escaped = hint.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+          const selectors = [
+            `[aria-label*="${escaped}" i]`,
+            `[title*="${escaped}" i]`,
+            `[data-testid*="${escaped}" i]`,
+            `button[name*="${escaped}" i]`,
+            `input[name*="${escaped}" i]`,
+          ];
+          for (const candidateSelector of selectors) {
+            try {
+              const candidate = document.querySelector<HTMLElement>(candidateSelector);
+              if (candidate) return candidate;
+            } catch {
+              // Ignore malformed selectors produced by edge-case hints.
+            }
+          }
+          return null;
+        };
+
+        for (let attempt = 1; attempt <= attempts; attempt += 1) {
+          if (selectorText) {
+            try {
+              const exact = clickCandidate(document.querySelector<HTMLElement>(selectorText), 'selector');
+              if (exact) return { ...exact, attempt };
+            } catch {
+              // Invalid selector syntax - continue with fallback strategies.
+            }
+          }
+
+          const byText = clickCandidate(findByText(textHint || selectorText), 'text_match');
+          if (byText) return { ...byText, attempt };
+
+          const byHint = clickCandidate(findByAttributeHint(textHint || selectorText), 'attribute_hint');
+          if (byHint) return { ...byHint, attempt };
+
+          if (attempt < attempts) {
+            await sleep(250 * attempt);
+          }
+        }
+
+        const candidates = findClickables()
+          .slice(0, 10)
+          .map((element) => ({
+            tag: element.tagName.toLowerCase(),
+            text: normalize(element.textContent || '').slice(0, 80),
+            aria: normalize(element.getAttribute('aria-label') || '').slice(0, 80),
+            classes: String(element.className || '').slice(0, 100),
+            role: element.getAttribute('role') || '',
+          }));
+
+        return {
+          success: false,
+          code: 'ELEMENT_NOT_FOUND',
+          error: `Element not found for selector: ${selectorText}`,
+          hint: 'Try getContent({ mode: "structure" }) and use text/aria-label selectors from the visible actions.',
+          similar_elements: candidates,
+          attempts,
+        };
       },
-      [selector],
+      [selector, retries],
     );
     const baseResult = result || { success: false, error: 'Script execution failed.' };
     return this.attachResolutionMeta(baseResult, resolution);
@@ -588,18 +756,119 @@ export class BrowserTools {
     const tabId = resolution.tabId;
     const selector = String(args.selector || '');
     const text = String(args.text ?? '');
+    const retries =
+      typeof args.retries === 'number'
+        ? Math.max(1, Math.min(5, Math.round(args.retries)))
+        : 3;
     const result = await this.runInTab(
       tabId,
-      (sel, value) => {
-        const el = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(sel);
-        if (!el) return { success: false, error: 'Element not found.' };
-        el.focus();
-        el.value = value;
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-        return { success: true };
+      async (sel, value, maxAttempts) => {
+        const selectorText = String(sel || '').trim();
+        const attempts = Number.isFinite(maxAttempts) ? Math.max(1, Math.floor(maxAttempts)) : 3;
+        const targetValue = String(value ?? '');
+        const sleep = (ms: number) => new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
+        const normalize = (input: string) => String(input || '').replace(/\s+/g, ' ').trim();
+
+        const textHint = (() => {
+          const quoted = selectorText.match(/["']([^"']+)["']/);
+          if (quoted?.[1]) return quoted[1].trim();
+          const bare = selectorText.replace(/^[#.]/, '').replace(/[_-]+/g, ' ').trim();
+          if (!bare || bare.length < 3) return '';
+          if (/[ >:[\]()]/.test(selectorText)) return '';
+          return bare;
+        })();
+
+        const getLabel = (inputElement: Element) => {
+          const id = inputElement.getAttribute('id');
+          if (id) {
+            const labelByFor = document.querySelector(`label[for="${id}"]`);
+            if (labelByFor?.textContent) return normalize(labelByFor.textContent);
+          }
+          const parentLabel = inputElement.closest('label');
+          if (parentLabel?.textContent) return normalize(parentLabel.textContent);
+          return '';
+        };
+
+        const getInputCandidates = () =>
+          Array.from(
+            document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLElement>(
+              'input, textarea, [contenteditable="true"]',
+            ),
+          );
+
+        const findByHint = (hint: string) => {
+          const needle = normalize(hint).toLowerCase();
+          if (!needle) return null;
+          return (
+            getInputCandidates().find((candidate) => {
+              const placeholder = normalize((candidate as HTMLInputElement).placeholder || '').toLowerCase();
+              const name = normalize(candidate.getAttribute('name') || '').toLowerCase();
+              const aria = normalize(candidate.getAttribute('aria-label') || '').toLowerCase();
+              const title = normalize(candidate.getAttribute('title') || '').toLowerCase();
+              const label = getLabel(candidate).toLowerCase();
+              return (
+                placeholder.includes(needle) ||
+                name.includes(needle) ||
+                aria.includes(needle) ||
+                title.includes(needle) ||
+                label.includes(needle)
+              );
+            }) || null
+          );
+        };
+
+        const applyValue = (element: HTMLInputElement | HTMLTextAreaElement | HTMLElement, nextValue: string) => {
+          element.focus();
+          if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
+            const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element), 'value');
+            if (descriptor?.set) {
+              descriptor.set.call(element, nextValue);
+            } else {
+              element.value = nextValue;
+            }
+          } else {
+            element.textContent = nextValue;
+          }
+          element.dispatchEvent(new Event('input', { bubbles: true }));
+          element.dispatchEvent(new Event('change', { bubbles: true }));
+        };
+
+        for (let attempt = 1; attempt <= attempts; attempt += 1) {
+          let target: HTMLInputElement | HTMLTextAreaElement | HTMLElement | null = null;
+          let strategy = 'selector';
+          if (selectorText) {
+            try {
+              target = document.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLElement>(selectorText);
+            } catch {
+              target = null;
+            }
+          }
+          if (!target) {
+            target = findByHint(textHint || selectorText);
+            strategy = 'hint_match';
+          }
+          if (target) {
+            applyValue(target, targetValue);
+            return {
+              success: true,
+              strategy,
+              attempt,
+            };
+          }
+          if (attempt < attempts) {
+            await sleep(250 * attempt);
+          }
+        }
+
+        return {
+          success: false,
+          code: 'ELEMENT_NOT_FOUND',
+          error: `Element not found for selector: ${selectorText}`,
+          hint: 'Use getContent({ mode: "structure" }) to locate form fields by placeholder/label before retrying type().',
+          attempts,
+        };
       },
-      [selector, text],
+      [selector, text, retries],
     );
     const baseResult = result || { success: false, error: 'Script execution failed.' };
     return this.attachResolutionMeta(baseResult, resolution);
@@ -615,9 +884,12 @@ export class BrowserTools {
     const result = await this.runInTab(
       tabId,
       (k, sel) => {
-        const target = sel ? document.querySelector<HTMLElement>(sel) : document.body;
+        const target = sel
+          ? document.querySelector<HTMLElement>(sel)
+          : (document.activeElement as HTMLElement | null) || document.body;
         if (!target) return { success: false, error: 'Target not found.' };
         target.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }));
+        target.dispatchEvent(new KeyboardEvent('keypress', { key: k, bubbles: true }));
         target.dispatchEvent(new KeyboardEvent('keyup', { key: k, bubbles: true }));
         return { success: true };
       },
@@ -662,13 +934,15 @@ export class BrowserTools {
     const type = String(args.type || args.mode || 'text');
     const selector = args.selector ? String(args.selector) : '';
     const maxChars = typeof args.maxChars === 'number' && args.maxChars > 0 ? args.maxChars : 8000;
+    const maxItems = typeof args.maxItems === 'number' && args.maxItems > 0 ? args.maxItems : 40;
     const result = await this.runInTab(
       tabId,
-      (t, sel, limit) => {
+      (t, sel, limit, maxPerSection) => {
         const base = sel ? document.querySelector<HTMLElement>(sel) : document.body;
         if (!base) return { success: false, error: 'Target not found.' };
-        const normalizedType = ['text', 'html', 'title', 'url', 'links'].includes(t) ? t : 'text';
+        const normalizedType = ['text', 'html', 'title', 'url', 'links', 'structure'].includes(t) ? t : 'text';
         const safeLimit = Number.isFinite(limit) ? Math.max(200, Math.floor(limit)) : 8000;
+        const safeMaxItems = Number.isFinite(maxPerSection) ? Math.max(10, Math.floor(maxPerSection)) : 40;
         const truncate = (value: string) => {
           const length = value.length;
           if (length <= safeLimit) {
@@ -770,9 +1044,141 @@ export class BrowserTools {
             contentLength: content.length,
           };
         };
+        const extractStructure = (root: HTMLElement, maxLen: number, maxPerSectionCount: number) => {
+          const clip = (value: string, length: number) => {
+            const text = String(value || '').trim();
+            if (text.length <= length) return text;
+            return `${text.slice(0, length)}...`;
+          };
+          const summarizeField = (element: Element) => {
+            const tag = element.tagName.toLowerCase();
+            const type = element.getAttribute('type') || '';
+            const name = element.getAttribute('name') || '';
+            const id = element.getAttribute('id') || '';
+            const placeholder = element.getAttribute('placeholder') || '';
+            const label =
+              element.getAttribute('aria-label') ||
+              element.getAttribute('title') ||
+              element.getAttribute('alt') ||
+              '';
+            return {
+              tag,
+              type: clip(type, 40),
+              name: clip(name, 120),
+              id: clip(id, 120),
+              label: clip(label, 140),
+              placeholder: clip(placeholder, 120),
+              required: element.hasAttribute('required'),
+              disabled: element.hasAttribute('disabled'),
+            };
+          };
+
+          const structure: Record<string, any> = {
+            title: clip(document.title || '', 220),
+            url: clip(window.location.href || '', 420),
+            headings: [],
+            forms: [],
+            actions: [],
+            landmarks: [],
+          };
+
+          let truncated = false;
+          const tryPush = (key: 'headings' | 'forms' | 'actions' | 'landmarks', item: Record<string, any>) => {
+            const list = structure[key] as Record<string, any>[];
+            list.push(item);
+            if (JSON.stringify(structure).length > maxLen) {
+              list.pop();
+              truncated = true;
+              return false;
+            }
+            return true;
+          };
+
+          const headings = Array.from(root.querySelectorAll('h1, h2, h3')) as HTMLElement[];
+          for (let i = 0; i < headings.length && i < maxPerSectionCount; i += 1) {
+            const heading = headings[i];
+            const item = {
+              level: heading.tagName.toLowerCase(),
+              text: clip(heading.innerText || heading.textContent || '', 220),
+            };
+            if (!tryPush('headings', item)) break;
+          }
+          if (headings.length > maxPerSectionCount) truncated = true;
+
+          const forms = Array.from(root.querySelectorAll('form')) as HTMLFormElement[];
+          for (let i = 0; i < forms.length && i < maxPerSectionCount; i += 1) {
+            const form = forms[i];
+            const fields = Array.from(form.querySelectorAll('input, select, textarea, button'))
+              .slice(0, 16)
+              .map((field) => summarizeField(field as Element));
+            const item = {
+              id: clip(form.id || '', 120),
+              name: clip(form.getAttribute('name') || '', 120),
+              method: clip((form.getAttribute('method') || 'get').toUpperCase(), 12),
+              action: clip(form.getAttribute('action') || '', 220),
+              fields,
+            };
+            if (!tryPush('forms', item)) break;
+          }
+          if (forms.length > maxPerSectionCount) truncated = true;
+
+          const actions = Array.from(
+            root.querySelectorAll('button, a[href], input[type="submit"], input[type="button"], [role="button"]'),
+          ) as HTMLElement[];
+          for (let i = 0; i < actions.length && i < maxPerSectionCount; i += 1) {
+            const action = actions[i];
+            const item = {
+              tag: action.tagName.toLowerCase(),
+              text: clip(action.innerText || action.textContent || '', 200),
+              id: clip(action.id || '', 120),
+              href: clip((action as HTMLAnchorElement).href || '', 260),
+              disabled: (action as HTMLButtonElement).disabled === true || action.getAttribute('aria-disabled') === 'true',
+            };
+            if (!tryPush('actions', item)) break;
+          }
+          if (actions.length > maxPerSectionCount) truncated = true;
+
+          const landmarks = Array.from(root.querySelectorAll('main, nav, header, footer, aside, section, article')) as HTMLElement[];
+          for (let i = 0; i < landmarks.length && i < maxPerSectionCount; i += 1) {
+            const landmark = landmarks[i];
+            const item = {
+              tag: landmark.tagName.toLowerCase(),
+              id: clip(landmark.id || '', 120),
+              role: clip(landmark.getAttribute('role') || '', 80),
+              label: clip(
+                landmark.getAttribute('aria-label') ||
+                landmark.getAttribute('title') ||
+                landmark.getAttribute('data-testid') ||
+                '',
+                180,
+              ),
+            };
+            if (!tryPush('landmarks', item)) break;
+          }
+          if (landmarks.length > maxPerSectionCount) truncated = true;
+
+          const content = JSON.stringify(structure);
+          return {
+            success: true,
+            mode: 'structure',
+            structure,
+            sections: {
+              headings: structure.headings.length,
+              forms: structure.forms.length,
+              actions: structure.actions.length,
+              landmarks: structure.landmarks.length,
+            },
+            truncated,
+            content,
+            contentLength: content.length,
+          };
+        };
         if (normalizedType === 'html') {
           const result = extractHtmlPreview(base, safeLimit);
           return { success: true, ...result };
+        }
+        if (normalizedType === 'structure') {
+          return extractStructure(base, safeLimit, safeMaxItems);
         }
         if (normalizedType === 'title') {
           const result = truncate(document.title || '');
@@ -821,7 +1227,7 @@ export class BrowserTools {
         const result = extractVisibleText(base, safeLimit);
         return { success: true, ...result };
       },
-      [type, selector, maxChars],
+      [type, selector, maxChars, maxItems],
     );
     const baseResult = result || { success: false, error: 'Script execution failed.' };
     return this.attachResolutionMeta(baseResult, resolution);

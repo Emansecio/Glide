@@ -2,7 +2,7 @@
 
 /**
  * Extension Validator
- * Validates the extension structure, manifest, and required files
+ * Validates the built extension artifacts in dist/
  */
 
 import fs from 'fs';
@@ -11,8 +11,8 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const ROOT_DIR = path.join(__dirname, '..');
-const PROJECT_DIR = path.join(ROOT_DIR, '..');
+const DIST_DIR = path.join(__dirname, '..');
+const PROJECT_DIR = path.join(DIST_DIR, '..');
 
 type Manifest = {
   manifest_version?: number;
@@ -59,22 +59,22 @@ class ExtensionValidator {
     try {
       fn();
       this.passed++;
-      this.log(`✓ ${description}`, 'success');
+      this.log(`[OK] ${description}`, 'success');
       return true;
-    } catch (error) {
+    } catch (error: any) {
       this.failed++;
       this.errors.push({ test: description, error: error.message });
-      this.log(`✗ ${description}: ${error.message}`, 'error');
+      this.log(`[FAIL] ${description}: ${error.message}`, 'error');
       return false;
     }
   }
 
   warn(message: string) {
     this.warnings.push(message);
-    this.log(`⚠ ${message}`, 'warning');
+    this.log(`[WARN] ${message}`, 'warning');
   }
 
-  fileExists(filePath: string, baseDir: string = ROOT_DIR) {
+  fileExists(filePath: string, baseDir: string = DIST_DIR) {
     const fullPath = path.join(baseDir, filePath);
     if (!fs.existsSync(fullPath)) {
       throw new Error(`File not found: ${filePath}`);
@@ -82,12 +82,12 @@ class ExtensionValidator {
     return fullPath;
   }
 
-  validateJSON(filePath: string, baseDir: string = ROOT_DIR) {
+  validateJSON(filePath: string, baseDir: string = DIST_DIR) {
     const fullPath = this.fileExists(filePath, baseDir);
     const content = fs.readFileSync(fullPath, 'utf8');
     try {
       return JSON.parse(content);
-    } catch (error) {
+    } catch (error: any) {
       throw new Error(`Invalid JSON in ${filePath}: ${error.message}`);
     }
   }
@@ -160,22 +160,28 @@ class ExtensionValidator {
       }
     });
 
-    // Check for icons
     if (!this.manifest?.icons) {
-      this.warn("No icons configured - extension will work but won't show an icon");
+      this.warn("No icons configured; extension will work but won't show an icon.");
+      return;
     }
+
+    Object.entries(this.manifest.icons).forEach(([size, iconPath]) => {
+      this.test(`icon ${size} (${iconPath}) exists`, () => {
+        this.fileExists(iconPath);
+      });
+    });
   }
 
   validateRequiredFiles() {
     this.log('\n=== Validating Required Files ===', 'info');
 
     const requiredFiles = [
+      'manifest.json',
       'background.js',
       'content.js',
       'sidepanel/panel.html',
       'sidepanel/panel.css',
       'sidepanel/panel.js',
-      'tools/browser-tools.js',
     ];
 
     requiredFiles.forEach((file) => {
@@ -188,25 +194,15 @@ class ExtensionValidator {
   validateJavaScriptSyntax() {
     this.log('\n=== Validating JavaScript Files ===', 'info');
 
-    const jsFiles = ['background.js', 'content.js', 'sidepanel/panel.js', 'tools/browser-tools.js'];
+    const jsFiles = ['background.js', 'content.js', 'sidepanel/panel.js'];
 
     jsFiles.forEach((file) => {
       this.test(`${file} has valid syntax`, () => {
         const fullPath = this.fileExists(file);
         const content = fs.readFileSync(fullPath, 'utf8');
 
-        // Check for common syntax issues
         if (content.includes('debugger;')) {
           this.warn(`${file} contains debugger statement`);
-        }
-
-        // Check for module imports/exports
-        // Note: background.js, content.js, and panel.js are entry points and don't need exports
-        const entryPoints = ['background.js', 'sidepanel/panel.js', 'content.js'];
-        if (!entryPoints.includes(file)) {
-          if (!content.includes('export')) {
-            throw new Error(`${file} should export classes/functions`);
-          }
         }
       });
     });
@@ -220,7 +216,7 @@ class ExtensionValidator {
     });
 
     this.test('package.json has required scripts', () => {
-      const required = ['test', 'validate', 'build'];
+      const required = ['test', 'validate', 'build', 'build:ext', 'build:test'];
       const missing = required.filter((s) => !this.packageJSON.scripts?.[s]);
       if (missing.length > 0) {
         throw new Error(`Missing scripts: ${missing.join(', ')}`);
@@ -231,7 +227,7 @@ class ExtensionValidator {
   validateDocumentation() {
     this.log('\n=== Validating Documentation ===', 'info');
 
-    const docs = ['README.md', 'LICENSE', 'docs/API_SPECIFICATION.md', 'docs/QUICK_START.md'];
+    const docs = ['README.md', 'LICENSE', 'docs/API.md', 'docs/ARCHITECTURE.md'];
 
     docs.forEach((doc) => {
       this.test(`${doc} exists`, () => {
@@ -243,11 +239,11 @@ class ExtensionValidator {
   validateFileStructure() {
     this.log('\n=== Validating File Structure ===', 'info');
 
-    const requiredDirs = ['sidepanel', 'ai', 'tools', 'icons'];
+    const requiredDirs = ['sidepanel', 'icons'];
 
     requiredDirs.forEach((dir) => {
       this.test(`${dir}/ directory exists`, () => {
-        const fullPath = path.join(ROOT_DIR, dir);
+        const fullPath = path.join(DIST_DIR, dir);
         if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isDirectory()) {
           throw new Error(`Directory not found: ${dir}/`);
         }
@@ -258,12 +254,12 @@ class ExtensionValidator {
   validateToolDefinitions() {
     this.log('\n=== Validating Tool Definitions ===', 'info');
 
-    this.test('BrowserTools class exists and exports getToolDefinitions', () => {
-      const toolsPath = this.fileExists('tools/browser-tools.js');
-      const content = fs.readFileSync(toolsPath, 'utf8');
+    this.test('BrowserTools implementation is bundled in background.js', () => {
+      const backgroundPath = this.fileExists('background.js');
+      const content = fs.readFileSync(backgroundPath, 'utf8');
 
-      if (!content.includes('export class BrowserTools')) {
-        throw new Error('BrowserTools class not exported');
+      if (!content.includes('BrowserTools = class') && !content.includes('class BrowserTools')) {
+        throw new Error('BrowserTools class not found in bundle');
       }
 
       if (!content.includes('getToolDefinitions')) {
@@ -294,20 +290,20 @@ class ExtensionValidator {
     }
 
     if (this.failed === 0) {
-      this.log('\n✓ Extension validation passed!', 'success');
+      this.log('\n[OK] Extension validation passed!', 'success');
       this.log('Extension is ready to load in Chrome.', 'success');
       return true;
-    } else {
-      this.log('\n✗ Extension validation failed!', 'error');
-      this.log('Please fix the errors above before loading the extension.', 'error');
-      return false;
     }
+
+    this.log('\n[FAIL] Extension validation failed!', 'error');
+    this.log('Please fix the errors above before loading the extension.', 'error');
+    return false;
   }
 
   async run() {
-    this.log('╔════════════════════════════════════════╗', 'info');
-    this.log('║  Glide - Extension Validator  ║', 'info');
-    this.log('╚════════════════════════════════════════╝', 'info');
+    this.log('========================================', 'info');
+    this.log('       Glide - Extension Validator      ', 'info');
+    this.log('========================================', 'info');
 
     this.validateManifest();
     this.validateFileStructure();
@@ -322,6 +318,5 @@ class ExtensionValidator {
   }
 }
 
-// Run validator
 const validator = new ExtensionValidator();
 validator.run();

@@ -2,7 +2,7 @@
 
 /**
  * Main Test Runner
- * Runs all tests including validation and unit tests
+ * Runs validation and unit tests
  */
 
 import { exec } from 'child_process';
@@ -23,44 +23,40 @@ function log(message: string, type: keyof typeof colors = 'info') {
 }
 
 async function runCommand(command: string, description: string) {
-  log(`\n▶ ${description}...`, 'info');
+  log(`\n[RUN] ${description}...`, 'info');
   try {
     const { stdout, stderr } = await execAsync(command);
     if (stdout) console.log(stdout);
     if (stderr) console.error(stderr);
-    log(`✓ ${description} completed`, 'success');
+    log(`[OK] ${description} completed`, 'success');
     return true;
-  } catch (error) {
-    log(`✗ ${description} failed`, 'error');
+  } catch (error: any) {
+    log(`[FAIL] ${description} failed`, 'error');
     console.error(error.stdout || error.stderr || error.message);
     return false;
   }
 }
 
 async function main() {
-  log('╔════════════════════════════════════════╗', 'info');
-  log('║           Glide - Test Suite         ║', 'info');
-  log('╚════════════════════════════════════════╝', 'info');
+  log('========================================', 'info');
+  log('            Glide - Test Suite          ', 'info');
+  log('========================================', 'info');
 
   let allPassed = true;
 
-  // Run validation
   allPassed = (await runCommand('node dist/tests/validate-extension.js', 'Extension Validation')) && allPassed;
-
-  // Run unit tests
   allPassed = (await runCommand('node dist/tests/unit/run-unit-tests.js', 'Unit Tests')) && allPassed;
 
-  // Summary
-  log('\n' + '═'.repeat(40), 'info');
+  log(`\n${'='.repeat(40)}`, 'info');
   if (allPassed) {
-    log('✓ All tests passed!', 'success');
+    log('[OK] All tests passed!', 'success');
     log('Extension is ready to use.', 'success');
     process.exit(0);
-  } else {
-    log('✗ Some tests failed', 'error');
-    log('Please fix the issues above.', 'error');
-    process.exit(1);
   }
+
+  log('[FAIL] Some tests failed', 'error');
+  log('Please fix the issues above.', 'error');
+  process.exit(1);
 }
 
 main();

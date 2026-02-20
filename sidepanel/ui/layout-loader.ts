@@ -28,7 +28,6 @@ export const loadPanelLayout = async () => {
     historyPanel,
     settingsPanel,
     settingsGeneral,
-    settingsProfiles,
     tabSelector,
   ] = await Promise.all([
     loadTemplate('sidebar-shell.html'),
@@ -36,7 +35,6 @@ export const loadPanelLayout = async () => {
     loadTemplate('panels/history.html'),
     loadTemplate('panels/settings.html'),
     loadTemplate('panels/settings-general.html'),
-    loadTemplate('panels/settings-profiles.html'),
     loadTemplate('tab-selector.html'),
   ]);
 
@@ -51,7 +49,6 @@ export const loadPanelLayout = async () => {
   rightPanels?.insertAdjacentHTML('beforeend', (historyPanel + settingsPanel).trim());
 
   replaceWithHtml(appContainer, '#settingsTabGeneral', settingsGeneral);
-  replaceWithHtml(appContainer, '#settingsTabProfiles', settingsProfiles);
 
   const modalRoot = document.getElementById('modalRoot');
   if (modalRoot) {

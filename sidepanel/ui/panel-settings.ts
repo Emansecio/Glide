@@ -2,24 +2,137 @@ import { SidePanelUI } from './panel-ui.js';
 
 const DEFAULT_LOCAL_API_ENDPOINT = 'http://localhost:11434';
 const DEFAULT_KIMI_API_ENDPOINT = 'https://api.kimi.com/coding';
+const LEGACY_PROFILE_KEYS = ['configs', 'activeConfig', 'auxAgentProfiles', 'visionProfile', 'orchestratorProfile', 'temperature'];
 
-const normalizeProfileEndpoint = (profile: Record<string, any> = {}) => {
-  const provider = String(profile.provider || 'openai').toLowerCase();
-  const endpoint = String(profile.customEndpoint || '').trim();
+type PanelConfig = {
+  provider: string;
+  apiKey: string;
+  model: string;
+  customEndpoint: string;
+  systemPrompt: string;
+  maxTokens: number;
+  contextLimit: number;
+  timeout: number;
+  enableScreenshots: boolean;
+  sendScreenshotsAsImages: boolean;
+  screenshotQuality: 'high' | 'low' | string;
+  showThinking: boolean;
+  streamResponses: boolean;
+  autoScroll: boolean;
+  confirmActions: boolean;
+  saveHistory: boolean;
+  autoRecoveryMode: string;
+  screenshotOnFailure: boolean;
+  screenshotRetention: string;
+  qualityMode: 'max' | 'balanced' | 'speed' | string;
+  autoTuneSafety: boolean;
+  minimumReportSections: number;
+};
 
-  if (provider === 'ollama') {
-    return endpoint || DEFAULT_LOCAL_API_ENDPOINT;
-  }
-  if (provider === 'kimi') {
-    return endpoint || DEFAULT_KIMI_API_ENDPOINT;
-  }
-  if (provider === 'custom') {
-    return endpoint;
-  }
+const parseSelectBoolean = (element: HTMLSelectElement | null | undefined, fallback: boolean) => {
+  if (!element) return fallback;
+  const raw = String(element.value || '').toLowerCase();
+  if (raw === 'true') return true;
+  if (raw === 'false') return false;
+  return fallback;
+};
 
-  // Cloud/native providers should not carry legacy local/custom endpoints.
+const clampNumber = (value: unknown, fallback: number, min: number, max: number) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(parsed)));
+};
+
+const normalizeEndpointForProvider = (provider: string, endpoint: string) => {
+  const normalizedProvider = String(provider || 'openai').toLowerCase();
+  const normalizedEndpoint = String(endpoint || '').trim();
+  if (normalizedProvider === 'ollama') return normalizedEndpoint || DEFAULT_LOCAL_API_ENDPOINT;
+  if (normalizedProvider === 'kimi') return normalizedEndpoint || DEFAULT_KIMI_API_ENDPOINT;
+  if (normalizedProvider === 'custom') return normalizedEndpoint;
   return '';
 };
+
+const normalizeConfig = (raw: Record<string, any> = {}, fallbackPrompt = ''): PanelConfig => {
+  const provider = String(raw.provider || 'openai').toLowerCase();
+  const systemPrompt = String(raw.systemPrompt || fallbackPrompt || '');
+  return {
+    provider,
+    apiKey: String(raw.apiKey || ''),
+    model: String(raw.model || 'gpt-4o'),
+    customEndpoint: normalizeEndpointForProvider(provider, String(raw.customEndpoint || '')),
+    systemPrompt,
+    maxTokens: clampNumber(raw.maxTokens, 4096, 256, 64000),
+    contextLimit: clampNumber(raw.contextLimit, 200000, 4000, 2000000),
+    timeout: clampNumber(raw.timeout, 90000, 5000, 600000),
+    enableScreenshots: raw.enableScreenshots !== false,
+    sendScreenshotsAsImages: raw.sendScreenshotsAsImages === true,
+    screenshotQuality: String(raw.screenshotQuality || 'high'),
+    showThinking: raw.showThinking !== false,
+    streamResponses: raw.streamResponses !== false,
+    autoScroll: raw.autoScroll !== false,
+    confirmActions: raw.confirmActions !== false,
+    saveHistory: raw.saveHistory !== false,
+    autoRecoveryMode: String(raw.autoRecoveryMode || 'balanced'),
+    screenshotOnFailure: raw.screenshotOnFailure !== false,
+    screenshotRetention: String(raw.screenshotRetention || 'ephemeral'),
+    qualityMode: String(raw.qualityMode || 'max'),
+    autoTuneSafety: raw.autoTuneSafety !== false,
+    minimumReportSections: clampNumber(raw.minimumReportSections, 5, 3, 8),
+  };
+};
+
+const pickLegacyProfile = (settings: Record<string, any>) => {
+  const configs = settings?.configs && typeof settings.configs === 'object' ? settings.configs : null;
+  if (!configs) return null;
+  const activeName = String(settings.activeConfig || 'default');
+  const fromActive = configs[activeName];
+  if (fromActive && typeof fromActive === 'object') return fromActive as Record<string, any>;
+  const fromDefault = configs.default;
+  if (fromDefault && typeof fromDefault === 'object') return fromDefault as Record<string, any>;
+  const firstProfile = Object.values(configs).find((entry) => entry && typeof entry === 'object');
+  return firstProfile && typeof firstProfile === 'object' ? (firstProfile as Record<string, any>) : null;
+};
+
+const hasLegacyProfileState = (settings: Record<string, any>) => {
+  return LEGACY_PROFILE_KEYS.some((key) => settings[key] !== undefined);
+};
+
+const buildSingleConfigFromSettings = (settings: Record<string, any>, fallbackPrompt: string) => {
+  const legacy = pickLegacyProfile(settings) || {};
+  const topLevelConfig = {
+    provider: settings.provider,
+    apiKey: settings.apiKey,
+    model: settings.model,
+    customEndpoint: settings.customEndpoint,
+    systemPrompt: settings.systemPrompt,
+    maxTokens: settings.maxTokens,
+    contextLimit: settings.contextLimit,
+    timeout: settings.timeout,
+    enableScreenshots: settings.enableScreenshots,
+    sendScreenshotsAsImages: settings.sendScreenshotsAsImages,
+    screenshotQuality: settings.screenshotQuality,
+    showThinking: settings.showThinking,
+    streamResponses: settings.streamResponses,
+    autoScroll: settings.autoScroll,
+    confirmActions: settings.confirmActions,
+    saveHistory: settings.saveHistory,
+    autoRecoveryMode: settings.autoRecoveryMode,
+    screenshotOnFailure: settings.screenshotOnFailure,
+    screenshotRetention: settings.screenshotRetention,
+    qualityMode: settings.qualityMode,
+    autoTuneSafety: settings.autoTuneSafety,
+    minimumReportSections: settings.minimumReportSections,
+  };
+  return normalizeConfig({ ...legacy, ...topLevelConfig }, fallbackPrompt);
+};
+
+const defaultToolPermissions = () => ({
+  read: true,
+  interact: true,
+  navigate: true,
+  tabs: true,
+  screenshots: true,
+});
 
 (SidePanelUI.prototype as any).toggleSettings = async function toggleSettings(saveOnClose = true) {
   const isOpen = this.elements.settingsPanel ? !this.elements.settingsPanel.classList.contains('hidden') : false;
@@ -36,7 +149,7 @@ const normalizeProfileEndpoint = (profile: Record<string, any> = {}) => {
   this.settingsOpen = true;
   this.openSidebar();
   this.showRightPanel('settings');
-  this.switchSettingsTab(this.currentSettingsTab || 'general');
+  this.switchSettingsTab('general');
   this.setNavActive('settings');
 };
 
@@ -50,64 +163,48 @@ const normalizeProfileEndpoint = (profile: Record<string, any> = {}) => {
   const previousProvider = this.elements.provider?.dataset?.previousProvider || '';
   const requiresEndpoint = provider === 'custom' || provider === 'kimi' || provider === 'ollama';
 
-  // Limpar modelo quando trocar de provider
   if (previousProvider && previousProvider !== provider) {
-    if (this.elements.model) {
-      this.elements.model.value = '';
-    }
-    if (this.elements.modelSelect) {
-      this.elements.modelSelect.value = '';
-    }
+    if (this.elements.model) this.elements.model.value = '';
+    if (this.elements.modelSelect) this.elements.modelSelect.value = '';
     this.syncModelTrigger();
   }
 
-  // Salvar provider atual para proxima comparacao
   if (this.elements.provider) {
     this.elements.provider.dataset.previousProvider = provider;
   }
 
-  // Always show the endpoint field, but highlight when required
   if (this.elements.customEndpointGroup) {
-    // Add visual emphasis when custom provider selected
     this.elements.customEndpointGroup.classList.toggle('required', requiresEndpoint);
   }
 
-  // Update placeholder and value based on provider
   if (this.elements.customEndpoint) {
     if (provider === 'ollama') {
-      // Só preencher se estiver vazio ou tiver valor de outro provider
       const currentValue = this.elements.customEndpoint.value;
-      const isOtherProviderUrl = currentValue &&
-        (currentValue.includes('openrouter') || currentValue.includes('kimi.com'));
+      const isOtherProviderUrl = currentValue && (currentValue.includes('openrouter') || currentValue.includes('kimi.com'));
       if (!currentValue || isOtherProviderUrl) {
         this.elements.customEndpoint.value = DEFAULT_LOCAL_API_ENDPOINT;
       }
       this.elements.customEndpoint.placeholder = DEFAULT_LOCAL_API_ENDPOINT;
     } else if (provider === 'kimi') {
       const currentValue = this.elements.customEndpoint.value;
-      const isOtherProviderUrl = currentValue &&
-        (currentValue.includes('openrouter') || currentValue === DEFAULT_LOCAL_API_ENDPOINT);
+      const isOtherProviderUrl = currentValue && (currentValue.includes('openrouter') || currentValue === DEFAULT_LOCAL_API_ENDPOINT);
       if (!currentValue || isOtherProviderUrl) {
         this.elements.customEndpoint.value = DEFAULT_KIMI_API_ENDPOINT;
       }
       this.elements.customEndpoint.placeholder = DEFAULT_KIMI_API_ENDPOINT;
     } else if (requiresEndpoint) {
-      // Para provider custom, limpar o valor se for de outro provider conhecido
       const currentValue = this.elements.customEndpoint.value;
-      const isKnownProviderUrl = currentValue &&
-        (currentValue === DEFAULT_LOCAL_API_ENDPOINT || currentValue.includes('kimi.com'));
+      const isKnownProviderUrl = currentValue && (currentValue === DEFAULT_LOCAL_API_ENDPOINT || currentValue.includes('kimi.com'));
       if (isKnownProviderUrl) {
         this.elements.customEndpoint.value = '';
       }
       this.elements.customEndpoint.placeholder = 'https://openrouter.ai/api/v1';
     } else {
-      // Providers que nao precisam de endpoint (anthropic, openai, google) - limpar campo
       this.elements.customEndpoint.value = '';
       this.elements.customEndpoint.placeholder = '';
     }
   }
 
-  // Update model hint based on provider
   const modelHint = document.getElementById('modelHint');
   if (modelHint) {
     switch (provider) {
@@ -149,50 +246,28 @@ const normalizeProfileEndpoint = (profile: Record<string, any> = {}) => {
   }
 };
 
-(SidePanelUI.prototype as any).toggleProfileEditorEndpoint = function toggleProfileEditorEndpoint() {
-  if (!this.elements.profileEditorEndpointGroup) return;
-  const provider = this.elements.profileEditorProvider?.value;
-  this.elements.profileEditorEndpointGroup.style.display =
-    provider === 'custom' || provider === 'kimi' || provider === 'ollama' ? 'block' : 'none';
-};
-
-(SidePanelUI.prototype as any).switchSettingsTab = function switchSettingsTab(
-  tabName: 'general' | 'profiles' = 'general',
-) {
-  if (this.currentSettingsTab === 'general' && tabName === 'profiles') {
-    this.configs[this.currentConfig] = this.collectCurrentFormProfile();
-    void this.persistAllSettings({ silent: true });
-  }
-  this.currentSettingsTab = tabName;
+(SidePanelUI.prototype as any).switchSettingsTab = function switchSettingsTab(tabName: 'general' = 'general') {
+  this.currentSettingsTab = tabName === 'general' ? 'general' : 'general';
   const general = this.elements.settingsTabGeneral;
-  const profiles = this.elements.settingsTabProfiles;
-  general?.classList.toggle('hidden', tabName !== 'general');
-  profiles?.classList.toggle('hidden', tabName !== 'profiles');
-  this.elements.settingsTabGeneralBtn?.classList.toggle('active', tabName === 'general');
-  this.elements.settingsTabProfilesBtn?.classList.toggle('active', tabName === 'profiles');
-};
-
-(SidePanelUI.prototype as any).createProfileFromInput = function createProfileFromInput() {
-  const name = (this.elements.newProfileNameInput?.value || '').trim();
-  if (!name) {
-    this.updateStatus('Enter a profile name first', 'warning');
-    return;
-  }
-  if (this.configs[name]) {
-    this.updateStatus('Profile already exists', 'warning');
-    return;
-  }
-  if (this.elements.newProfileNameInput) this.elements.newProfileNameInput.value = '';
-  this.createNewConfig(name);
-  this.editProfile(name, true);
+  general?.classList.remove('hidden');
+  this.elements.settingsTabGeneralBtn?.classList.add('active');
 };
 
 (SidePanelUI.prototype as any).loadSettings = async function loadSettings() {
   const settings = await chrome.storage.local.get([
+    'provider',
+    'apiKey',
+    'model',
+    'customEndpoint',
+    'systemPrompt',
+    'maxTokens',
+    'contextLimit',
+    'timeout',
+    'enableScreenshots',
+    'sendScreenshotsAsImages',
+    'screenshotQuality',
     'visionBridge',
-    'visionProfile',
     'useOrchestrator',
-    'orchestratorProfile',
     'showThinking',
     'streamResponses',
     'autoScroll',
@@ -200,132 +275,114 @@ const normalizeProfileEndpoint = (profile: Record<string, any> = {}) => {
     'saveHistory',
     'toolPermissions',
     'allowedDomains',
-    'activeConfig',
-    'configs',
-    'auxAgentProfiles',
     'autoRecoveryMode',
     'screenshotOnFailure',
     'screenshotRetention',
+    'qualityMode',
+    'autoTuneSafety',
+    'minimumReportSections',
+    ...LEGACY_PROFILE_KEYS,
   ]);
 
-  const storedConfigs = settings.configs || {};
-  const baseConfig = {
-    provider: 'openai',
-    apiKey: '',
-    model: 'gpt-4o',
-    customEndpoint: '',
-    systemPrompt: this.getDefaultSystemPrompt(),
-    temperature: 0.7,
-    maxTokens: 4096,
-    contextLimit: 200000,
-    timeout: 30000,
-    sendScreenshotsAsImages: false,
-    screenshotQuality: 'high',
-    showThinking: true,
-    streamResponses: true,
-    autoScroll: true,
-    confirmActions: true,
-    saveHistory: true,
-    enableScreenshots: true,
-    autoRecoveryMode: 'balanced',
-    screenshotOnFailure: true,
-    screenshotRetention: 'ephemeral',
-  };
+  const fallbackPrompt = this.getDefaultSystemPrompt();
+  const activeConfig = buildSingleConfigFromSettings(settings, fallbackPrompt);
 
-  this.configs = {
-    default: { ...baseConfig, ...(storedConfigs.default || {}) },
-    ...storedConfigs,
-  };
-  Object.keys(this.configs).forEach((name) => {
-    const profile = this.configs[name] || {};
-    this.configs[name] = {
-      ...profile,
-      provider: profile.provider || 'openai',
-      customEndpoint: normalizeProfileEndpoint(profile),
-    };
-  });
-  if (this.configs.default.provider === 'ollama' && !this.configs.default.customEndpoint) {
-    this.configs.default.customEndpoint = DEFAULT_LOCAL_API_ENDPOINT;
+  this.currentConfig = 'default';
+  this.configs = { default: activeConfig };
+
+  if (this.elements.provider) this.elements.provider.value = activeConfig.provider;
+  if (this.elements.apiKey) this.elements.apiKey.value = activeConfig.apiKey;
+  if (this.elements.model) this.elements.model.value = activeConfig.model;
+  if (this.elements.customEndpoint) this.elements.customEndpoint.value = activeConfig.customEndpoint;
+  if (this.elements.systemPrompt) this.elements.systemPrompt.value = activeConfig.systemPrompt || fallbackPrompt;
+  if (this.elements.maxTokens) this.elements.maxTokens.value = String(activeConfig.maxTokens);
+  if (this.elements.contextLimit) this.elements.contextLimit.value = String(activeConfig.contextLimit);
+  if (this.elements.timeout) this.elements.timeout.value = String(activeConfig.timeout);
+  if (this.elements.enableScreenshots) this.elements.enableScreenshots.value = activeConfig.enableScreenshots ? 'true' : 'false';
+  if (this.elements.sendScreenshotsAsImages) {
+    this.elements.sendScreenshotsAsImages.value = activeConfig.sendScreenshotsAsImages ? 'true' : 'false';
   }
-  this.currentConfig = this.configs[settings.activeConfig] ? settings.activeConfig : 'default';
-  this.auxAgentProfiles = settings.auxAgentProfiles || [];
-
-  if (this.elements.visionBridge)
+  if (this.elements.screenshotQuality) this.elements.screenshotQuality.value = activeConfig.screenshotQuality;
+  if (this.elements.visionBridge) {
     this.elements.visionBridge.value = settings.visionBridge !== undefined ? String(settings.visionBridge) : 'true';
-  if (this.elements.visionProfile) this.elements.visionProfile.value = settings.visionProfile || '';
-  if (this.elements.orchestratorToggle)
-    this.elements.orchestratorToggle.value =
-      settings.useOrchestrator !== undefined ? String(settings.useOrchestrator) : 'false';
-  if (this.elements.orchestratorProfile) this.elements.orchestratorProfile.value = settings.orchestratorProfile || '';
-  if (this.elements.showThinking)
-    this.elements.showThinking.value = settings.showThinking !== undefined ? String(settings.showThinking) : 'true';
-  if (this.elements.streamResponses)
-    this.elements.streamResponses.value =
-      settings.streamResponses !== undefined ? String(settings.streamResponses) : 'true';
-  if (this.elements.autoScroll)
-    this.elements.autoScroll.value = settings.autoScroll !== undefined ? String(settings.autoScroll) : 'true';
-  if (this.elements.confirmActions)
-    this.elements.confirmActions.value =
-      settings.confirmActions !== undefined ? String(settings.confirmActions) : 'true';
-  if (this.elements.saveHistory)
-    this.elements.saveHistory.value = settings.saveHistory !== undefined ? String(settings.saveHistory) : 'true';
+  }
+  if (this.elements.orchestratorToggle) {
+    this.elements.orchestratorToggle.value = settings.useOrchestrator !== undefined ? String(settings.useOrchestrator) : 'false';
+  }
+  if (this.elements.showThinking) this.elements.showThinking.value = activeConfig.showThinking ? 'true' : 'false';
+  if (this.elements.streamResponses) this.elements.streamResponses.value = activeConfig.streamResponses ? 'true' : 'false';
+  if (this.elements.autoScroll) this.elements.autoScroll.value = activeConfig.autoScroll ? 'true' : 'false';
+  if (this.elements.confirmActions) this.elements.confirmActions.value = activeConfig.confirmActions ? 'true' : 'false';
+  if (this.elements.saveHistory) this.elements.saveHistory.value = activeConfig.saveHistory ? 'true' : 'false';
+  if (this.elements.qualityMode) this.elements.qualityMode.value = String(activeConfig.qualityMode || 'max');
+  if (this.elements.autoTuneSafety) this.elements.autoTuneSafety.value = activeConfig.autoTuneSafety ? 'true' : 'false';
+  if (this.elements.minimumReportSections) {
+    this.elements.minimumReportSections.value = String(activeConfig.minimumReportSections);
+  }
 
-  const defaultPermissions = {
-    read: true,
-    interact: true,
-    navigate: true,
-    tabs: true,
-    screenshots: true,
-  };
   const toolPermissions = {
-    ...defaultPermissions,
+    ...defaultToolPermissions(),
     ...(settings.toolPermissions || {}),
   };
   if (this.elements.permissionRead) this.elements.permissionRead.value = String(toolPermissions.read);
   if (this.elements.permissionInteract) this.elements.permissionInteract.value = String(toolPermissions.interact);
   if (this.elements.permissionNavigate) this.elements.permissionNavigate.value = String(toolPermissions.navigate);
   if (this.elements.permissionTabs) this.elements.permissionTabs.value = String(toolPermissions.tabs);
-  if (this.elements.permissionScreenshots)
-    this.elements.permissionScreenshots.value = String(toolPermissions.screenshots);
+  if (this.elements.permissionScreenshots) this.elements.permissionScreenshots.value = String(toolPermissions.screenshots);
   if (this.elements.allowedDomains) this.elements.allowedDomains.value = settings.allowedDomains || '';
 
-  this.refreshConfigDropdown();
-  this.setActiveConfig(this.currentConfig, true);
   this.toggleCustomEndpoint();
   this.updateScreenshotToggleState();
-  this.editProfile(this.currentConfig, true);
+
+  if (hasLegacyProfileState(settings)) {
+    await this.persistAllSettings({ silent: true });
+  }
 };
 
 (SidePanelUI.prototype as any).saveSettings = async function saveSettings() {
   if (
-    (this.elements.provider?.value === 'custom' ||
-      this.elements.provider?.value === 'kimi' ||
-      this.elements.provider?.value === 'ollama') &&
+    (this.elements.provider?.value === 'custom' || this.elements.provider?.value === 'kimi' || this.elements.provider?.value === 'ollama') &&
     !this.validateCustomEndpoint()
   ) {
     this.updateStatus('URL da API inválida', 'error');
     return;
   }
-  this.configs[this.currentConfig] = this.collectCurrentFormProfile();
+
+  const profile = this.collectCurrentFormProfile();
+  this.configs[this.currentConfig] = profile;
   await this.persistAllSettings();
 
-  // Refresh models after saving settings
   this.refreshAvailableModels();
+  const riskyConfig =
+    profile.autoTuneSafety === false &&
+    profile.qualityMode === 'max' &&
+    (Number(profile.timeout || 0) < 90000 || Number(profile.maxTokens || 0) < 3072);
 
   this.showSuccessToast('Configurações salvas com sucesso');
-  this.updateStatus('Pronto', 'default');
+  this.updateStatus(
+    riskyConfig
+      ? 'Configuração de risco detectada: aumente timeout/tokens ou habilite auto-ajuste.'
+      : 'Pronto',
+    riskyConfig ? 'warning' : 'default',
+  );
 };
 
 (SidePanelUI.prototype as any).exportSettings = async function exportSettings() {
   try {
     const keys = [
-      'configs',
-      'activeConfig',
-      'auxAgentProfiles',
+      'provider',
+      'apiKey',
+      'model',
+      'customEndpoint',
+      'systemPrompt',
+      'maxTokens',
+      'contextLimit',
+      'timeout',
+      'enableScreenshots',
+      'sendScreenshotsAsImages',
+      'screenshotQuality',
       'visionBridge',
-      'visionProfile',
       'useOrchestrator',
-      'orchestratorProfile',
       'showThinking',
       'streamResponses',
       'autoScroll',
@@ -336,23 +393,17 @@ const normalizeProfileEndpoint = (profile: Record<string, any> = {}) => {
       'autoRecoveryMode',
       'screenshotOnFailure',
       'screenshotRetention',
+      'qualityMode',
+      'autoTuneSafety',
+      'minimumReportSections',
     ];
     const settings = await chrome.storage.local.get(keys);
-
-    // Strip apiKey from every profile to prevent credential leakage
-    const sanitizedConfigs: Record<string, any> = {};
-    if (settings.configs && typeof settings.configs === 'object') {
-      for (const [name, profile] of Object.entries(settings.configs)) {
-        const { apiKey, ...safeProfile } = profile as Record<string, any>;
-        sanitizedConfigs[name] = safeProfile;
-      }
-    }
+    const { apiKey, ...safeSettings } = settings;
 
     const payload = {
-      ...settings,
-      configs: sanitizedConfigs,
+      ...safeSettings,
       exportedAt: new Date().toISOString(),
-      exportVersion: 1,
+      exportVersion: 2,
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], {
       type: 'application/json',
@@ -364,7 +415,7 @@ const normalizeProfileEndpoint = (profile: Record<string, any> = {}) => {
     anchor.click();
     URL.revokeObjectURL(url);
     this.showSuccessToast('Configurações exportadas');
-  } catch (error) {
+  } catch {
     this.updateStatus('Não foi possível exportar configurações', 'error');
   }
 };
@@ -373,42 +424,50 @@ const normalizeProfileEndpoint = (profile: Record<string, any> = {}) => {
   const input = event?.target as HTMLInputElement | null;
   const file = input?.files?.[0];
   if (!file) return;
+
   try {
     const text = await file.text();
     const data = JSON.parse(text);
-    const payload: Record<string, any> = {};
-    const allowedKeys = [
-      'configs',
-      'activeConfig',
-      'auxAgentProfiles',
-      'visionBridge',
-      'visionProfile',
-      'useOrchestrator',
-      'orchestratorProfile',
-      'showThinking',
-      'streamResponses',
-      'autoScroll',
-      'confirmActions',
-      'saveHistory',
-      'toolPermissions',
-      'allowedDomains',
-      'autoRecoveryMode',
-      'screenshotOnFailure',
-      'screenshotRetention',
-    ];
-    allowedKeys.forEach((key) => {
-      if (data[key] !== undefined) {
-        payload[key] = data[key];
-      }
-    });
-    if (payload.configs && typeof payload.configs !== 'object') {
-      throw new Error('Invalid configs payload');
-    }
+    const fallbackPrompt = this.getDefaultSystemPrompt();
+    const config = buildSingleConfigFromSettings(data || {}, fallbackPrompt);
+
+    const payload = {
+      provider: config.provider,
+      apiKey: config.apiKey,
+      model: config.model,
+      customEndpoint: config.customEndpoint,
+      systemPrompt: config.systemPrompt || fallbackPrompt,
+      maxTokens: config.maxTokens,
+      contextLimit: config.contextLimit,
+      timeout: config.timeout,
+      enableScreenshots: config.enableScreenshots,
+      sendScreenshotsAsImages: config.sendScreenshotsAsImages,
+      screenshotQuality: config.screenshotQuality,
+      visionBridge: data?.visionBridge !== undefined ? data.visionBridge !== false : true,
+      useOrchestrator: data?.useOrchestrator === true,
+      showThinking: config.showThinking,
+      streamResponses: config.streamResponses,
+      autoScroll: config.autoScroll,
+      confirmActions: config.confirmActions,
+      saveHistory: config.saveHistory,
+      toolPermissions: {
+        ...defaultToolPermissions(),
+        ...(data?.toolPermissions || {}),
+      },
+      allowedDomains: String(data?.allowedDomains || ''),
+      autoRecoveryMode: config.autoRecoveryMode,
+      screenshotOnFailure: config.screenshotOnFailure,
+      screenshotRetention: config.screenshotRetention,
+      qualityMode: config.qualityMode,
+      autoTuneSafety: config.autoTuneSafety,
+      minimumReportSections: config.minimumReportSections,
+    };
+
     await chrome.storage.local.set(payload);
+    await chrome.storage.local.remove(LEGACY_PROFILE_KEYS);
     await this.loadSettings();
-    this.renderProfileGrid();
     this.showSuccessToast('Configurações importadas com sucesso');
-  } catch (error) {
+  } catch {
     this.updateStatus('Não foi possível importar configurações', 'error');
   } finally {
     if (input) input.value = '';
@@ -416,8 +475,8 @@ const normalizeProfileEndpoint = (profile: Record<string, any> = {}) => {
 };
 
 (SidePanelUI.prototype as any).collectCurrentFormProfile = function collectCurrentFormProfile() {
-  const current = this.configs[this.currentConfig] || {};
-  const provider = this.elements.provider?.value || current.provider || 'openai';
+  const current = normalizeConfig(this.configs[this.currentConfig] || {}, this.getDefaultSystemPrompt());
+  const provider = String(this.elements.provider?.value || current.provider || 'openai').toLowerCase();
   const endpointInput = this.elements.customEndpoint?.value?.trim() || '';
   const fallbackEndpoint = String(current.customEndpoint || '').trim();
 
@@ -430,29 +489,34 @@ const normalizeProfileEndpoint = (profile: Record<string, any> = {}) => {
     customEndpoint = endpointInput;
   }
 
-  return {
-    provider,
-    apiKey: this.elements.apiKey?.value || current.apiKey || '',
-    model: this.elements.model?.value || current.model || 'gpt-4o',
-    customEndpoint,
-    systemPrompt: this.elements.systemPrompt?.value || current.systemPrompt || '',
-    temperature: Number.parseFloat(this.elements.temperature?.value) || current.temperature || 0.7,
-    maxTokens: Number.parseInt(this.elements.maxTokens?.value) || current.maxTokens || 4096,
-    contextLimit: Number.parseInt(this.elements.contextLimit?.value) || current.contextLimit || 200000,
-    timeout: Number.parseInt(this.elements.timeout?.value) || current.timeout || 30000,
-    enableScreenshots: this.elements.enableScreenshots?.value === 'true' || current.enableScreenshots !== false,
-    sendScreenshotsAsImages:
-      this.elements.sendScreenshotsAsImages?.value === 'true' || current.sendScreenshotsAsImages || false,
-    screenshotQuality: this.elements.screenshotQuality?.value || current.screenshotQuality || 'high',
-    showThinking: this.elements.showThinking?.value === 'true',
-    streamResponses: this.elements.streamResponses?.value === 'true',
-    autoScroll: this.elements.autoScroll?.value === 'true',
-    confirmActions: this.elements.confirmActions?.value === 'true',
-    saveHistory: this.elements.saveHistory?.value === 'true',
-    autoRecoveryMode: current.autoRecoveryMode || 'balanced',
-    screenshotOnFailure: current.screenshotOnFailure !== false,
-    screenshotRetention: current.screenshotRetention || 'ephemeral',
-  };
+  return normalizeConfig(
+    {
+      ...current,
+      provider,
+      apiKey: this.elements.apiKey?.value || current.apiKey || '',
+      model: this.elements.model?.value || current.model || 'gpt-4o',
+      customEndpoint,
+      systemPrompt: this.elements.systemPrompt?.value || current.systemPrompt || this.getDefaultSystemPrompt(),
+      maxTokens: Number.parseInt(this.elements.maxTokens?.value) || current.maxTokens || 4096,
+      contextLimit: Number.parseInt(this.elements.contextLimit?.value) || current.contextLimit || 200000,
+      timeout: Number.parseInt(this.elements.timeout?.value) || current.timeout || 90000,
+      enableScreenshots: parseSelectBoolean(this.elements.enableScreenshots, current.enableScreenshots !== false),
+      sendScreenshotsAsImages: parseSelectBoolean(
+        this.elements.sendScreenshotsAsImages,
+        current.sendScreenshotsAsImages === true,
+      ),
+      screenshotQuality: this.elements.screenshotQuality?.value || current.screenshotQuality || 'high',
+      showThinking: this.elements.showThinking?.value === 'true',
+      streamResponses: this.elements.streamResponses?.value === 'true',
+      autoScroll: this.elements.autoScroll?.value === 'true',
+      confirmActions: this.elements.confirmActions?.value === 'true',
+      saveHistory: this.elements.saveHistory?.value === 'true',
+      qualityMode: this.elements.qualityMode?.value || current.qualityMode || 'max',
+      autoTuneSafety: parseSelectBoolean(this.elements.autoTuneSafety, current.autoTuneSafety !== false),
+      minimumReportSections: Number.parseInt(this.elements.minimumReportSections?.value || '') || current.minimumReportSections || 5,
+    },
+    this.getDefaultSystemPrompt(),
+  );
 };
 
 (SidePanelUI.prototype as any).collectToolPermissions = function collectToolPermissions() {
@@ -468,27 +532,16 @@ const normalizeProfileEndpoint = (profile: Record<string, any> = {}) => {
 };
 
 (SidePanelUI.prototype as any).persistAllSettings = async function persistAllSettings({ silent = false } = {}) {
-  const activeProfile = this.configs[this.currentConfig] || {};
-  const normalizedEndpoint = normalizeProfileEndpoint(activeProfile);
-  const normalizedConfigs = Object.fromEntries(
-    Object.entries(this.configs || {}).map(([name, profile]) => [
-      name,
-      {
-        ...(profile as Record<string, any>),
-        customEndpoint: normalizeProfileEndpoint(profile as Record<string, any>),
-      },
-    ]),
-  );
+  const activeProfile = this.collectCurrentFormProfile();
   const payload = {
     provider: activeProfile.provider || 'openai',
     apiKey: activeProfile.apiKey || '',
     model: activeProfile.model || 'gpt-4o',
-    customEndpoint: normalizedEndpoint,
+    customEndpoint: normalizeEndpointForProvider(activeProfile.provider || 'openai', activeProfile.customEndpoint || ''),
     systemPrompt: activeProfile.systemPrompt || this.getDefaultSystemPrompt(),
-    temperature: activeProfile.temperature ?? 0.7,
     maxTokens: activeProfile.maxTokens || 4096,
     contextLimit: activeProfile.contextLimit || 200000,
-    timeout: activeProfile.timeout || 30000,
+    timeout: activeProfile.timeout || 90000,
     enableScreenshots: activeProfile.enableScreenshots ?? true,
     sendScreenshotsAsImages: activeProfile.sendScreenshotsAsImages ?? false,
     screenshotQuality: activeProfile.screenshotQuality || 'high',
@@ -500,18 +553,20 @@ const normalizeProfileEndpoint = (profile: Record<string, any> = {}) => {
     autoRecoveryMode: activeProfile.autoRecoveryMode || 'balanced',
     screenshotOnFailure: activeProfile.screenshotOnFailure !== false,
     screenshotRetention: activeProfile.screenshotRetention || 'ephemeral',
+    qualityMode: activeProfile.qualityMode || 'max',
+    autoTuneSafety: activeProfile.autoTuneSafety !== false,
+    minimumReportSections: clampNumber(activeProfile.minimumReportSections, 5, 3, 8),
     visionBridge: this.elements.visionBridge?.value === 'true',
-    visionProfile: this.elements.visionProfile?.value || '',
     useOrchestrator: this.elements.orchestratorToggle?.value === 'true',
-    orchestratorProfile: this.elements.orchestratorProfile?.value || '',
     toolPermissions: this.collectToolPermissions(),
     allowedDomains: this.elements.allowedDomains?.value || '',
-    auxAgentProfiles: this.auxAgentProfiles,
-    activeConfig: this.currentConfig,
-    configs: normalizedConfigs,
   };
-  this.configs = normalizedConfigs;
+
+  this.currentConfig = 'default';
+  this.configs = { default: normalizeConfig(payload, this.getDefaultSystemPrompt()) };
+
   await chrome.storage.local.set(payload);
+  await chrome.storage.local.remove(LEGACY_PROFILE_KEYS);
   this.updateContextUsage();
   if (!silent) {
     this.updateStatus('Configurações salvas com sucesso', 'success');
@@ -521,18 +576,12 @@ const normalizeProfileEndpoint = (profile: Record<string, any> = {}) => {
 (SidePanelUI.prototype as any).updateScreenshotToggleState = function updateScreenshotToggleState() {
   if (!this.elements.enableScreenshots) return;
   const wantsScreens = this.elements.enableScreenshots.value === 'true';
-  const visionProfile = this.elements.visionProfile?.value;
-  const provider = this.elements.provider?.value;
-  const hasVision = (provider && provider !== 'custom') || visionProfile;
   const controls = [this.elements.sendScreenshotsAsImages, this.elements.screenshotQuality];
   controls.forEach((ctrl) => {
     if (!ctrl) return;
     ctrl.disabled = !wantsScreens;
     ctrl.parentElement?.classList.toggle('disabled', !wantsScreens);
   });
-  if (wantsScreens && !hasVision) {
-    this.updateStatus('Enable a vision-capable profile before sending screenshots.', 'warning');
-  }
 };
 
 (SidePanelUI.prototype as any).getDefaultSystemPrompt = function getDefaultSystemPrompt() {
@@ -540,11 +589,13 @@ const normalizeProfileEndpoint = (profile: Record<string, any> = {}) => {
 
 <rules priority="CRITICAL">
 1. NO PLAN = NO ACTION - Your FIRST tool call MUST be set_plan.
-2. ACTION → VERIFY → MARK - Every action MUST be followed by getContent and update_plan.
+2. ACTION -> VERIFY -> MARK - Every action MUST be followed by getContent and update_plan.
 3. SEQUENTIAL EXECUTION - Complete step N before starting step N+1.
 4. EVIDENCE ONLY - Only claim to see content fetched with getContent.
 5. FAILURE RECOVERY - If an action fails or page state is ambiguous, call screenshot() before finalizing.
 6. RESILIENCE - Use getContent({ mode: "structure" }) and retry with alternative selectors when actions fail.
+7. NO EARLY FINALIZATION - Do not finalize while any plan step is pending.
+8. REPORT DEPTH - Final answer must include sections for sidebar/navigation, workspace/cards, detected functions, and evidence.
 </rules>
 
 Use the available browser tools to complete user tasks efficiently.`;

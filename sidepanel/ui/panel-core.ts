@@ -49,50 +49,14 @@ import { SidePanelUI } from './panel-ui.js';
   // Custom endpoint validation
   this.elements.customEndpoint?.addEventListener('input', () => this.validateCustomEndpoint());
 
-  // Temperature slider
-  this.elements.temperature?.addEventListener('input', () => {
-    if (this.elements.temperatureValue) {
-      this.elements.temperatureValue.textContent = this.elements.temperature.value;
-    }
-  });
-
-  // Configuration management
-  this.elements.newConfigBtn?.addEventListener('click', () => this.createNewConfig());
-  this.elements.deleteConfigBtn?.addEventListener('click', () => this.deleteConfig());
-  this.elements.activeConfig?.addEventListener('change', () => this.switchConfig());
-
   this.elements.settingsTabGeneralBtn?.addEventListener('click', () => this.switchSettingsTab('general'));
-  this.elements.settingsTabProfilesBtn?.addEventListener('click', () => this.switchSettingsTab('profiles'));
-  this.elements.createProfileBtn?.addEventListener('click', () => this.createProfileFromInput());
-  this.elements.openGeneralBtn?.addEventListener('click', () => this.switchSettingsTab('general'));
-  this.elements.openProfilesBtn?.addEventListener('click', () => this.switchSettingsTab('profiles'));
-  this.elements.generalProfileSelect?.addEventListener('change', (event) =>
-    this.setActiveConfig((event.target as HTMLSelectElement).value),
-  );
-
-  this.elements.agentGrid?.addEventListener('click', (event) => {
-    const pill = (event.target as HTMLElement | null)?.closest('.role-pill');
-    if (pill) {
-      const role = (pill as HTMLElement).dataset.role;
-      const profile = (pill as HTMLElement).dataset.profile;
-      this.assignProfileRole(profile, role);
-      return;
-    }
-    const card = (event.target as HTMLElement | null)?.closest('.agent-card');
-    if (card) {
-      const profile = (card as HTMLElement).dataset.profile;
-      this.editProfile(profile);
-    }
-  });
-  this.elements.refreshProfilesBtn?.addEventListener('click', () => this.renderProfileGrid());
 
   // View toggles
   this.elements.viewChatBtn?.addEventListener('click', () => this.switchView('chat'));
   this.elements.viewHistoryBtn?.addEventListener('click', () => this.switchView('history'));
 
-  // Screenshot + vision controls
+  // Screenshot controls
   this.elements.enableScreenshots?.addEventListener('change', () => this.updateScreenshotToggleState());
-  this.elements.visionProfile?.addEventListener('change', () => this.updateScreenshotToggleState());
   this.elements.sendScreenshotsAsImages?.addEventListener('change', () => this.updateScreenshotToggleState());
 
   // Save settings
@@ -230,15 +194,6 @@ import { SidePanelUI } from './panel-ui.js';
     void this.exportExecutionLog?.();
   });
 
-  // Profile editor controls
-  this.elements.profileEditorProvider?.addEventListener('change', () => this.toggleProfileEditorEndpoint());
-  this.elements.profileEditorTemperature?.addEventListener('input', () => {
-    if (this.elements.profileEditorTemperatureValue) {
-      this.elements.profileEditorTemperatureValue.textContent = this.elements.profileEditorTemperature.value;
-    }
-  });
-  this.elements.saveProfileBtn?.addEventListener('click', () => this.saveProfileEdits());
-
   // Listen for messages from background
   chrome.runtime.onMessage.addListener((message) => {
     if (isRuntimeMessage(message)) {
@@ -348,6 +303,17 @@ import { SidePanelUI } from './panel-ui.js';
   }
   if (message.type === 'run_warning') {
     this.showErrorBanner(message.message);
+    return;
+  }
+  if (message.type === 'run_quality_gate') {
+    const state = String(message.state || '');
+    const reason = String(message.reason || 'quality_gate');
+    if (state === 'blocked') {
+      this.showErrorBanner(`Quality gate blocked finalization (${reason}).`);
+      this.updateStatus('Quality gate blocked', 'error');
+    } else if (state === 'forced_retry') {
+      this.updateStatus('Quality gate retrying', 'warning');
+    }
     return;
   }
   if (message.type === 'subagent_start') {

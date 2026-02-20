@@ -1,4 +1,4 @@
-﻿<div id="settingsTabGeneral" class="tab-panel" data-tab="general">
+<div id="settingsTabGeneral" class="tab-panel" data-tab="general">
     <div class="settings-quick-setup">
         <h3 class="setup-title">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -24,7 +24,7 @@
         <div class="form-group">
             <label for="apiKey">Chave de API</label>
             <input type="password" id="apiKey" placeholder="Insira sua chave de API..." />
-            <small>A chave é armazenada localmente no navegador.</small>
+            <small>A chave é armazenada localmente no navegador. Use apenas em dispositivos confiáveis.</small>
         </div>
 
         <div class="form-group">
@@ -49,40 +49,6 @@
         <summary>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                 aria-hidden="true">
-                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                <circle cx="9" cy="7" r="4" />
-                <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-            </svg>
-            Perfis
-        </summary>
-        <div class="settings-body">
-            <div class="form-group">
-                <label for="activeConfig">Perfil ativo</label>
-                <div class="config-row">
-                    <select id="activeConfig">
-                        <option value="default">Padrão</option>
-                    </select>
-                    <button id="newConfigBtn" class="btn btn-secondary" type="button">Novo</button>
-                </div>
-            </div>
-            <div class="form-group">
-                <label for="generalProfileSelect">Editar perfil</label>
-                <select id="generalProfileSelect">
-                    <option value="default">default</option>
-                </select>
-            </div>
-            <div class="settings-inline">
-                <button id="deleteConfigBtn" class="btn btn-secondary" type="button">Remover perfil</button>
-                <button id="openProfilesBtn" class="btn btn-secondary" type="button">Abrir aba Perfis</button>
-            </div>
-        </div>
-    </details>
-
-    <details class="settings-section">
-        <summary>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                aria-hidden="true">
                 <circle cx="12" cy="12" r="3" />
                 <path
                     d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
@@ -90,10 +56,6 @@
             Parâmetros do modelo
         </summary>
         <div class="settings-body">
-            <div class="form-group">
-                <label for="temperature">Temperatura: <span id="temperatureValue">0.7</span></label>
-                <input type="range" id="temperature" min="0" max="2" step="0.1" value="0.7" />
-            </div>
             <div class="form-group">
                 <label for="maxTokens">Tokens máximos de saída</label>
                 <input type="number" id="maxTokens" value="4096" min="256" max="32000" />
@@ -104,7 +66,28 @@
             </div>
             <div class="form-group">
                 <label for="timeout">Timeout (ms)</label>
-                <input type="number" id="timeout" value="30000" min="5000" step="1000" />
+                <input type="number" id="timeout" value="90000" min="5000" step="1000" />
+            </div>
+            <div class="form-group">
+                <label for="qualityMode">Modo de qualidade</label>
+                <select id="qualityMode">
+                    <option value="max">Qualidade máxima</option>
+                    <option value="balanced">Equilibrado</option>
+                    <option value="speed">Velocidade</option>
+                </select>
+                <small>Temperatura é ajustada automaticamente por modo para manter previsibilidade.</small>
+            </div>
+            <div class="form-group">
+                <label for="autoTuneSafety">Auto-ajuste de segurança</label>
+                <select id="autoTuneSafety">
+                    <option value="true">Ativado</option>
+                    <option value="false">Desativado</option>
+                </select>
+                <small>Corrige automaticamente parâmetros de risco (timeout/tokens) durante a execução.</small>
+            </div>
+            <div class="form-group">
+                <label for="minimumReportSections">Seções mínimas do relatório</label>
+                <input type="number" id="minimumReportSections" value="5" min="3" max="8" />
             </div>
         </div>
     </details>
@@ -149,22 +132,10 @@
                 </select>
             </div>
             <div class="form-group">
-                <label for="visionProfile">Perfil de visão</label>
-                <select id="visionProfile">
-                    <option value="">Mesmo do perfil ativo</option>
-                </select>
-            </div>
-            <div class="form-group">
                 <label for="orchestratorToggle">Orquestrador</label>
                 <select id="orchestratorToggle">
                     <option value="false">Desativado</option>
                     <option value="true">Ativado</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label for="orchestratorProfile">Perfil do orquestrador</label>
-                <select id="orchestratorProfile">
-                    <option value="">Mesmo do perfil ativo</option>
                 </select>
             </div>
         </div>

@@ -30,6 +30,7 @@ export class SidePanelUI {
     textEventEl?: HTMLElement | null;
     reasoningEventEl?: HTMLElement | null;
     textBuffer?: string;
+    textPendingBuffer?: string;
     reasoningBuffer?: string;
     reasoningRawBuffer?: string;
     planEl?: HTMLElement | null;
@@ -52,10 +53,8 @@ export class SidePanelUI {
   sessionTokenTotals: UsageStats;
   historyPersistDebounceTimerId: number | null;
   historyListDirty: boolean;
-  auxAgentProfiles: string[];
   currentView: 'chat' | 'history';
-  currentSettingsTab: 'general' | 'profiles';
-  profileEditorTarget: string;
+  currentSettingsTab: 'general';
   settingsOpen: boolean;
   modelsFetchController: AbortController | null;
   modelsFetchSeq: number;
@@ -112,10 +111,8 @@ export class SidePanelUI {
     };
     this.historyPersistDebounceTimerId = null;
     this.historyListDirty = false;
-    this.auxAgentProfiles = [];
     this.currentView = 'chat';
     this.currentSettingsTab = 'general';
-    this.profileEditorTarget = 'default';
     this.settingsOpen = false;
     this.modelsFetchController = null;
     this.modelsFetchSeq = 0;

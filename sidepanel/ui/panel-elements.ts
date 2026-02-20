@@ -50,30 +50,7 @@ export const getSidePanelElements = (): SidePanelElements => ({
   clearHistoryBtn: byId<HTMLButtonElement>('clearHistoryBtn'),
   startNewSessionBtn: byId<HTMLButtonElement>('startNewSessionBtn'),
   settingsTabGeneralBtn: byId<HTMLButtonElement>('settingsTabGeneralBtn'),
-  settingsTabProfilesBtn: byId<HTMLButtonElement>('settingsTabProfilesBtn'),
   settingsTabGeneral: byId<HTMLElement>('settingsTabGeneral'),
-  settingsTabProfiles: byId<HTMLElement>('settingsTabProfiles'),
-  newProfileNameInput: byId<HTMLInputElement>('newProfileNameInput'),
-  createProfileBtn: byId<HTMLButtonElement>('createProfileBtn'),
-  openGeneralBtn: byId<HTMLButtonElement>('openGeneralBtn'),
-  openProfilesBtn: byId<HTMLButtonElement>('openProfilesBtn'),
-  generalProfileSelect: byId<HTMLSelectElement>('generalProfileSelect'),
-  profileEditorTitle: byId<HTMLElement>('profileEditorTitle'),
-  profileEditorName: byId<HTMLInputElement>('profileEditorName'),
-  profileEditorProvider: byId<HTMLSelectElement>('profileEditorProvider'),
-  profileEditorApiKey: byId<HTMLInputElement>('profileEditorApiKey'),
-  profileEditorModel: byId<HTMLInputElement>('profileEditorModel'),
-  profileEditorEndpoint: byId<HTMLInputElement>('profileEditorEndpoint'),
-  profileEditorEndpointGroup: byId<HTMLElement>('profileEditorEndpointGroup'),
-  profileEditorTemperature: byId<HTMLInputElement>('profileEditorTemperature'),
-  profileEditorTemperatureValue: byId<HTMLElement>('profileEditorTemperatureValue'),
-  profileEditorMaxTokens: byId<HTMLInputElement>('profileEditorMaxTokens'),
-  profileEditorTimeout: byId<HTMLInputElement>('profileEditorTimeout'),
-  profileEditorEnableScreenshots: byId<HTMLInputElement>('profileEditorEnableScreenshots'),
-  profileEditorSendScreenshots: byId<HTMLInputElement>('profileEditorSendScreenshots'),
-  profileEditorScreenshotQuality: byId<HTMLSelectElement>('profileEditorScreenshotQuality'),
-  profileEditorPrompt: byId<HTMLTextAreaElement>('profileEditorPrompt'),
-  saveProfileBtn: byId<HTMLButtonElement>('saveProfileBtn'),
   permissionRead: byId<HTMLInputElement>('permissionRead'),
   permissionInteract: byId<HTMLInputElement>('permissionInteract'),
   permissionNavigate: byId<HTMLInputElement>('permissionNavigate'),
@@ -92,18 +69,18 @@ export const getSidePanelElements = (): SidePanelElements => ({
   customEndpointGroup: byId<HTMLElement>('customEndpointGroup'),
 
   // Form elements - Model parameters
-  temperature: byId<HTMLInputElement>('temperature'),
-  temperatureValue: byId<HTMLElement>('temperatureValue'),
   maxTokens: byId<HTMLInputElement>('maxTokens'),
   contextLimit: byId<HTMLInputElement>('contextLimit'),
   timeout: byId<HTMLInputElement>('timeout'),
+  qualityMode: byId<HTMLSelectElement>('qualityMode'),
+  autoTuneSafety: byId<HTMLSelectElement>('autoTuneSafety'),
+  minimumReportSections: byId<HTMLInputElement>('minimumReportSections'),
 
   // Form elements - Screenshots & vision
   enableScreenshots: byId<HTMLInputElement>('enableScreenshots'),
   sendScreenshotsAsImages: byId<HTMLInputElement>('sendScreenshotsAsImages'),
   screenshotQuality: byId<HTMLSelectElement>('screenshotQuality'),
   visionBridge: byId<HTMLInputElement>('visionBridge'),
-  visionProfile: byId<HTMLSelectElement>('visionProfile'),
 
   // Form elements - Behavior
   showThinking: byId<HTMLInputElement>('showThinking'),
@@ -114,7 +91,6 @@ export const getSidePanelElements = (): SidePanelElements => ({
 
   // Form elements - Orchestrator
   orchestratorToggle: byId<HTMLInputElement>('orchestratorToggle') ?? byId<HTMLInputElement>('useOrchestrator'),
-  orchestratorProfile: byId<HTMLSelectElement>('orchestratorProfile'),
 
   // Form elements - System prompt
   systemPrompt: byId<HTMLTextAreaElement>('systemPrompt'),
@@ -122,13 +98,6 @@ export const getSidePanelElements = (): SidePanelElements => ({
   // Settings actions
   saveSettingsBtn: byId<HTMLButtonElement>('saveSettingsBtn'),
   cancelSettingsBtn: byId<HTMLButtonElement>('cancelSettingsBtn'),
-
-  // Profile management
-  activeConfig: byId<HTMLSelectElement>('activeConfig'),
-  newConfigBtn: byId<HTMLButtonElement>('newConfigBtn'),
-  deleteConfigBtn: byId<HTMLButtonElement>('deleteConfigBtn'),
-  refreshProfilesBtn: byId<HTMLButtonElement>('refreshProfilesBtn'),
-  agentGrid: byId<HTMLElement>('agentGrid'),
 
   // Chat interface
   chatMessages: byId<HTMLElement>('chatMessages'),

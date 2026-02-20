@@ -78,10 +78,13 @@ async function setupTestSettings(worker: import('playwright').Worker, endpoint: 
         screenshotQuality: 'medium',
         showThinking: true,
         streamResponses: true,
-        temperature: 0.7,
         maxTokens: 2048,
+        contextLimit: 200000,
         timeout: 60000,
         enableScreenshots: false,
+        qualityMode: 'max',
+        autoTuneSafety: true,
+        minimumReportSections: 5,
         toolPermissions: {
           read: true,
           interact: true,
@@ -90,21 +93,15 @@ async function setupTestSettings(worker: import('playwright').Worker, endpoint: 
           screenshots: false,
         },
         allowedDomains: '',
-        configs: {},
-        activeConfig: 'default',
         useOrchestrator: false,
-        orchestratorProfile: 'default',
-        visionProfile: 'default',
         visionBridge: false,
-        contextLimit: 200000,
-        auxAgentProfiles: [],
       });
     },
     { provider: 'custom', apiKey, model, customEndpoint: endpoint },
   );
 }
 
-test('Custom endpoint configuration is saved and retrieved', async ({ panel, worker }) => {
+test('Custom endpoint configuration is saved and retrieved', async ({ worker }) => {
   const testEndpoint = 'https://api.homelabai.org/v1';
   const testApiKey = 'test-key-123';
   const testModel = 'gpt-4o';
@@ -125,7 +122,7 @@ test('Custom endpoint configuration is saved and retrieved', async ({ panel, wor
   log('✓ Settings saved correctly', 'success');
 });
 
-test('Background script handles user_message', async ({ panel, worker }) => {
+test('Background script handles user_message', async ({ worker }) => {
   const testEndpoint = 'https://api.homelabai.org/v1';
   const testApiKey = process.env.TEST_API_KEY || 'test-key';
   const testModel = process.env.TEST_MODEL || 'gpt-4o';
@@ -151,7 +148,7 @@ test('Background script handles user_message', async ({ panel, worker }) => {
   };
 
   // Send message and wait for response
-  const responsePromise = new Promise((resolve, reject) => {
+  void new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error('Timeout waiting for response')), 15000);
 
     worker.on('console', (msg) => {
@@ -206,7 +203,7 @@ test('AI SDK v6 can be imported and used', async ({ worker }) => {
   log('✓ AI SDK v6 imports verified', 'success');
 });
 
-test('Model resolution with custom endpoint', async ({ panel, worker }) => {
+test('Model resolution with custom endpoint', async ({ worker }) => {
   const testEndpoint = 'https://api.homelabai.org/v1';
   const testApiKey = 'test-key-123';
   const testModel = 'gpt-4o';
@@ -228,7 +225,7 @@ test('Model resolution with custom endpoint', async ({ panel, worker }) => {
   log('✓ Custom endpoint is properly formatted', 'success');
 });
 
-test('Verify storage contains required settings', async ({ panel, worker }) => {
+test('Verify storage contains required settings', async ({ worker }) => {
   const testEndpoint = 'https://api.homelabai.org/v1';
   const testApiKey = 'test-key-123';
   const testModel = 'gpt-4o';

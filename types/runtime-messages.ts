@@ -112,6 +112,14 @@ export type AssistantFinal = RuntimeMessageBase & {
     percent?: number;
   };
   responseMessages?: Array<Record<string, unknown>>;
+  qualityReport?: Record<string, unknown> | null;
+};
+
+export type RunQualityGate = RuntimeMessageBase & {
+  type: 'run_quality_gate';
+  state: 'passed' | 'blocked' | 'forced_retry';
+  reason: string;
+  details?: Record<string, unknown>;
 };
 
 export type RunError = RuntimeMessageBase & {
@@ -166,6 +174,7 @@ export type RuntimeMessage =
   | RunStatus
   | AssistantResponse
   | AssistantFinal
+  | RunQualityGate
   | RunError
   | RunWarning
   | ContextCompacted
@@ -184,6 +193,7 @@ export const runtimeMessageTypes = [
   'run_status',
   'assistant_response',
   'assistant_final',
+  'run_quality_gate',
   'run_error',
   'run_warning',
   'context_compacted',

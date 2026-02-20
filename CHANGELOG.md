@@ -1,52 +1,60 @@
 # Changelog
 
-Todas as mudanças notáveis neste projeto serão documentadas neste arquivo.
+All notable changes to this project are documented in this file.
 
-O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/),
-e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/spec/v2.0.0.html).
+The format follows Keep a Changelog and Semantic Versioning.
+
+## [Unreleased]
+
+### Added
+
+- Target-based build workflow:
+  - `build:ext` for extension artifacts
+  - `build:test` for test bundles
+
+### Changed
+
+- Validator updated to check real `dist/` structure and current docs/scripts.
+- Test runner output normalized for readable pass/fail logs.
+- Manual `execute_tool` path now uses the same runtime policy pipeline as normal runs.
+- Sidepanel UI refinements:
+  - removed redundant composer `settings` button
+  - moved context attach tools to `composer-context-tools` above input
+  - converted activity trigger to compact icon button with dynamic ARIA/tooltip label
+  - stabilized activity panel in layout flow (non-overlapping with chat content)
+  - added mobile tab selector bottom-sheet presentation (`<480px`)
+  - aligned sidebar backdrop blur entrance to `250ms` keyframe animation
+
+### Security
+
+- Subagent navigation rendering hardened to avoid HTML injection from dynamic names.
+- Markdown URL policy restricted:
+  - links allow `http`, `https`, `mailto`
+  - images allow `http`, `https`
+
+### Documentation
+
+- Reworked local docs to align with current scripts, architecture, APIs, and security behavior.
 
 ## [0.2.0] - 2026-02-18
 
-### Adicionado
-- Suporte completo ao provider Ollama com detecção automática de modelos
-- Sistema de toast notifications para feedback visual
-- Provider Kimi para programação
-- Perfis múltiplos com roles (Principal, Visão, Orquestrador, Auxiliar)
-- Compactação de contexto automática
-- Painel de plano com checklist visual
-- Sistema de atividades com log de ferramentas
+### Added
 
-### Corrigido
-- Detecção automática de modelos Ollama via endpoint `/api/tags`
-- Validação de API key não obrigatória para Ollama
-- Layout do plan drawer alinhado com composer
-- Truncamento de texto na barra de ferramentas
-- Limpeza de campos ao trocar de provider
+- Ollama provider integration with model discovery support.
+- Kimi provider support.
+- Multi-profile roles (main, vision, orchestrator, auxiliary).
+- Context compaction flow.
+- Plan drawer with checklist UX.
+- Activity panel with tool log.
 
-### Modificado
-- Redesign completo da interface do sidepanel
-- Melhorias no sistema de streaming de respostas
-- Otimização de performance com context compaction
-- Atualização do Vercel AI SDK para v6
+### Changed
 
-## [0.1.0] - 2026-01-21
+- Sidepanel UI redesign and streaming UX improvements.
+- AI SDK v6 integration.
+- Responsive composer density (`normal`, `compact`, `tight`).
 
-### Adicionado
-- Lançamento inicial do Glide
-- Interface de chat com streaming
-- Suporte a OpenAI e Anthropic
-- Ferramentas de automação básicas (navigate, click, type, scroll)
-- Sistema de histórico de conversas
-- Configurações de provider
-- Testes unitários (31/31 passando)
+### Fixed
 
----
-
-## Tipos de Mudanças
-
-- `Adicionado` para novas funcionalidades.
-- `Modificado` para mudanças em funcionalidades existentes.
-- `Descontinuado` para funcionalidades que serão removidas.
-- `Removido` para funcionalidades removidas.
-- `Corrigido` para correções de bugs.
-- `Segurança` para vulnerabilidades.
+- Provider endpoint normalization and profile switching issues.
+- Composer/status overlap in narrower sidepanel widths.
+- Stability for long activity/context labels.

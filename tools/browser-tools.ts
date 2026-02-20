@@ -371,18 +371,6 @@ export class BrowserTools {
     return url.startsWith('http://') || url.startsWith('https://');
   }
 
-  private isRestrictedUrl(url: string | undefined | null) {
-    if (!url) return false;
-    const value = String(url).toLowerCase();
-    return (
-      value.startsWith('chrome://') ||
-      value.startsWith('chrome-extension://') ||
-      value.startsWith('edge://') ||
-      value.startsWith('about:') ||
-      value.startsWith('devtools://')
-    );
-  }
-
   private async safeGetTab(tabId: number) {
     try {
       return await chrome.tabs.get(tabId);
@@ -429,6 +417,37 @@ export class BrowserTools {
 
   private async resolveExecutableTab(args: Record<string, any> = {}, toolName = 'tool') {
     const requestedTabId = typeof args.tabId === 'number' ? args.tabId : null;
+    const strictTabId = args?._strictTabId === true;
+    if (strictTabId && requestedTabId !== null) {
+      const strictTab = await this.safeGetTab(requestedTabId);
+      if (!strictTab || typeof strictTab.id !== 'number') {
+        return {
+          ok: false as const,
+          result: this.buildNoExecutableTabError(toolName, requestedTabId, []),
+        };
+      }
+      this.trackTab(strictTab);
+      if (!this.isHttpUrl(strictTab.url)) {
+        return {
+          ok: false as const,
+          result: {
+            success: false,
+            code: 'TAB_INACCESSIBLE',
+            error: `Requested tab ${requestedTabId} is not an accessible http(s) page for ${toolName}.`,
+          },
+        };
+      }
+      return {
+        ok: true as const,
+        resolution: {
+          tabId: strictTab.id,
+          tab: strictTab,
+          requestedTabId,
+          fallbackUsed: false,
+        } as TabResolution,
+      };
+    }
+
     const candidateIds: number[] = [];
     const addCandidateId = (id: number | null | undefined) => {
       if (typeof id === 'number' && !candidateIds.includes(id)) candidateIds.push(id);
@@ -1079,11 +1098,32 @@ export class BrowserTools {
             headings: [],
             forms: [],
             actions: [],
+            sidebarItems: [],
+            cards: [],
+            tables: [],
+            filters: [],
+            tabs: [],
+            badges: [],
+            kpis: [],
             landmarks: [],
           };
 
           let truncated = false;
-          const tryPush = (key: 'headings' | 'forms' | 'actions' | 'landmarks', item: Record<string, any>) => {
+          const tryPush = (
+            key:
+              | 'headings'
+              | 'forms'
+              | 'actions'
+              | 'sidebarItems'
+              | 'cards'
+              | 'tables'
+              | 'filters'
+              | 'tabs'
+              | 'badges'
+              | 'kpis'
+              | 'landmarks',
+            item: Record<string, any>,
+          ) => {
             const list = structure[key] as Record<string, any>[];
             list.push(item);
             if (JSON.stringify(structure).length > maxLen) {
@@ -1138,6 +1178,142 @@ export class BrowserTools {
           }
           if (actions.length > maxPerSectionCount) truncated = true;
 
+          const sidebarCandidates = Array.from(
+            root.querySelectorAll(
+              'aside a[href], nav a[href], [role="navigation"] a[href], aside button, nav button, [role="navigation"] button, [role="menuitem"]',
+            ),
+          ) as HTMLElement[];
+          for (let i = 0; i < sidebarCandidates.length && i < maxPerSectionCount; i += 1) {
+            const candidate = sidebarCandidates[i];
+            const item = {
+              tag: candidate.tagName.toLowerCase(),
+              text: clip(candidate.innerText || candidate.textContent || candidate.getAttribute('aria-label') || '', 180),
+              href: clip((candidate as HTMLAnchorElement).href || '', 240),
+              role: clip(candidate.getAttribute('role') || '', 60),
+            };
+            if (!tryPush('sidebarItems', item)) break;
+          }
+          if (sidebarCandidates.length > maxPerSectionCount) truncated = true;
+
+          const cardCandidates = Array.from(
+            root.querySelectorAll(
+              'article, section, [class*="card" i], [class*="tile" i], [class*="widget" i], [data-card], [data-testid*="card" i]',
+            ),
+          ) as HTMLElement[];
+          for (let i = 0; i < cardCandidates.length && i < maxPerSectionCount; i += 1) {
+            const card = cardCandidates[i];
+            const titleNode = card.querySelector('h1, h2, h3, h4, strong, [data-title], [class*="title" i]');
+            const summaryText = clip(card.innerText || card.textContent || '', 220);
+            const titleText = clip(
+              (titleNode as HTMLElement | null)?.innerText ||
+                (titleNode as HTMLElement | null)?.textContent ||
+                '',
+              140,
+            );
+            if (!titleText && summaryText.length < 30) continue;
+            const item = {
+              tag: card.tagName.toLowerCase(),
+              id: clip(card.id || '', 80),
+              title: titleText,
+              summary: summaryText,
+            };
+            if (!tryPush('cards', item)) break;
+          }
+          if (cardCandidates.length > maxPerSectionCount) truncated = true;
+
+          const tableCandidates = Array.from(root.querySelectorAll('table')) as HTMLTableElement[];
+          for (let i = 0; i < tableCandidates.length && i < maxPerSectionCount; i += 1) {
+            const table = tableCandidates[i];
+            const headers = Array.from(table.querySelectorAll('th'))
+              .slice(0, 6)
+              .map((th) => clip(th.innerText || th.textContent || '', 60))
+              .filter(Boolean);
+            const rowCount = table.querySelectorAll('tbody tr').length || table.querySelectorAll('tr').length;
+            const caption = clip(table.querySelector('caption')?.textContent || '', 120);
+            const item = {
+              id: clip(table.id || '', 80),
+              caption,
+              rows: rowCount,
+              headers,
+            };
+            if (!tryPush('tables', item)) break;
+          }
+          if (tableCandidates.length > maxPerSectionCount) truncated = true;
+
+          const filterCandidates = Array.from(
+            root.querySelectorAll(
+              'input[type="search"], input[placeholder*="busc" i], input[placeholder*="filter" i], select, [aria-label*="filtro" i], [aria-label*="filter" i]',
+            ),
+          ) as HTMLElement[];
+          for (let i = 0; i < filterCandidates.length && i < maxPerSectionCount; i += 1) {
+            const filter = filterCandidates[i];
+            const item = {
+              tag: filter.tagName.toLowerCase(),
+              type: clip((filter as HTMLInputElement).type || '', 40),
+              name: clip(filter.getAttribute('name') || '', 80),
+              label: clip(
+                filter.getAttribute('aria-label') ||
+                  filter.getAttribute('title') ||
+                  filter.getAttribute('placeholder') ||
+                  '',
+                140,
+              ),
+            };
+            if (!tryPush('filters', item)) break;
+          }
+          if (filterCandidates.length > maxPerSectionCount) truncated = true;
+
+          const tabCandidates = Array.from(
+            root.querySelectorAll('[role="tab"], [data-tab], [aria-selected], .tab, [class*="tab-" i]'),
+          ) as HTMLElement[];
+          for (let i = 0; i < tabCandidates.length && i < maxPerSectionCount; i += 1) {
+            const tab = tabCandidates[i];
+            const text = clip(tab.innerText || tab.textContent || tab.getAttribute('aria-label') || '', 120);
+            if (!text) continue;
+            const item = {
+              text,
+              selected: tab.getAttribute('aria-selected') === 'true',
+              role: clip(tab.getAttribute('role') || '', 40),
+            };
+            if (!tryPush('tabs', item)) break;
+          }
+          if (tabCandidates.length > maxPerSectionCount) truncated = true;
+
+          const badgeCandidates = Array.from(
+            root.querySelectorAll('[class*="badge" i], [class*="tag" i], [data-badge], [aria-label*="badge" i]'),
+          ) as HTMLElement[];
+          for (let i = 0; i < badgeCandidates.length && i < maxPerSectionCount; i += 1) {
+            const badge = badgeCandidates[i];
+            const text = clip(badge.innerText || badge.textContent || badge.getAttribute('aria-label') || '', 100);
+            if (!text || text.length < 2) continue;
+            const item = {
+              text,
+              tag: badge.tagName.toLowerCase(),
+            };
+            if (!tryPush('badges', item)) break;
+          }
+          if (badgeCandidates.length > maxPerSectionCount) truncated = true;
+
+          const kpiCandidates = Array.from(
+            root.querySelectorAll(
+              '[data-kpi], [class*="kpi" i], [class*="metric" i], [class*="stat" i], [class*="summary-value" i]',
+            ),
+          ) as HTMLElement[];
+          for (let i = 0; i < kpiCandidates.length && i < maxPerSectionCount; i += 1) {
+            const kpi = kpiCandidates[i];
+            const valueText = clip(kpi.innerText || kpi.textContent || '', 100);
+            if (!valueText) continue;
+            const labelNode =
+              kpi.querySelector('[class*="label" i], [data-label], small, span, strong') || kpi.parentElement;
+            const labelText = clip((labelNode as HTMLElement | null)?.innerText || '', 120);
+            const item = {
+              label: labelText,
+              value: valueText,
+            };
+            if (!tryPush('kpis', item)) break;
+          }
+          if (kpiCandidates.length > maxPerSectionCount) truncated = true;
+
           const landmarks = Array.from(root.querySelectorAll('main, nav, header, footer, aside, section, article')) as HTMLElement[];
           for (let i = 0; i < landmarks.length && i < maxPerSectionCount; i += 1) {
             const landmark = landmarks[i];
@@ -1166,6 +1342,13 @@ export class BrowserTools {
               headings: structure.headings.length,
               forms: structure.forms.length,
               actions: structure.actions.length,
+              sidebarItems: structure.sidebarItems.length,
+              cards: structure.cards.length,
+              tables: structure.tables.length,
+              filters: structure.filters.length,
+              tabs: structure.tabs.length,
+              badges: structure.badges.length,
+              kpis: structure.kpis.length,
               landmarks: structure.landmarks.length,
             },
             truncated,
@@ -1237,7 +1420,6 @@ export class BrowserTools {
     const resolved = await this.resolveExecutableTab(args, 'screenshot');
     if (!resolved.ok) return resolved.result;
     const { resolution } = resolved;
-    const tabId = resolution.tabId;
     const tab = resolution.tab;
     const requestedFormat = String(args.format || 'jpeg').toLowerCase();
     const format = requestedFormat === 'png' ? 'png' : 'jpeg';
@@ -1245,25 +1427,83 @@ export class BrowserTools {
       typeof args.quality === 'number'
         ? Math.max(1, Math.min(100, Math.round(args.quality)))
         : 90;
+    let focusedForCapture = false;
+    let restoredFocus = false;
+    const capturedTabId = typeof tab.id === 'number' ? tab.id : null;
+    const [activeBeforeCapture] = await chrome.tabs.query({ active: true, windowId: tab.windowId });
+    const previouslyActiveTabId = typeof activeBeforeCapture?.id === 'number' ? activeBeforeCapture.id : null;
 
-    if (format === 'png') {
-      const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
-      return this.attachResolutionMeta({ success: true, dataUrl, format: 'png' }, resolution);
+    if (capturedTabId && previouslyActiveTabId !== capturedTabId) {
+      try {
+        await chrome.tabs.update(capturedTabId, { active: true });
+        focusedForCapture = true;
+      } catch (error) {
+        return this.attachResolutionMeta(
+          {
+            success: false,
+            code: 'SCREENSHOT_FOCUS_FAILED',
+            error: `Failed to focus target tab ${capturedTabId} for screenshot: ${error?.message || String(error)}`,
+          },
+          resolution,
+        );
+      }
     }
 
+    let captureResult: Record<string, any>;
     try {
-      const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality });
-      return this.attachResolutionMeta({ success: true, dataUrl, format: 'jpeg', quality }, resolution);
+      if (format === 'png') {
+        const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+        captureResult = {
+          success: true,
+          dataUrl,
+          format: 'png',
+        };
+      } else {
+        const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality });
+        captureResult = {
+          success: true,
+          dataUrl,
+          format: 'jpeg',
+          quality,
+        };
+      }
     } catch (error) {
-      const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
-      return this.attachResolutionMeta({
-        success: true,
-        dataUrl,
-        format: 'png',
-        fallbackFrom: 'jpeg',
-        fallbackReason: error?.message || String(error),
-      }, resolution);
+      if (format === 'jpeg') {
+        const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+        captureResult = {
+          success: true,
+          dataUrl,
+          format: 'png',
+          fallbackFrom: 'jpeg',
+          fallbackReason: error?.message || String(error),
+        };
+      } else {
+        captureResult = {
+          success: false,
+          code: 'SCREENSHOT_CAPTURE_FAILED',
+          error: `Failed to capture screenshot: ${error?.message || String(error)}`,
+        };
+      }
+    } finally {
+      if (focusedForCapture && previouslyActiveTabId !== null && previouslyActiveTabId !== capturedTabId) {
+        try {
+          await chrome.tabs.update(previouslyActiveTabId, { active: true });
+          restoredFocus = true;
+        } catch {
+          // Best effort focus restore.
+        }
+      }
     }
+
+    return this.attachResolutionMeta(
+      {
+        ...captureResult,
+        focusedForCapture,
+        restoredFocus,
+        capturedTabId,
+      },
+      resolution,
+    );
   }
 
   private async getTabs() {

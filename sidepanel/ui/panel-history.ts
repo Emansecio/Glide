@@ -262,6 +262,7 @@ const historyTextEncoder = new TextEncoder();
       const date = new Date(session.updatedAt || session.startedAt || Date.now());
       const msgCount = session.messageCount || session.transcript?.length || 0;
       const timeAgo = this.formatTimeAgo(date);
+      const safeSessionId = this.escapeAttribute(String(session.id || ''));
       
       item.innerHTML = `
         <div class="history-item-main">
@@ -272,7 +273,7 @@ const historyTextEncoder = new TextEncoder();
             <span>${msgCount} mensagens</span>
           </div>
         </div>
-        <button class="history-delete" title="Excluir" data-session-id="${session.id}">
+        <button class="history-delete" title="Excluir" data-session-id="${safeSessionId}">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="18" y1="6" x2="6" y2="18"></line>
             <line x1="6" y1="6" x2="18" y2="18"></line>

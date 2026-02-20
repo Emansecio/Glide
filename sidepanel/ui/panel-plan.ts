@@ -76,7 +76,6 @@ import { SidePanelUI } from './panel-ui.js';
     this.elements.planChecklist.innerHTML = steps
       .map((step, index) => {
         const isDone = step.status === 'done';
-        const isRunning = step.status === 'running';
         const isBlocked = step.status === 'blocked';
 
         // Determine if this step can be checked (previous steps must be done)

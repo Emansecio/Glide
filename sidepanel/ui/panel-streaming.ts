@@ -1,4 +1,3 @@
-import { dedupeThinking } from '../../ai/message-utils.js';
 import type { RunPlan } from '../../types/plan.js';
 import { SidePanelUI } from './panel-ui.js';
 
@@ -52,9 +51,13 @@ const formatElapsed = (elapsedMs: number) => {
 
 (SidePanelUI.prototype as any).flushStreamingTextRender = function flushStreamingTextRender() {
   if (!this.streamingState?.textEventEl) return;
-  const text = this.streamingState.textBuffer || '';
-  this.streamingState.textEventEl.innerHTML = this.renderMarkdown(text);
-  this.scrollToBottom();
+  const pending = this.streamingState.textPendingBuffer || '';
+  if (!pending) return;
+  this.streamingState.textEventEl.textContent = `${this.streamingState.textEventEl.textContent || ''}${pending}`;
+  this.streamingState.textPendingBuffer = '';
+  if (this.shouldAutoScroll() && this.isNearBottom) {
+    this.scrollToBottom();
+  }
 };
 
 (SidePanelUI.prototype as any).scheduleStreamingReasoningRender = function scheduleStreamingReasoningRender() {
@@ -70,18 +73,19 @@ const formatElapsed = (elapsedMs: number) => {
   const raw = this.streamingState.reasoningRawBuffer || '';
   if (!raw.trim()) return;
 
-  const cleaned = dedupeThinking(raw);
-  this.streamingState.reasoningBuffer = cleaned;
-  this.streamingState.reasoningEventEl.textContent = cleaned;
+  this.streamingState.reasoningBuffer = raw;
+  this.streamingState.reasoningEventEl.textContent = raw;
 
   const panel = this.elements.thinkingPanel as HTMLElement | null;
   if (panel) {
-    this.latestThinking = cleaned;
-    panel.textContent = cleaned;
+    this.latestThinking = raw;
+    panel.textContent = raw;
     panel.classList.remove('empty');
     panel.classList.add('streaming');
   }
-  this.scrollToBottom();
+  if (this.shouldAutoScroll() && this.isNearBottom) {
+    this.scrollToBottom();
+  }
 };
 
 (SidePanelUI.prototype as any).startThinkingTimer = function startThinkingTimer() {
@@ -137,6 +141,7 @@ const formatElapsed = (elapsedMs: number) => {
     textEventEl: container.querySelector('.stream-main-text') as HTMLElement | null,
     reasoningEventEl: null,
     textBuffer: '',
+    textPendingBuffer: '',
     reasoningBuffer: '',
     reasoningRawBuffer: '',
     planEl: null,
@@ -160,6 +165,7 @@ const formatElapsed = (elapsedMs: number) => {
   if (!this.streamingState?.textEventEl) return;
 
   this.streamingState.textBuffer = `${this.streamingState.textBuffer || ''}${content || ''}`;
+  this.streamingState.textPendingBuffer = `${this.streamingState.textPendingBuffer || ''}${content || ''}`;
   this.scheduleStreamingTextRender();
 };
 
@@ -173,6 +179,9 @@ const formatElapsed = (elapsedMs: number) => {
   const indicator = this.streamingState.container.querySelector('.typing-indicator');
   if (indicator) indicator.remove();
   this.streamingState.container.classList.remove('streaming');
+  if (this.streamingState.textEventEl) {
+    this.streamingState.textEventEl.innerHTML = this.renderMarkdown(this.streamingState.textBuffer || '');
+  }
 
   const finalReasoning = this.streamingState.reasoningBuffer || '';
   if (finalReasoning) {

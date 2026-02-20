@@ -18,8 +18,8 @@ class ContentScriptHandler {
 
   init() {
     // Listen for messages from background script
-    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-      this.handleMessage(message, sender, sendResponse);
+    chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+      this.handleMessage(message, sendResponse);
       return true; // Keep channel open for async response
     });
 
@@ -27,7 +27,7 @@ class ContentScriptHandler {
     this.notifyReady();
   }
 
-  async handleMessage(message, sender, sendResponse) {
+  async handleMessage(message, sendResponse) {
     try {
       switch (message.action) {
         case 'highlight_element':
@@ -69,7 +69,7 @@ class ContentScriptHandler {
           sendResponse({ success: false, error: 'Unknown action' });
       }
     } catch (error) {
-      sendResponse({ success: false, error: error.message });
+      sendResponse({ success: false, error: (error as { message?: string })?.message || String(error) });
     }
   }
 

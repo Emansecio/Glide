@@ -1,237 +1,140 @@
-# Arquitetura do Glide
+# Glide Architecture
 
-## Visão Geral
+## Overview
 
-O Glide é uma extensão Chrome composta por três componentes principais:
+Glide is a Chrome extension with three runtime layers:
 
-1. **Sidepanel UI** - Interface do usuário
-2. **Background Service Worker** - Orquestração e comunicação com LLMs
-3. **Content Script** - Injeção em páginas web
+1. Sidepanel UI (`sidepanel/`)
+2. Background Service Worker (`background.ts`)
+3. Browser execution layer (`tools/browser-tools.ts` + Chrome APIs)
 
-## Diagrama de Componentes
+The sidepanel sends user intent, the background orchestrates LLM + tool execution, and tool results stream back to UI.
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Chrome Extension                         │
-│                                                             │
-│  ┌──────────────┐         ┌──────────────────────────┐     │
-│  │   Sidepanel  │◄───────►│   Background Service     │     │
-│  │     UI       │  Msg    │        Worker            │     │
-│  └──────────────┘         └──────────────┬───────────┘     │
-│         │                                 │                 │
-│         │                                 │ HTTP/WebSocket  │
-│         │                                 ▼                 │
-│         │                       ┌──────────────────┐       │
-│         │                       │   AI Providers   │       │
-│         │                       │  (OpenAI, etc.)  │       │
-│         │                       └──────────────────┘       │
-│         │                                 │                 │
-│         │                                 │ Tool Calls      │
-│         │                                 ▼                 │
-│         │                       ┌──────────────────┐       │
-│         │                       │   Browser APIs   │       │
-│         │                       │  (tabs, etc.)    │       │
-│         │                       └──────────────────┘       │
-│         │                                 │                 │
-│         │                                 │ DOM Access      │
-│         ▼                                 ▼                 │
-│  ┌─────────────────────────────────────────────────────┐  │
-│  │                  Content Script                      │  │
-│  │              (Injetado nas páginas)                  │  │
-│  └─────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
+## High-Level Diagram
+
+```text
+User
+  -> Sidepanel UI
+  -> chrome.runtime message
+  -> Background Service Worker
+  -> AI provider (streaming + tool calls)
+  -> BrowserTools / Chrome APIs
+  -> runtime events
+  -> Sidepanel UI
 ```
 
-## Sidepanel UI
+## Main Components
 
-### Responsabilidades
-- Renderização da interface
-- Captura de input do usuário
-- Exibição de mensagens e tool calls
-- Gerenciamento de estado local
+### Sidepanel (`sidepanel/`)
 
-### Arquivos Principais
-- `panel.html` - Estrutura HTML
-- `panel-ui.ts` - Inicialização e elementos
-- `panel-chat.ts` - Lógica de chat
-- `panel-settings.ts` - Configurações
-- `panel-streaming.ts` - Streaming de respostas
+- Entry: `sidepanel/panel.ts`
+- Layout loading: `sidepanel/ui/layout-loader.ts`
+- Runtime message handling: `sidepanel/ui/panel-core.ts`
+- Streaming rendering: `sidepanel/ui/panel-streaming.ts`
+- Tool/activity rendering: `sidepanel/ui/panel-tools.ts`
+- Markdown rendering/sanitization: `sidepanel/ui/panel-markdown.ts`
 
-### Comunicação
-```typescript
-// Enviar mensagem para background
-chrome.runtime.sendMessage({
-  type: 'user_message',
-  message: '...',
-  conversationHistory: [...]
-});
+UI layout notes:
 
-// Receber mensagens do background
-chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.type === 'assistant_stream_delta') {
-    // Atualizar UI
-  }
-});
-```
+- `sidepanel/templates/main.html` keeps activity output in-flow between chat and composer for stable reading.
+- Composer context actions (`file`, `tabs`) live in `composer-context-tools` above the textarea.
+- `sidepanel/templates/tab-selector.html` uses desktop modal behavior and mobile bottom-sheet behavior (`<480px`) via `sidepanel/styles/panels.css`.
+- Sidebar backdrop blur/open motion is driven by `sidepanel/styles/layout.css`.
 
-## Background Service Worker
+### Background (`background.ts`)
 
-### Responsabilidades
-- Processar mensagens do usuário
-- Comunicar-se com LLMs
-- Executar ferramentas do navegador
-- Gerenciar estado da sessão
+- Receives message types (`user_message`, `execute_tool`, `get_execution_events`)
+- Loads runtime settings from storage
+- Ensures a dedicated locked tab for `user_message` runs
+- Builds provider model and tool set
+- Executes tool calls via `executeToolByName`
+- Emits schema-versioned runtime events (`types/runtime-messages.ts`)
+- Tracks execution events for log/export
+- Enforces single active user run at a time to prevent mutable-state races
 
-### Ciclo de Vida
-1. Recebe `user_message` do sidepanel
-2. Chama LLM com contexto e tools
-3. Processa resposta e tool calls
-4. Executa ferramentas via Chrome APIs
-5. Retorna resultados para LLM ou UI
+### Browser tools (`tools/browser-tools.ts`)
 
-### Arquivos Principais
-- `background.ts` - Service worker principal
-- `browser-tools.ts` - Implementação das ferramentas
+- Encapsulates browser actions and DOM extraction
+- Maintains session tab state
+- Implements structured extraction (`getContent` mode `structure`)
+- Normalizes common tool failure return shapes
 
-### Exemplo de Tool Execution
-```typescript
-async executeTool(toolName: string, args: any) {
-  switch (toolName) {
-    case 'navigate':
-      return await chrome.tabs.update({ url: args.url });
-    case 'getContent':
-      return await this.executeContentScript(args);
-    // ...
-  }
-}
-```
+## Message Flow
 
-## Content Script
+### Normal Assistant Run
 
-### Responsabilidades
-- Acesso ao DOM das páginas
-- Execução de scripts na página
-- Comunicação com background
+1. Sidepanel sends `user_message`
+2. Background resolves/creates dedicated locked run tab
+3. Background prepares context + tools (locked-tab allowlist)
+4. Browser tools execute only against the dedicated tab id
+5. Model streams deltas
+6. Background emits:
+   - `assistant_stream_start`
+   - `assistant_stream_delta` (text/reasoning)
+   - `assistant_stream_stop`
+   - `assistant_final`
+7. UI merges display history and context history
 
-### Casos de Uso
-- Extrair conteúdo da página
-- Simular interações do usuário
-- Obter screenshots
+### Manual Tool Run
 
-## Fluxo de Dados
+1. Sidepanel sends `execute_tool`
+2. Background routes through `executeToolByName`
+3. Same permission/domain/screenshot policies apply
+4. Returns tool result to requester
 
-### 1. User Message
-```
-User -> Sidepanel -> Background -> LLM
-```
+## Security Boundaries
 
-### 2. Tool Call
-```
-LLM -> Background -> Browser API -> Content Script -> Background -> LLM
-```
+### Tool Permission Layers
 
-### 3. Final Response
-```
-LLM -> Background -> Sidepanel -> User
-```
+Tool execution is gated by:
 
-## Sistema de Providers
+- category permission (`read`, `interact`, `navigate`, `tabs`, `screenshots`)
+- optional allowed domain policy (`allowedDomains`)
+- screenshot feature toggle
+- dedicated locked-tab policy for normal runs (`TAB_LOCK_POLICY` on violations)
 
-### Interface
-```typescript
-interface SDKModelSettings {
-  provider: string;
-  apiKey: string;
-  model: string;
-  customEndpoint?: string;
-}
-```
+### Output Hardening
 
-### Implementações
-- `anthropic` - Claude via @ai-sdk/anthropic
-- `openai` - GPT via @ai-sdk/openai
-- `ollama` - Modelos locais via OpenAI-compatible API
-- `kimi` - Kimi via Anthropic-compatible API
-- `custom` - Qualquer endpoint OpenAI-compatible
+- Screenshot payload is sanitized before runtime transport and history persistence
+- Markdown links/images are protocol-restricted in UI renderer
+- Execution logs compact/trim large payload fields
+- Execution telemetry redacts sensitive keys before persistence/export
+- Screenshot capture can temporarily focus locked tab and restore prior focus
 
-## Gerenciamento de Estado
+## Build Architecture
 
-### Chrome Storage
-```typescript
-// Configurações persistidas
-chrome.storage.local.set({
-  provider: 'openai',
-  apiKey: '...',
-  model: 'gpt-4o',
-  configs: { ... },  // Perfis
-  activeConfig: 'default'
-});
-```
+Build system is target-based (`scripts/build.mjs`):
 
-### Estado em Memória
-- `currentSettings` - Configurações ativas
-- `currentPlan` - Plano de execução atual
-- `toolCallViews` - Views de ferramentas
-- `streamingState` - Estado do streaming
+- `--target=ext`: extension artifacts only
+- `--target=test`: test runner bundles only
+- `--target=all`: both
 
-## Sistema de Tools
+NPM wiring:
 
-### Definição
-```typescript
-interface ToolDefinition {
-  name: string;
-  description?: string;
-  input_schema?: {
-    type: 'object';
-    properties: Record<string, unknown>;
-    required?: string[];
-  };
-}
-```
+- `npm run build` / `build:ext` -> extension only
+- `npm run build:test` -> tests only
+- `npm run validate`, `npm test` -> compose both targets
 
-### Tools Disponíveis
-1. **navigate** - Navegar para URL
-2. **getContent** - Obter conteúdo
-3. **click** - Clicar elemento
-4. **type** - Digitar texto
-5. **scroll** - Rolagem
-6. **pressKey** - Teclado
-7. **tabs** - Gerenciar abas
-8. **screenshot** - Screenshot
+This keeps default extension packaging clean while preserving test workflows.
 
-## Compactação de Contexto
+## Persistent State Model
 
-Quando o contexto excede o limite:
+`chrome.storage.local` stores:
 
-1. Identifica ponto de corte
-2. Resume mensagens antigas
-3. Preserva mensagens recentes
-4. Substitui resumo no contexto
+- active profile settings
+- profile map (`configs`)
+- permission and allowlist policy
+- behavior flags (streaming, thinking, history, screenshot retention)
+- chat session history and execution logs
 
-## Segurança
+In-memory state is split between:
 
-### Permissões
-- `sidePanel` - Acesso ao sidepanel
-- `activeTab` - Acesso à aba ativa
-- `scripting` - Injeção de scripts
-- `tabs` - Gerenciamento de abas
-- `storage` - Persistência
-- `declarativeNetRequest` - Modificar headers
+- sidepanel runtime UI state
+- background run orchestration state
+- BrowserTools session tab state
 
-### Isolamento
-- Service worker isolado
-- Content script isolado da página
-- Comunicação apenas via mensagens
+## Operational Notes
 
-## Performance
-
-### Otimizações
-- Context compaction para limitar tokens
-- Streaming para respostas rápidas
-- Lazy loading de componentes
-- Cache de configurações
-
-### Limites
-- Max tokens por resposta: configurável
-- Context limit: configurável
-- Max tool calls: 48 por execução
+- Extension loads from `dist/`
+- Runtime message schema is versioned (`schemaVersion = 2`)
+- Build performs TypeScript checks before bundling

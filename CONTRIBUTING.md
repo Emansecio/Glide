@@ -1,127 +1,75 @@
-# Contribuindo para o Glide
+# Contributing To Glide
 
-Obrigado por seu interesse em contribuir com o Glide! Este documento fornece diretrizes para contribuição.
+Thanks for contributing to Glide.
 
-## Código de Conduta
-
-- Seja respeitoso e inclusivo
-- Aceite críticas construtivas
-- Foque no que é melhor para a comunidade
-
-## Como Contribuir
-
-### Reportando Bugs
-
-1. Verifique se o bug já foi reportado nas issues
-2. Se não, crie uma nova issue com:
-   - Título claro e descritivo
-   - Passos para reproduzir
-   - Comportamento esperado vs atual
-   - Screenshots (se aplicável)
-   - Versão do Chrome e do Glide
-
-### Sugerindo Funcionalidades
-
-1. Abra uma issue com o label `enhancement`
-2. Descreva a funcionalidade e seu caso de uso
-3. Discuta a implementação proposta
-
-### Pull Requests
-
-1. Fork o repositório
-2. Crie uma branch (`git checkout -b feature/nome-da-feature`)
-3. Faça suas alterações
-4. Execute os testes (`npm run test`)
-5. Execute o lint (`npm run lint`)
-6. Commit com mensagens claras
-7. Push para sua branch
-8. Abra um PR descrevendo as mudanças
-
-## Desenvolvimento Local
-
-### Setup
+## Local Setup
 
 ```bash
-git clone <repo>
+git clone <repo-url>
 cd parchi
 npm install
+```
+
+Build extension:
+
+```bash
 npm run build
 ```
 
-### Carregando no Chrome
+Load unpacked extension from `dist/` in `chrome://extensions/`.
 
-1. Abra `chrome://extensions/`
-2. Ative "Modo desenvolvedor"
-3. Clique em "Carregar sem compactação"
-4. Selecione a pasta `dist/`
-
-### Fluxo de Desenvolvimento
+## Development Commands
 
 ```bash
-# Build contínuo durante desenvolvimento
+# Extension bundle only
 npm run build
 
-# Verificar tipos
+# Test bundles only
+npm run build:test
+
+# Type checks
 npm run typecheck
 
-# Lint
-npm run lint
-
-# Formatar
-npm run format
-
-# Testes
+# Validation and tests
+npm run validate
+npm run test
 npm run test:unit
 ```
 
-## Padrões de Código
+## Pull Request Checklist
 
-### TypeScript
+1. Keep changes scoped and explain intent clearly.
+2. Run at minimum:
+   - `npm run typecheck`
+   - `npm run validate`
+   - `npm run test:unit`
+3. Update docs for behavior, API, or script changes.
+4. Add or update tests when behavior changes.
+5. Include migration notes if a workflow changed.
+6. If `sidepanel/` UI files changed, run `npm run build` before handoff so `dist/` stays in sync.
 
-- Use tipagem estrita
-- Evite `any`
-- Documente funções públicas
+## Coding Guidelines
 
-### CSS
+- TypeScript first; keep public behavior explicit.
+- Prefer small, focused changes.
+- Avoid introducing broad abstractions unless needed.
+- Keep security-sensitive paths explicit:
+  - runtime message handlers
+  - tool permission checks
+  - URL sanitization
+  - screenshot data handling
 
-- Use variáveis CSS definidas em `base.css`
-- Mantenha consistência com o tema escuro
-- Prefira classes semânticas
+## Documentation Policy
 
-### Commits
+When behavior changes, update:
 
-- Use mensagens claras em português ou inglês
-- Referencie issues quando aplicável
+- `README.md` (user/developer workflow)
+- `docs/API.md` (runtime messages and tool contracts)
+- `docs/ARCHITECTURE.md` (system flow)
+- `CHANGELOG.md` (release notes)
 
-## Estrutura de Arquivos
+## Branch And Commit Style
 
-```
-sidepanel/ui/     # UI logic (TypeScript)
-sidepanel/styles/ # CSS styles
-ai/               # AI SDK logic
-tools/            # Browser automation tools
-tests/            # Test files
-```
-
-## Testes
-
-- Adicione testes para novas funcionalidades
-- Mantenha cobertura de testes existentes
-- Testes E2E usam Playwright
-
-## Revisão de Código
-
-Todos os PRs passam por revisão. Critérios:
-
-- Código funciona conforme descrito
-- Segue padrões do projeto
-- Tem testes apropriados
-- Passa em todos os checks
-
-## Perguntas?
-
-Abra uma issue com o label `question`.
-
-## Agradecimentos
-
-Todas as contribuições são valorizadas!
+- Use descriptive branch names: `feat/...`, `fix/...`, `docs/...`
+- Use clear commit messages that state impact
+- Reference issues when applicable

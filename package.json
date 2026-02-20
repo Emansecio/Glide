@@ -30,6 +30,7 @@
   "license": "MIT",
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.17",
+    "@ai-sdk/google": "^3.0.30",
     "@ai-sdk/openai": "^3.0.13",
     "@ai-sdk/openai-compatible": "^2.0.16",
     "ai": "^6.0.42"
@@ -37,16 +38,10 @@
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
     "@types/chrome": "^0.0.268",
-    "@types/cors": "^2.8.17",
-    "@types/express": "^4.17.21",
     "@types/node": "^22.10.5",
-    "cors": "^2.8.5",
-    "dotenv": "^17.2.3",
     "esbuild": "^0.27.2",
-    "express": "^4.19.2",
     "marked": "^17.0.1",
     "playwright": "^1.57.0",
-    "stripe": "^16.5.0",
     "typescript": "^5.6.3"
   }
 }

@@ -1,207 +1,116 @@
 # Glide
 
-Glide é uma extensão de navegador (Chrome) que fornece assistência de IA para automação de navegação. Combina uma interface de chat com execução de ferramentas para navegar, ler e interagir com páginas web sem sair do seu fluxo de trabalho.
+Glide is a Chrome extension for AI-assisted browser automation.  
+It combines a sidepanel chat UI with browser tools (navigation, DOM interaction, content extraction, screenshots) through a background service worker.
 
-## O que faz
+## What Glide Does
 
-- Automação de navegador guiada por chat com execução de ferramentas
-- Timeline de chamadas de ferramentas + raciocínio durante streaming
-- Histórico de sessões e configurações por perfil
-- Suporte a múltiplos providers de LLM (OpenAI, Anthropic, Google, Ollama, Kimi)
+- Tool-driven browser automation from chat
+- Streaming assistant responses with tool timeline and reasoning channel
+- Multi-profile setup (main, vision, orchestrator, auxiliary)
+- Session history with context compaction
+- Provider support: OpenAI, Anthropic, Google (Gemini), Ollama, Kimi, custom OpenAI-compatible APIs
+- Refined sidepanel composer flow:
+  - context tools (files/tabs) above prompt input
+  - compact activity toggle icon
+  - model picker + send action grouped on the right
+- Activity panel rendered in normal layout flow (no chat overlap)
+- Mobile tab selector bottom-sheet layout under `480px`
 
-## Arquitetura
+## Current Architecture
 
 ```mermaid
 flowchart LR
   UI[Sidepanel UI] -->|user_message| BG[Background Service Worker]
-  BG -->|chat| LLM[AI Provider]
+  BG -->|streamText/generateText| LLM[AI Provider]
   LLM -->|tool calls| BG
-  BG -->|tool exec| Browser[Chrome APIs]
-  BG -->|assistant_stream_* + assistant_final| UI
+  BG -->|Chrome APIs + scripting| WEB[Current Browser Tabs]
+  BG -->|runtime messages| UI
 ```
 
-## Providers Suportados
+Main code areas:
 
-| Provider | Tipo | Endpoint Padrão |
-|----------|------|-----------------|
-| Anthropic (Claude) | Cloud | api.anthropic.com |
-| OpenAI (GPT) | Cloud | api.openai.com |
-| Google (Gemini) | Cloud | generativelanguage.googleapis.com |
-| Ollama | Local | http://localhost:11434 |
-| Kimi | Cloud | api.kimi.com/coding |
-| Custom/OpenRouter | Cloud | Configurável |
+- `background.ts`: orchestration, provider calls, tool execution pipeline
+- `tools/browser-tools.ts`: browser tool implementations
+- `sidepanel/`: UI, templates, styles
+- `ai/`: model adapters, message schema, retries, context compaction
+- `types/`: shared runtime types
+- `tests/`: validator, unit, e2e runners
 
-## Estrutura do Projeto
+## Build And Run
 
-```
-parchi/
-├── ai/                     # SDK e lógica de IA
-│   ├── sdk-client.ts       # Cliente SDK para providers
-│   ├── compaction.ts       # Compactação de contexto
-│   ├── message-schema.ts   # Schema de mensagens
-│   ├── model-convert.ts    # Conversão de modelos
-│   └── retry-engine.ts     # Engine de retry
-├── background.ts           # Service worker principal
-├── content.ts              # Script de conteúdo
-├── manifest.json           # Manifesto da extensão
-├── sidepanel/              # UI do sidepanel
-│   ├── panel.html          # HTML principal
-│   ├── panel.css           # Estilos
-│   ├── ui/                 # Lógica da UI (TypeScript)
-│   │   ├── panel-ui.ts
-│   │   ├── panel-core.ts
-│   │   ├── panel-chat.ts
-│   │   ├── panel-settings.ts
-│   │   ├── panel-profiles.ts
-│   │   ├── panel-status.ts
-│   │   ├── panel-tools.ts
-│   │   └── ...
-│   ├── styles/             # CSS modular
-│   │   ├── base.css
-│   │   ├── composer.css
-│   │   ├── chat.css
-│   │   └── ...
-│   └── templates/          # Templates HTML
-│       ├── main.html
-│       └── panels/
-├── tools/                  # Ferramentas de automação
-│   └── browser-tools.ts
-├── types/                  # Definições de tipos
-├── tests/                  # Testes
-│   ├── unit/
-│   └── e2e/
-├── scripts/                # Scripts de build
-│   └── build.mjs
-└── icons/                  # Ícones da extensão
-```
-
-## Desenvolvimento
-
-### Pré-requisitos
+Prerequisites:
 
 - Node.js 18+
-- Chrome/Edge (navegador baseado em Chromium)
+- Chromium-based browser (Chrome/Edge)
 
-### Instalação
+Install:
 
 ```bash
 npm install
 ```
 
-### Build
+Build extension bundle only:
 
 ```bash
 npm run build
+# same as:
+npm run build:ext
 ```
 
-O build gera os arquivos em `dist/` prontos para carregar como extensão descompactada.
+Build test bundles:
 
-### Carregar no Chrome
-
-1. Abra `chrome://extensions/`
-2. Ative "Modo desenvolvedor"
-3. Clique em "Carregar sem compactação"
-4. Selecione a pasta `dist/`
-
-### Scripts Disponíveis
-
-| Comando | Descrição |
-|---------|-----------|
-| `npm run build` | Build completo da extensão |
-| `npm run test` | Executa todos os testes |
-| `npm run test:unit` | Testes unitários |
-| `npm run test:e2e` | Testes end-to-end |
-| `npm run validate` | Valida a extensão |
-| `npm run typecheck` | Verificação de tipos TypeScript |
-| `npm run lint` | Linting com Biome |
-| `npm run lint:fix` | Corrige problemas de lint |
-| `npm run format` | Formata código |
-
-## Ferramentas Disponíveis
-
-O Glide executa ferramentas de automação do navegador:
-
-- `navigate` - Navegar para URL
-- `getContent` - Obter conteúdo da página
-- `click` - Clicar em elemento
-- `type` - Digitar texto
-- `scroll` - Rolagem de página
-- `pressKey` - Pressionar tecla
-- `tabs` - Gerenciar abas
-- `screenshot` - Capturar tela
-
-## Configuração
-
-### Configurações Gerais
-
-Acesse através do ícone de engrenagem no sidepanel:
-
-- **Provider**: Selecione o provedor de IA
-- **API Key**: Chave de API (não necessária para Ollama)
-- **Modelo**: Modelo a ser usado
-- **Seletor de modelo**: Dropdown agrupado por família; com provider `ollama`, todos os modelos aparecem em `Ollama`
-- **Endpoint Customizado**: URL da API (quando aplicável)
-- **Temperatura**: Criatividade das respostas (0-1)
-- **Max Tokens**: Limite de tokens por resposta
-
-### Perfis
-
-Crie perfis diferentes para diferentes contextos:
-
-- Cada perfil tem suas próprias configurações
-- Perfis podem ter funções: Principal, Visão, Orquestrador, Auxiliar
-- Switch rápido entre perfis
-
-### Permissões de Ferramentas
-
-Controle quais ferramentas o agente pode usar:
-
-- Ler conteúdo da página
-- Interagir (clicar, digitar)
-- Navegar para outras páginas
-- Gerenciar abas
-- Capturar screenshots
-
-## Fluxo de Streaming
-
-```mermaid
-sequenceDiagram
-  participant UI as Sidepanel
-  participant BG as Background
-  participant LLM as AI Provider
-
-  UI->>BG: user_message
-  BG->>LLM: chat (stream)
-  LLM-->>BG: stream delta
-  BG-->>UI: assistant_stream delta
-  LLM-->>BG: final response
-  BG-->>UI: assistant_stream_stop + assistant_final
+```bash
+npm run build:test
 ```
 
-## Qualidade
+Load extension in Chrome:
 
-Verificado em: 2026-02-18
+1. Open `chrome://extensions/`
+2. Enable `Developer mode`
+3. Click `Load unpacked`
+4. Select `dist/`
 
-| Check | Comando | Resultado |
-|-------|---------|-----------|
-| Unit tests | `npm run test:unit` | 28/28 passando |
+## Scripts
 
-## Licença
+| Command | Purpose |
+| --- | --- |
+| `npm run build` | Build extension artifacts only |
+| `npm run build:ext` | Build extension artifacts only |
+| `npm run build:test` | Build test runners in `dist/tests/` |
+| `npm run validate` | Build ext + tests and run extension validator |
+| `npm run test` | Build ext + tests and run validator + unit tests |
+| `npm run test:unit` | Build ext + tests and run unit tests |
+| `npm run test:e2e` | Build ext + tests and run e2e runner |
+| `npm run typecheck` | TypeScript checks only |
+| `npm run lint` | Biome checks |
+| `npm run lint:fix` | Biome autofix |
+| `npm run format` | Biome formatter |
+
+## Provider Notes
+
+- `ollama` defaults to `http://localhost:11434`
+- `kimi` defaults to `https://api.kimi.com/coding`
+- `google` uses Google Generative AI provider credentials (`apiKey` + model id)
+- `custom` expects an OpenAI-compatible base URL
+
+## Security And Safety Defaults
+
+- Tool execution permission gates (`read`, `interact`, `navigate`, `tabs`, `screenshots`)
+- Optional domain allowlist for tool execution
+- `execute_tool` now uses the same permission pipeline as normal runs
+- Screenshot payload retention modes (`ephemeral`, `debug-short`, `persistent`)
+- Markdown URL hardening:
+  - links allow only `http`, `https`, `mailto`
+  - images allow only `http`, `https`
+
+## Docs Index
+
+- `docs/API.md` - runtime message and tool API reference
+- `docs/ARCHITECTURE.md` - architecture and data flow
+- `CONTRIBUTING.md` - contribution workflow
+- `CHANGELOG.md` - release history
+
+## License
 
 MIT
-
-## Contribuição
-
-1. Fork o projeto
-2. Crie sua branch (`git checkout -b feature/nova-funcionalidade`)
-3. Commit suas mudanças (`git commit -m 'Adiciona nova funcionalidade'`)
-4. Push para a branch (`git push origin feature/nova-funcionalidade`)
-5. Abra um Pull Request
-
-## Notas de Desenvolvimento
-
-- O projeto usa ES modules (type: "module" no package.json)
-- Build com esbuild via scripts/build.mjs
-- Código em TypeScript com tipagem estrita
-- Linting e formatação com Biome
-- Testes com Playwright para E2E

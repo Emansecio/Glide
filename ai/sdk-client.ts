@@ -1,4 +1,5 @@
 import { createAnthropic } from '@ai-sdk/anthropic';
+import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { generateText, jsonSchema, tool } from 'ai';
@@ -27,6 +28,11 @@ export function resolveLanguageModel(settings: SDKModelSettings) {
 
   if (provider === 'anthropic') {
     const providerInstance = createAnthropic({ apiKey });
+    return providerInstance(modelId);
+  }
+
+  if (provider === 'google') {
+    const providerInstance = createGoogleGenerativeAI({ apiKey });
     return providerInstance(modelId);
   }
 

@@ -36,7 +36,7 @@ import { SidePanelUI } from './panel-ui.js';
       (_: string, alt: string, url: string) => {
         const safeUrl = sanitizeUrl(url);
         if (!safeUrl) return alt ? escape(alt) : '';
-        return `<img alt="${escape(alt)}" src="${escapeAttr(safeUrl)}">`;
+        return `<img alt="${escapeAttr(alt)}" src="${escapeAttr(safeUrl)}">`;
       },
     );
     html = html.replace(

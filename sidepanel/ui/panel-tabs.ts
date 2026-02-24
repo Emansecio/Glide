@@ -87,8 +87,9 @@ import { SidePanelUI } from './panel-ui.js';
     section.className = 'tab-group';
     section.dataset.groupId = String(groupId);
     const allSelected = groupTabs.every((tab) => typeof tab.id === 'number' && this.selectedTabs.has(tab.id));
+    const safeColor = this.escapeAttribute(color);
     section.innerHTML = `
-      <div class="tab-group-header" style="--group-color: ${color}">
+      <div class="tab-group-header" style="--group-color: ${safeColor}">
         <div class="tab-group-label">
           <span>${this.escapeHtml(label)}</span>
           <span class="tab-group-count">${groupTabs.length}</span>
@@ -114,14 +115,21 @@ import { SidePanelUI } from './panel-ui.js';
       }
       item.dataset.groupId = String(groupId);
       const urlLabel = this.formatTabLabel(tab.url || '');
+      const safeFaviconUrl = this.escapeAttribute(tab.favIconUrl || fallbackFavicon);
       item.innerHTML = `
         <div class="tab-item-checkbox"></div>
-        <img class="tab-item-favicon" src="${tab.favIconUrl || fallbackFavicon}" onerror="this.src='${fallbackFavicon}'">
+        <img class="tab-item-favicon" src="${safeFaviconUrl}">
         <div class="tab-item-text">
           <span class="tab-item-title">${this.escapeHtml(tab.title || 'Sem titulo')}</span>
           ${urlLabel ? `<span class=\"tab-item-url\">${this.escapeHtml(urlLabel)}</span>` : ''}
         </div>
       `;
+      const favicon = item.querySelector('.tab-item-favicon') as HTMLImageElement | null;
+      if (favicon) {
+        favicon.addEventListener('error', () => {
+          if (favicon.src !== fallbackFavicon) favicon.src = fallbackFavicon;
+        });
+      }
       item.addEventListener('click', () => this.toggleTabSelection(tab, item));
       section.appendChild(item);
     });
@@ -247,10 +255,11 @@ import { SidePanelUI } from './panel-ui.js';
     const groupTitle = tabs[0]?.groupTitle || 'Sem grupo';
     const groupLabel = this.truncateText(groupTitle, 18) || 'Sem grupo';
     const groupColor = tabs[0]?.groupColor || 'var(--muted-dim)';
+    const safeGroupColor = this.escapeAttribute(groupColor);
     const groupWrap = document.createElement('div');
     groupWrap.className = 'selected-tabs-group';
     groupWrap.innerHTML = `
-      <div class="selected-group-label" style="--group-color: ${groupColor}">
+      <div class="selected-group-label" style="--group-color: ${safeGroupColor}">
         <span>${this.escapeHtml(groupLabel)}</span>
         <span class="selected-group-count">${tabs.length}</span>
       </div>

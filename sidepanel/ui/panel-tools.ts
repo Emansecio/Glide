@@ -498,24 +498,27 @@ type ExecutionTurnSummary = {
     </button>
   `;
 
+  let autoRemoveTimeout: ReturnType<typeof setTimeout> | null = null;
   const dismissBtn = toast.querySelector('.toast-dismiss');
-  dismissBtn?.addEventListener('click', () => {
+  const closeToast = () => {
+    if (autoRemoveTimeout !== null) {
+      clearTimeout(autoRemoveTimeout);
+      autoRemoveTimeout = null;
+    }
     toast.classList.add('hiding');
     setTimeout(() => toast.remove(), 150);
-  });
+  };
+  dismissBtn?.addEventListener('click', closeToast);
 
   document.body.appendChild(toast);
 
   // Auto-remove
-  const autoRemoveTimeout = setTimeout(() => {
+  autoRemoveTimeout = setTimeout(() => {
     if (toast.parentElement) {
       toast.classList.add('hiding');
       setTimeout(() => toast.remove(), 150);
     }
   }, duration);
-
-  // Limpar timeout se manualmente fechado
-  dismissBtn?.addEventListener('click', () => clearTimeout(autoRemoveTimeout));
 };
 
 (SidePanelUI.prototype as any).fetchExecutionEvents = async function fetchExecutionEvents() {

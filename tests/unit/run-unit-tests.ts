@@ -625,6 +625,44 @@ function testRuntimeMessages(runner: TestRunner) {
     runner.assertFalse(isRuntimeMessage(badType), 'Should reject unknown message types');
     runner.assertFalse(isRuntimeMessage(missingRunId), 'Should reject missing runId');
   });
+
+  runner.test('Runtime messages reject missing required fields for specific types', () => {
+    const base = {
+      schemaVersion: RUNTIME_MESSAGE_SCHEMA_VERSION,
+      runId: 'run-test',
+      turnId: 'turn-test',
+      sessionId: 'session-test',
+      timestamp: Date.now(),
+    };
+    const missingAssistantFinalContent = {
+      ...base,
+      type: 'assistant_final',
+    };
+    const missingToolResultPayload = {
+      ...base,
+      type: 'tool_execution_result',
+      tool: 'click',
+    };
+    const badStreamChannel = {
+      ...base,
+      type: 'assistant_stream_delta',
+      content: 'x',
+      channel: 'invalid',
+    };
+
+    runner.assertFalse(
+      isRuntimeMessage(missingAssistantFinalContent),
+      'assistant_final without content should be rejected',
+    );
+    runner.assertFalse(
+      isRuntimeMessage(missingToolResultPayload),
+      'tool_execution_result without result should be rejected',
+    );
+    runner.assertFalse(
+      isRuntimeMessage(badStreamChannel),
+      'assistant_stream_delta with invalid channel should be rejected',
+    );
+  });
 }
 
 // Main test execution

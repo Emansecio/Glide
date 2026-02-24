@@ -26,6 +26,10 @@ type TabResolution = {
   fallbackUsed: boolean;
 };
 
+type ToolArgValidationResult =
+  | { ok: true; args: Record<string, any> }
+  | { ok: false; error: string; hint?: string };
+
 // Maximum number of tabs allowed per session to prevent runaway tab creation
 const MAX_SESSION_TABS = 5;
 
@@ -56,6 +60,212 @@ export class BrowserTools {
       describeSessionTabs: true,
     };
     this.bindTabLifecycleListeners();
+  }
+
+  private isRecord(value: unknown): value is Record<string, any> {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+  }
+
+  private getToolDefinition(toolName: string) {
+    return this.getToolDefinitions().find((tool) => tool.name === toolName) || null;
+  }
+
+  private validateArgsAgainstDefinition(toolName: string, args: unknown): ToolArgValidationResult {
+    if (args === undefined) return { ok: true, args: {} };
+    if (!this.isRecord(args)) {
+      return {
+        ok: false,
+        error: `Invalid arguments for ${toolName}: expected an object payload.`,
+        hint: `Call ${toolName} with a JSON object matching the tool schema.`,
+      };
+    }
+
+    const definition = this.getToolDefinition(toolName);
+    if (!definition) {
+      return { ok: true, args: { ...args } };
+    }
+
+    const schema = definition.input_schema;
+    const properties = this.isRecord(schema?.properties) ? schema.properties : {};
+    const normalizedArgs: Record<string, any> = { ...args };
+
+    for (const requiredKey of schema.required || []) {
+      if (!Object.prototype.hasOwnProperty.call(normalizedArgs, requiredKey)) {
+        return {
+          ok: false,
+          error: `Missing required argument "${requiredKey}" for ${toolName}.`,
+          hint: `Review ${toolName} input_schema and provide "${requiredKey}".`,
+        };
+      }
+      if (normalizedArgs[requiredKey] == null) {
+        return {
+          ok: false,
+          error: `Argument "${requiredKey}" for ${toolName} cannot be null/undefined.`,
+        };
+      }
+    }
+
+    for (const [key, value] of Object.entries(normalizedArgs)) {
+      if (key.startsWith('_') || key === 'attempt') continue;
+      const propertySchema = properties[key];
+      if (!this.isRecord(propertySchema)) continue;
+      const expectedType = propertySchema.type;
+      if (typeof expectedType !== 'string' || value == null) continue;
+      if (expectedType === 'string' && typeof value !== 'string') {
+        return { ok: false, error: `Argument "${key}" for ${toolName} must be a string.` };
+      }
+      if (expectedType === 'number' && (typeof value !== 'number' || !Number.isFinite(value))) {
+        return { ok: false, error: `Argument "${key}" for ${toolName} must be a finite number.` };
+      }
+      if (expectedType === 'array' && !Array.isArray(value)) {
+        return { ok: false, error: `Argument "${key}" for ${toolName} must be an array.` };
+      }
+      if (
+        expectedType === 'object' &&
+        (!value || typeof value !== 'object' || Array.isArray(value))
+      ) {
+        return { ok: false, error: `Argument "${key}" for ${toolName} must be an object.` };
+      }
+      if (Array.isArray(propertySchema.enum) && !propertySchema.enum.includes(value)) {
+        return {
+          ok: false,
+          error: `Argument "${key}" for ${toolName} must be one of: ${propertySchema.enum.join(', ')}.`,
+        };
+      }
+    }
+
+    return { ok: true, args: normalizedArgs };
+  }
+
+  private validateToolArgs(toolName: string, args: unknown): ToolArgValidationResult {
+    const base = this.validateArgsAgainstDefinition(toolName, args);
+    if (!base.ok) return base;
+    const normalizedArgs = { ...base.args };
+
+    if ((toolName === 'navigate' || toolName === 'openTab') && typeof normalizedArgs.url === 'string') {
+      normalizedArgs.url = normalizedArgs.url.trim();
+      if (!normalizedArgs.url) {
+        return { ok: false, error: `Argument "url" for ${toolName} cannot be empty.` };
+      }
+      if (!/^https?:\/\//i.test(normalizedArgs.url)) {
+        return {
+          ok: false,
+          error: `Invalid URL for ${toolName}: "${normalizedArgs.url}". Only http(s) URLs are supported.`,
+          hint: 'Use an https:// URL (for searches, use a search engine URL with query params).',
+        };
+      }
+    }
+
+    if ((toolName === 'click' || toolName === 'type') && typeof normalizedArgs.selector === 'string') {
+      normalizedArgs.selector = normalizedArgs.selector.trim();
+      if (!normalizedArgs.selector) {
+        return { ok: false, error: `Argument "selector" for ${toolName} cannot be empty.` };
+      }
+    }
+
+    if (toolName === 'type' && typeof normalizedArgs.text !== 'string') {
+      return { ok: false, error: 'Argument "text" for type must be a string.' };
+    }
+
+    if (toolName === 'pressKey') {
+      if (typeof normalizedArgs.key === 'string') normalizedArgs.key = normalizedArgs.key.trim();
+      if (!normalizedArgs.key) {
+        return { ok: false, error: 'Argument "key" for pressKey cannot be empty.' };
+      }
+      if (normalizedArgs.selector !== undefined && typeof normalizedArgs.selector !== 'string') {
+        return { ok: false, error: 'Argument "selector" for pressKey must be a string when provided.' };
+      }
+    }
+
+    if (toolName === 'scroll') {
+      if (normalizedArgs.direction !== undefined) {
+        const direction = String(normalizedArgs.direction).toLowerCase().trim();
+        if (!['up', 'down', 'top', 'bottom'].includes(direction)) {
+          return {
+            ok: false,
+            error: `Invalid scroll direction "${String(normalizedArgs.direction)}".`,
+            hint: 'Use one of: up, down, top, bottom.',
+          };
+        }
+        normalizedArgs.direction = direction;
+      }
+      if (normalizedArgs.amount !== undefined) {
+        if (typeof normalizedArgs.amount !== 'number' || !Number.isFinite(normalizedArgs.amount)) {
+          return { ok: false, error: 'Argument "amount" for scroll must be a finite number.' };
+        }
+        normalizedArgs.amount = Math.max(1, Math.min(20000, Math.round(normalizedArgs.amount)));
+      }
+    }
+
+    if (toolName === 'getContent') {
+      if (normalizedArgs.mode !== undefined && typeof normalizedArgs.mode === 'string') {
+        normalizedArgs.mode = normalizedArgs.mode.trim();
+      }
+      if (normalizedArgs.type !== undefined && typeof normalizedArgs.type === 'string') {
+        normalizedArgs.type = normalizedArgs.type.trim();
+      }
+      if (normalizedArgs.maxChars !== undefined) {
+        if (typeof normalizedArgs.maxChars !== 'number' || !Number.isFinite(normalizedArgs.maxChars)) {
+          return { ok: false, error: 'Argument "maxChars" for getContent must be a finite number.' };
+        }
+        normalizedArgs.maxChars = Math.max(200, Math.min(50000, Math.floor(normalizedArgs.maxChars)));
+      }
+      if (normalizedArgs.maxItems !== undefined) {
+        if (typeof normalizedArgs.maxItems !== 'number' || !Number.isFinite(normalizedArgs.maxItems)) {
+          return { ok: false, error: 'Argument "maxItems" for getContent must be a finite number.' };
+        }
+        normalizedArgs.maxItems = Math.max(1, Math.min(500, Math.floor(normalizedArgs.maxItems)));
+      }
+    }
+
+    if (toolName === 'screenshot') {
+      if (normalizedArgs.format !== undefined) {
+        const format = String(normalizedArgs.format).toLowerCase().trim();
+        if (!['jpeg', 'png'].includes(format)) {
+          return { ok: false, error: 'Argument "format" for screenshot must be "jpeg" or "png".' };
+        }
+        normalizedArgs.format = format;
+      }
+      if (normalizedArgs.quality !== undefined) {
+        if (typeof normalizedArgs.quality !== 'number' || !Number.isFinite(normalizedArgs.quality)) {
+          return { ok: false, error: 'Argument "quality" for screenshot must be a finite number.' };
+        }
+        normalizedArgs.quality = Math.max(1, Math.min(100, Math.round(normalizedArgs.quality)));
+      }
+    }
+
+    if (['closeTab', 'focusTab', 'switchTab'].includes(toolName)) {
+      if (typeof normalizedArgs.tabId !== 'number' || !Number.isFinite(normalizedArgs.tabId)) {
+        return { ok: false, error: `Argument "tabId" for ${toolName} must be a finite number.` };
+      }
+      normalizedArgs.tabId = Math.trunc(normalizedArgs.tabId);
+    }
+
+    if (toolName === 'groupTabs') {
+      if (!Array.isArray(normalizedArgs.tabIds) || normalizedArgs.tabIds.length === 0) {
+        return { ok: false, error: 'Argument "tabIds" for groupTabs must be a non-empty array.' };
+      }
+      if (!normalizedArgs.tabIds.every((id: unknown) => typeof id === 'number' && Number.isFinite(id))) {
+        return { ok: false, error: 'Argument "tabIds" for groupTabs must contain only numbers.' };
+      }
+      normalizedArgs.tabIds = normalizedArgs.tabIds.map((id: number) => Math.trunc(id));
+    }
+
+    if (normalizedArgs.tabId !== undefined) {
+      if (typeof normalizedArgs.tabId !== 'number' || !Number.isFinite(normalizedArgs.tabId)) {
+        return { ok: false, error: `Argument "tabId" for ${toolName} must be a finite number.` };
+      }
+      normalizedArgs.tabId = Math.trunc(normalizedArgs.tabId);
+    }
+
+    if (normalizedArgs.retries !== undefined) {
+      if (typeof normalizedArgs.retries !== 'number' || !Number.isFinite(normalizedArgs.retries)) {
+        return { ok: false, error: `Argument "retries" for ${toolName} must be a finite number.` };
+      }
+      normalizedArgs.retries = Math.max(1, Math.min(5, Math.round(normalizedArgs.retries)));
+    }
+
+    return { ok: true, args: normalizedArgs };
   }
 
   private bindTabLifecycleListeners() {
@@ -316,33 +526,43 @@ export class BrowserTools {
 
   async executeTool(toolName: string, args: Record<string, any> = {}) {
     try {
+      const validatedArgs = this.validateToolArgs(toolName, args);
+      if (!validatedArgs.ok) {
+        return {
+          success: false,
+          code: 'INVALID_TOOL_ARGS',
+          error: validatedArgs.error,
+          ...(validatedArgs.hint ? { hint: validatedArgs.hint } : {}),
+        };
+      }
+      const safeArgs = validatedArgs.args;
       switch (toolName) {
         case 'navigate':
-          return await this.navigate(args);
+          return await this.navigate(safeArgs);
         case 'openTab':
-          return await this.openTab(args);
+          return await this.openTab(safeArgs);
         case 'click':
-          return await this.click(args);
+          return await this.click(safeArgs);
         case 'type':
-          return await this.type(args);
+          return await this.type(safeArgs);
         case 'pressKey':
-          return await this.pressKey(args);
+          return await this.pressKey(safeArgs);
         case 'scroll':
-          return await this.scroll(args);
+          return await this.scroll(safeArgs);
         case 'getContent':
-          return await this.getContent(args);
+          return await this.getContent(safeArgs);
         case 'screenshot':
-          return await this.screenshot(args);
+          return await this.screenshot(safeArgs);
         case 'getTabs':
           return await this.getTabs();
         case 'closeTab':
-          return await this.closeTab(args);
+          return await this.closeTab(safeArgs);
         case 'switchTab':
-          return await this.focusTab(args);
+          return await this.focusTab(safeArgs);
         case 'focusTab':
-          return await this.focusTab(args);
+          return await this.focusTab(safeArgs);
         case 'groupTabs':
-          return await this.groupTabs(args);
+          return await this.groupTabs(safeArgs);
         case 'describeSessionTabs':
           await this.pruneSessionTabs();
           return {
@@ -561,13 +781,13 @@ export class BrowserTools {
     }
 
     // Validate URL format
-    if (!url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('chrome://')) {
-      return {
-        success: false,
-        error: `Invalid URL: "${url}". URLs must start with http://, https://, or chrome://`,
-        hint: 'For Google searches, use: https://www.google.com/search?q=your+query',
-      };
-    }
+     if (!url.startsWith('http://') && !url.startsWith('https://')) {
+       return {
+         success: false,
+         error: `Invalid URL: "${url}". URLs must start with http:// or https://`,
+         hint: 'For Google searches, use: https://www.google.com/search?q=your+query',
+       };
+     }
 
     try {
       await chrome.tabs.update(tabId, { url });
@@ -599,10 +819,10 @@ export class BrowserTools {
     }
 
     // Check if it looks like a valid URL
-    if (!url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('chrome://')) {
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
       return {
         success: false,
-        error: `Invalid URL: "${url}". URLs must start with http://, https://, or chrome://`,
+        error: `Invalid URL: "${url}". URLs must start with http:// or https://`,
         hint: 'Use navigate({ url: "https://google.com/search?q=..." }) for searches.',
       };
     }
@@ -903,9 +1123,20 @@ export class BrowserTools {
     const result = await this.runInTab(
       tabId,
       (k, sel) => {
-        const target = sel
-          ? document.querySelector<HTMLElement>(sel)
-          : (document.activeElement as HTMLElement | null) || document.body;
+        let target: HTMLElement | null = null;
+        if (sel) {
+          try {
+            target = document.querySelector<HTMLElement>(sel);
+          } catch {
+            return {
+              success: false,
+              code: 'INVALID_SELECTOR',
+              error: `Invalid selector syntax: ${String(sel)}`,
+            };
+          }
+        } else {
+          target = (document.activeElement as HTMLElement | null) || document.body;
+        }
         if (!target) return { success: false, error: 'Target not found.' };
         target.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }));
         target.dispatchEvent(new KeyboardEvent('keypress', { key: k, bubbles: true }));
@@ -1109,6 +1340,7 @@ export class BrowserTools {
           };
 
           let truncated = false;
+          let structureSerializedLength = JSON.stringify(structure).length;
           const tryPush = (
             key:
               | 'headings'
@@ -1125,12 +1357,14 @@ export class BrowserTools {
             item: Record<string, any>,
           ) => {
             const list = structure[key] as Record<string, any>[];
-            list.push(item);
-            if (JSON.stringify(structure).length > maxLen) {
-              list.pop();
+            const serializedItem = JSON.stringify(item);
+            const projectedLength = structureSerializedLength + serializedItem.length + (list.length > 0 ? 1 : 0);
+            if (projectedLength > maxLen) {
               truncated = true;
               return false;
             }
+            list.push(item);
+            structureSerializedLength = projectedLength;
             return true;
           };
 

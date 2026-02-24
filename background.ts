@@ -19,7 +19,7 @@ import { buildToolSet, describeImageWithModel, resolveLanguageModel } from './ai
 import { BrowserTools } from './tools/browser-tools.js';
 import { buildRunPlan } from './types/plan.js';
 import type { RunPlan } from './types/plan.js';
-import { RUNTIME_MESSAGE_SCHEMA_VERSION } from './types/runtime-messages.js';
+import { RUNTIME_MESSAGE_SCHEMA_VERSION, isRuntimeMessage, validateRuntimeMessage } from './types/runtime-messages.js';
 
 type RunMeta = {
   runId: string;
@@ -46,12 +46,21 @@ type ExecutionEvent = {
 };
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30000;
+const MIN_REQUEST_TIMEOUT_MS = 1000;
+const MAX_REQUEST_TIMEOUT_MS = 90000;
+const DEFAULT_MODEL_MAX_TOKENS = 2048;
+const MIN_MODEL_MAX_TOKENS = 256;
+const MAX_MODEL_MAX_TOKENS = 16384;
+const DEFAULT_CONTEXT_LIMIT = 200000;
+const MIN_CONTEXT_LIMIT = 16000;
+const MAX_CONTEXT_LIMIT = 1000000;
 const EXECUTION_EVENTS_KEY = 'executionEvents';
 const MAX_EXECUTION_EVENTS = 500;
 const EXECUTION_PREVIEW_LIMIT = 500;
 const EXECUTION_TEXT_LIMIT = 500;
 const BROWSER_ACTION_TOOLS = ['navigate', 'click', 'type', 'scroll', 'pressKey'] as const;
 const DEDICATED_RUN_TAB_URL = 'https://example.com';
+const SIDE_PANEL_EXTENSION_PATH = 'sidepanel/panel.html';
 const LOCKED_TAB_ALLOWED_BROWSER_TOOLS = new Set([
   'navigate',
   'click',
@@ -94,7 +103,7 @@ type EvidenceEntry = {
 const resolveTimeoutMs = (value: unknown, fallback = DEFAULT_REQUEST_TIMEOUT_MS) => {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
-  return Math.max(1000, Math.floor(parsed));
+  return Math.min(MAX_REQUEST_TIMEOUT_MS, Math.max(MIN_REQUEST_TIMEOUT_MS, Math.floor(parsed)));
 };
 
 const isAbortError = (error: unknown) => {
@@ -209,9 +218,155 @@ class BackgroundService {
     this.init();
   }
 
+  private normalizeToolCallArgs(toolName: string, args: unknown) {
+    if (args && typeof args === 'object' && !Array.isArray(args)) {
+      return { ok: true as const, args: { ...(args as Record<string, any>) } };
+    }
+    return {
+      ok: false as const,
+      result: {
+        success: false,
+        code: 'INVALID_TOOL_ARGS',
+        error: `Tool "${toolName}" requires an object argument payload.`,
+        hint: 'Retry with a JSON object that matches the tool input schema.',
+      },
+    };
+  }
+
+  private normalizeToolResultContract(toolName: string, rawResult: unknown) {
+    if (!rawResult || typeof rawResult !== 'object' || Array.isArray(rawResult)) {
+      return {
+        success: false,
+        code: 'INVALID_TOOL_RESULT',
+        error: `Tool "${toolName}" returned a non-object result.`,
+        details: {
+          resultType: Array.isArray(rawResult) ? 'array' : typeof rawResult,
+        },
+      };
+    }
+
+    const normalized: Record<string, any> = { ...(rawResult as Record<string, any>) };
+    if (typeof normalized.success !== 'boolean') {
+      normalized.success = typeof normalized.error === 'string' ? false : true;
+    }
+    if (typeof normalized.error !== 'string' && normalized.success === false) {
+      normalized.error = `Tool "${toolName}" failed without an error message.`;
+    }
+    if (normalized.error !== undefined && typeof normalized.error !== 'string') {
+      normalized.error = String(normalized.error);
+    }
+    if (normalized.code !== undefined && typeof normalized.code !== 'string') {
+      normalized.code = String(normalized.code);
+    }
+    if (normalized.hint !== undefined && typeof normalized.hint !== 'string') {
+      normalized.hint = String(normalized.hint);
+    }
+    if (normalized.message !== undefined && typeof normalized.message !== 'string') {
+      normalized.message = String(normalized.message);
+    }
+    if (normalized.toolName === undefined) {
+      normalized.toolName = toolName;
+    }
+    if (typeof normalized.toolName !== 'string') {
+      normalized.toolName = String(normalized.toolName || toolName);
+    }
+    if (normalized.output === undefined) {
+      const hasPrimaryFields =
+        normalized.content !== undefined ||
+        normalized.dataUrl !== undefined ||
+        normalized.structure !== undefined ||
+        normalized.tabs !== undefined;
+      if (!hasPrimaryFields) {
+        normalized.output = normalized.success === false ? normalized.error || 'Tool failed.' : 'Tool executed.';
+      }
+    }
+    return normalized;
+  }
+
+  private emitConfigClampWarnings(
+    runMeta: RunMeta,
+    originalSettings: Record<string, any>,
+    resolvedProfile: Record<string, any>,
+  ) {
+    const warnings: string[] = [];
+    const rawTimeout = Number(originalSettings.timeout);
+    if (Number.isFinite(rawTimeout) && rawTimeout !== resolvedProfile.timeout) {
+      warnings.push(
+        `timeout adjusted to ${resolvedProfile.timeout}ms (allowed range ${MIN_REQUEST_TIMEOUT_MS}-${MAX_REQUEST_TIMEOUT_MS}ms)`,
+      );
+    }
+    const rawMaxTokens = Number(originalSettings.maxTokens);
+    if (Number.isFinite(rawMaxTokens) && rawMaxTokens !== resolvedProfile.maxTokens) {
+      warnings.push(
+        `maxTokens adjusted to ${resolvedProfile.maxTokens} (allowed range ${MIN_MODEL_MAX_TOKENS}-${MAX_MODEL_MAX_TOKENS})`,
+      );
+    }
+    const rawContextLimit = Number(originalSettings.contextLimit);
+    if (Number.isFinite(rawContextLimit) && rawContextLimit !== resolvedProfile.contextLimit) {
+      warnings.push(
+        `contextLimit adjusted to ${resolvedProfile.contextLimit} (allowed range ${MIN_CONTEXT_LIMIT}-${MAX_CONTEXT_LIMIT})`,
+      );
+    }
+
+    for (const warning of warnings) {
+      this.sendRuntime(runMeta, {
+        type: 'run_warning',
+        message: `Config safety clamp applied: ${warning}`,
+      });
+    }
+  }
+
+  private async setSidePanelTabState(tabId: number, enabled: boolean) {
+    try {
+      await chrome.sidePanel.setOptions({
+        tabId,
+        path: SIDE_PANEL_EXTENSION_PATH,
+        enabled,
+      });
+    } catch (error) {
+      console.warn('Failed to update side panel state for tab', tabId, error);
+    }
+  }
+
+  private async syncSidePanelVisibilityForRunContext() {
+    if (!chrome?.sidePanel?.setOptions) return;
+    const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const activeTabId = typeof activeTab?.id === 'number' ? activeTab.id : null;
+    const lockedTabId = typeof this.activeRunLockedTabId === 'number' ? this.activeRunLockedTabId : null;
+
+    if (lockedTabId !== null) {
+      await this.setSidePanelTabState(lockedTabId, true);
+      if (activeTabId !== null && activeTabId !== lockedTabId) {
+        await this.setSidePanelTabState(activeTabId, false);
+      }
+      return;
+    }
+
+    if (activeTabId !== null) {
+      await this.setSidePanelTabState(activeTabId, true);
+    }
+  }
+
   init() {
     chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((error) => console.error(error));
     void this.hydrateExecutionEvents();
+    chrome.tabs.onActivated.addListener((_activeInfo) => {
+      void this.syncSidePanelVisibilityForRunContext();
+    });
+    chrome.tabs.onRemoved.addListener((tabId) => {
+      let shouldSync = false;
+      if (this.dedicatedTabId === tabId) {
+        this.dedicatedTabId = null;
+        shouldSync = true;
+      }
+      if (this.activeRunLockedTabId === tabId) {
+        this.activeRunLockedTabId = null;
+        shouldSync = true;
+      }
+      if (shouldSync) {
+        void this.syncSidePanelVisibilityForRunContext();
+      }
+    });
 
     // Kimi API requires a coding-agent User-Agent header.
     // Chrome MV3 service workers cannot set User-Agent via fetch(),
@@ -431,7 +586,7 @@ class BackgroundService {
     const qualityMode = policy.qualityMode;
 
     const adjustments: string[] = [];
-    const timeoutFloor = qualityMode === 'max' ? 120000 : qualityMode === 'balanced' ? 90000 : 30000;
+    const timeoutFloor = qualityMode === 'max' ? MAX_REQUEST_TIMEOUT_MS : qualityMode === 'balanced' ? 60000 : 30000;
     const maxTokensFloor = qualityMode === 'max' ? 4096 : qualityMode === 'balanced' ? 3072 : 2048;
     const fixedTemperature = fixedTemperatureForQuality(qualityMode);
     const maxModelSteps = qualityMode === 'max' ? 80 : qualityMode === 'balanced' ? 64 : 40;
@@ -449,7 +604,7 @@ class BackgroundService {
         tunedProfile.maxTokens ?? tunedSettings.maxTokens,
         maxTokensFloor,
         256,
-        64000,
+        MAX_MODEL_MAX_TOKENS,
       );
       if (currentMaxTokens < maxTokensFloor) {
         tunedProfile.maxTokens = maxTokensFloor;
@@ -569,6 +724,7 @@ class BackgroundService {
 
       lockedTabId = await this.ensureDedicatedRunTab();
       this.activeRunLockedTabId = lockedTabId;
+      await this.syncSidePanelVisibilityForRunContext();
 
       let lockedTab: chrome.tabs.Tab;
       try {
@@ -593,6 +749,7 @@ class BackgroundService {
       const orchestratorEnabled = settings.useOrchestrator === true;
       const teamProfiles: Array<{ name: string; provider: string; model: string }> = [];
       const baseProfile = this.resolveProfile(settings);
+      this.emitConfigClampWarnings(runMeta, settings, baseProfile);
       const qualityRuntime = this.applyRuntimeQualityTuning(settings, baseProfile);
       const runtimeSettings = qualityRuntime.tunedSettings;
       const runtimeProfile = qualityRuntime.tunedProfile;
@@ -1181,6 +1338,7 @@ class BackgroundService {
       if (this.activeRunLockedTabId === lockedTabId) {
         this.activeRunLockedTabId = null;
       }
+      await this.syncSidePanelVisibilityForRunContext();
     }
   }
 
@@ -1199,16 +1357,18 @@ class BackgroundService {
     const lockedTabId = typeof options.lockedTabId === 'number' ? options.lockedTabId : null;
     const callId = toolCallId || `tool_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const startedAt = Date.now();
+    const normalizedArgsResult = this.normalizeToolCallArgs(toolName, args);
+    const safeArgs = normalizedArgsResult.ok ? normalizedArgsResult.args : {};
     const sendStart = () =>
       this.sendRuntime(options.runMeta, {
         type: 'tool_execution_start',
         tool: toolName,
         id: callId,
-        args,
+        args: safeArgs,
       });
     const sendResult = (
       result: unknown,
-      eventArgs: Record<string, any> = args,
+      eventArgs: Record<string, any> = safeArgs,
       runtimeMeta: {
         recoveryStage?: RecoveryStage;
         evidenceConfidence?: EvidenceConfidence;
@@ -1232,8 +1392,13 @@ class BackgroundService {
       });
     };
 
-    sendStart();
+    if (!normalizedArgsResult.ok) {
+      sendStart();
+      sendResult(normalizedArgsResult.result);
+      return normalizedArgsResult.result;
+    }
 
+    sendStart();
     if (toolName === 'set_plan') {
       const plan = this.buildPlanFromArgs(args);
       if (!plan) {
@@ -1429,6 +1594,8 @@ class BackgroundService {
       return errorResult;
     }
 
+    result = this.normalizeToolResultContract(toolName, result);
+
     // Track state for enforcement
     const isBrowserAction = BROWSER_ACTION_TOOLS.includes(toolName as (typeof BROWSER_ACTION_TOOLS)[number]);
     if (isBrowserAction) {
@@ -1451,10 +1618,7 @@ class BackgroundService {
       this.awaitingVerification = false;
     }
 
-    const finalResult: Record<string, any> =
-      result && typeof result === 'object' && !Array.isArray(result)
-        ? { ...(result as Record<string, any>) }
-        : { success: false, error: 'No result returned' };
+    const finalResult: Record<string, any> = { ...(result as Record<string, any>) };
     let recoveryStage: RecoveryStage = 'none';
 
     // Layer 4: Auto-screenshot on browser action failure for visual recovery
@@ -2857,14 +3021,33 @@ class BackgroundService {
   }
 
   sendRuntime(runMeta: RunMeta, payload: Record<string, unknown>) {
-    this.sendToSidePanel({
+    const candidateMessage = {
       schemaVersion: RUNTIME_MESSAGE_SCHEMA_VERSION,
       runId: runMeta.runId,
       turnId: runMeta.turnId,
       sessionId: runMeta.sessionId,
       timestamp: Date.now(),
       ...payload,
-    });
+    };
+    const validation = validateRuntimeMessage(candidateMessage);
+    if (validation.ok) {
+      this.sendToSidePanel(validation.message);
+      return;
+    }
+
+    console.warn('Dropped invalid runtime message:', validation.reason, candidateMessage);
+    const fallbackMessage = {
+      schemaVersion: RUNTIME_MESSAGE_SCHEMA_VERSION,
+      runId: runMeta.runId,
+      turnId: runMeta.turnId,
+      sessionId: runMeta.sessionId,
+      timestamp: Date.now(),
+      type: 'run_warning',
+      message: `Internal warning: dropped invalid runtime message (${validation.reason})`,
+    };
+    if (isRuntimeMessage(fallbackMessage)) {
+      this.sendToSidePanel(fallbackMessage);
+    }
   }
 
   sendRunErrorFallback(sessionId: string, message: string) {
@@ -3035,9 +3218,9 @@ You are PROHIBITED from generating a final response until you either:
       showThinking: settings.showThinking !== false,
       streamResponses: settings.streamResponses !== false,
       temperature: fixedTemperatureForQuality(qualityMode),
-      maxTokens: settings.maxTokens,
-      timeout: settings.timeout,
-      contextLimit: settings.contextLimit,
+      maxTokens: clampInt(settings.maxTokens, DEFAULT_MODEL_MAX_TOKENS, MIN_MODEL_MAX_TOKENS, MAX_MODEL_MAX_TOKENS),
+      timeout: resolveTimeoutMs(settings.timeout),
+      contextLimit: clampInt(settings.contextLimit, DEFAULT_CONTEXT_LIMIT, MIN_CONTEXT_LIMIT, MAX_CONTEXT_LIMIT),
       enableScreenshots: settings.enableScreenshots !== false,
       autoRecoveryMode: settings.autoRecoveryMode,
       screenshotOnFailure: settings.screenshotOnFailure !== false,

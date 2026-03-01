@@ -18,13 +18,27 @@
 
 .agent-nav-item.active {
   color: var(--foreground);
-  border-color: rgba(139, 92, 246, 0.45);
+  border-color: rgba(34, 211, 238, 0.45);
 }
 
 .agent-status {
   width: 6px;
   height: 6px;
   border-radius: 50%;
+  background: var(--success);
+  transition: background 140ms ease;
+}
+
+.agent-nav-item.running .agent-status {
+  background: var(--warning);
+  animation: pulse 1s infinite;
+}
+
+.agent-nav-item.error .agent-status {
+  background: var(--error);
+}
+
+.agent-nav-item.completed .agent-status {
   background: var(--success);
 }
 
@@ -272,10 +286,10 @@
   margin: 10px auto 0;
   width: 100%;
   max-width: min(760px, calc(100% - 24px));
-  border: 1px solid rgba(139, 92, 246, 0.28);
+  border: 1px solid rgba(34, 211, 238, 0.28);
   border-bottom: none;
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-  background: linear-gradient(180deg, rgba(34, 26, 56, 0.66), rgba(19, 17, 33, 0.92));
+  background: linear-gradient(180deg, rgba(13, 28, 32, 0.66), rgba(10, 18, 22, 0.92));
   box-shadow: 0 14px 24px rgba(0, 0, 0, 0.36);
   overflow: hidden;
 }
@@ -291,7 +305,7 @@
 .chat-area:has(.plan-drawer:not(.hidden)) .composer-wrapper .composer {
   border-top-left-radius: 0;
   border-top-right-radius: 0;
-  border-top: 1px solid rgba(139, 92, 246, 0.2);
+  border-top: 1px solid rgba(34, 211, 238, 0.2);
 }
 
 .plan-drawer-header {
@@ -374,7 +388,7 @@
 }
 
 .plan-checklist-item.current {
-  background: linear-gradient(180deg, rgba(139, 92, 246, 0.2), rgba(139, 92, 246, 0.12));
+  background: linear-gradient(180deg, rgba(34, 211, 238, 0.2), rgba(34, 211, 238, 0.12));
 }
 
 .plan-checklist-item.completed {

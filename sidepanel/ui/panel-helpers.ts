@@ -1,5 +1,17 @@
 import { SidePanelUI } from './panel-ui.js';
 
+// Reusable element for escapeHtmlBasic (avoids creating DOM element per call)
+let escapeHelperDiv: HTMLDivElement | null = null;
+
+// HTML entities map for fast string-based escaping
+const HTML_ENTITIES: Record<string, string> = {
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;',
+};
+
 (SidePanelUI.prototype as any).safeJsonStringify = function safeJsonStringify(value: any) {
   try {
     if (value === undefined) return '';
@@ -16,9 +28,15 @@ import { SidePanelUI } from './panel-ui.js';
 };
 
 (SidePanelUI.prototype as any).escapeHtmlBasic = function escapeHtmlBasic(text: string) {
-  const div = document.createElement('div');
-  div.textContent = text == null ? '' : text;
-  return div.innerHTML;
+  if (text == null) return '';
+  // Fast path: use string replacement for common cases
+  if (!/[&<>"']/.test(text)) return text;
+  // Use cached div for edge cases (e.g., special chars not in map)
+  if (!escapeHelperDiv) {
+    escapeHelperDiv = document.createElement('div');
+  }
+  escapeHelperDiv.textContent = text;
+  return escapeHelperDiv.innerHTML;
 };
 
 (SidePanelUI.prototype as any).escapeHtml = function escapeHtml(text: string) {

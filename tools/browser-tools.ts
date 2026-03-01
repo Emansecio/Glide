@@ -848,21 +848,46 @@ export class BrowserTools {
   private async focusTab(args: Record<string, any>) {
     const tabId = typeof args.tabId === 'number' ? args.tabId : null;
     if (!tabId) return { success: false, error: 'Missing tabId.' };
-    const tab = await chrome.tabs.update(tabId, { active: true });
-    this.currentSessionTabId = tabId;
-    this.trackTab(tab);
-    return { success: true, tabId };
+    try {
+      const tab = await chrome.tabs.update(tabId, { active: true });
+      this.currentSessionTabId = tabId;
+      this.trackTab(tab);
+      return { success: true, tabId };
+    } catch (error) {
+      const message = error?.message || String(error);
+      return {
+        success: false,
+        code: 'TAB_FOCUS_FAILED',
+        error: `Failed to focus tab ${tabId}: ${message}`,
+        hint: 'The tab may have been closed or is no longer accessible.',
+      };
+    }
   }
 
   private async closeTab(args: Record<string, any>) {
     const tabId = typeof args.tabId === 'number' ? args.tabId : null;
     if (!tabId) return { success: false, error: 'Missing tabId.' };
-    await chrome.tabs.remove(tabId);
-    this.sessionTabs.delete(tabId);
-    if (this.currentSessionTabId === tabId) {
-      this.currentSessionTabId = null;
+    try {
+      await chrome.tabs.remove(tabId);
+      this.sessionTabs.delete(tabId);
+      if (this.currentSessionTabId === tabId) {
+        this.currentSessionTabId = null;
+      }
+      return { success: true, tabId };
+    } catch (error) {
+      const message = error?.message || String(error);
+      // Clean up local state even if close failed (tab may already be gone)
+      this.sessionTabs.delete(tabId);
+      if (this.currentSessionTabId === tabId) {
+        this.currentSessionTabId = null;
+      }
+      return {
+        success: false,
+        code: 'TAB_CLOSE_FAILED',
+        error: `Failed to close tab ${tabId}: ${message}`,
+        hint: 'The tab may have already been closed or cannot be closed programmatically.',
+      };
     }
-    return { success: true, tabId };
   }
 
   private async click(args: Record<string, any>) {

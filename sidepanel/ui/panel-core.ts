@@ -158,18 +158,21 @@ import { SidePanelUI } from './panel-ui.js';
       this.selectModelOptionByElement(option);
     }
   });
-  document.addEventListener('click', (event: Event) => {
+  // Store document-level handlers for cleanup
+  this._documentClickHandler = (event: Event) => {
     const target = event.target as HTMLElement | null;
     const withinSelector = target?.closest('.model-picker');
     if (!withinSelector) {
       this.closeModelMenu();
     }
-  });
-  document.addEventListener('keydown', (event: KeyboardEvent) => {
+  };
+  this._documentKeydownHandler = (event: KeyboardEvent) => {
     if (event.key === 'Escape') {
       this.closeModelMenu();
     }
-  });
+  };
+  document.addEventListener('click', this._documentClickHandler);
+  document.addEventListener('keydown', this._documentKeydownHandler);
 
   // File upload
   this.elements.fileBtn?.addEventListener('click', () => {
@@ -218,6 +221,41 @@ import { SidePanelUI } from './panel-ui.js';
   if (this.chatResizeObserver) {
     this.chatResizeObserver.disconnect();
     this.chatResizeObserver = null;
+  }
+};
+
+(SidePanelUI.prototype as any).destroy = function destroy() {
+  // Clean up document-level event listeners
+  if (this._documentClickHandler) {
+    document.removeEventListener('click', this._documentClickHandler);
+    this._documentClickHandler = null;
+  }
+  if (this._documentKeydownHandler) {
+    document.removeEventListener('keydown', this._documentKeydownHandler);
+    this._documentKeydownHandler = null;
+  }
+  // Clean up ResizeObserver
+  this.destroyResizeObserver();
+  // Clear any pending timers
+  if (this.thinkingTimerId) {
+    clearInterval(this.thinkingTimerId);
+    this.thinkingTimerId = null;
+  }
+  if (this.streamTextRenderTimerId) {
+    clearTimeout(this.streamTextRenderTimerId);
+    this.streamTextRenderTimerId = null;
+  }
+  if (this.streamReasoningRenderTimerId) {
+    clearTimeout(this.streamReasoningRenderTimerId);
+    this.streamReasoningRenderTimerId = null;
+  }
+  if (this.contextUsageDebounceTimerId) {
+    clearTimeout(this.contextUsageDebounceTimerId);
+    this.contextUsageDebounceTimerId = null;
+  }
+  if (this.historyPersistDebounceTimerId) {
+    clearTimeout(this.historyPersistDebounceTimerId);
+    this.historyPersistDebounceTimerId = null;
   }
 };
 

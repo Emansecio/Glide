@@ -58,7 +58,7 @@ const normalizeConfig = (raw: Record<string, any> = {}, fallbackPrompt = ''): Pa
   return {
     provider,
     apiKey: String(raw.apiKey || ''),
-    model: String(raw.model || 'gpt-4o'),
+    model: String(raw.model || ''),
     customEndpoint: normalizeEndpointForProvider(provider, String(raw.customEndpoint || '')),
     systemPrompt,
     maxTokens: clampNumber(raw.maxTokens, 4096, 256, 64000),
@@ -175,6 +175,12 @@ const defaultToolPermissions = () => ({
 
   if (this.elements.customEndpointGroup) {
     this.elements.customEndpointGroup.classList.toggle('required', requiresEndpoint);
+    this.elements.customEndpointGroup.classList.toggle('hidden', !requiresEndpoint);
+
+    const optionalBadge = this.elements.customEndpointGroup.querySelector('.optional-badge');
+    if (optionalBadge) {
+      optionalBadge.classList.toggle('hidden', provider === 'custom');
+    }
   }
 
   if (this.elements.customEndpoint) {
@@ -241,7 +247,7 @@ const defaultToolPermissions = () => ({
     this.elements.customEndpoint.style.borderColor = '';
     return true;
   } catch {
-    this.elements.customEndpoint.style.borderColor = 'var(--status-error)';
+    this.elements.customEndpoint.style.borderColor = 'var(--error)';
     return false;
   }
 };
@@ -494,7 +500,7 @@ const defaultToolPermissions = () => ({
       ...current,
       provider,
       apiKey: this.elements.apiKey?.value || current.apiKey || '',
-      model: this.elements.model?.value || current.model || 'gpt-4o',
+      model: this.elements.model?.value || current.model || '',
       customEndpoint,
       systemPrompt: this.elements.systemPrompt?.value || current.systemPrompt || this.getDefaultSystemPrompt(),
       maxTokens: Number.parseInt(this.elements.maxTokens?.value) || current.maxTokens || 4096,
@@ -536,7 +542,7 @@ const defaultToolPermissions = () => ({
   const payload = {
     provider: activeProfile.provider || 'openai',
     apiKey: activeProfile.apiKey || '',
-    model: activeProfile.model || 'gpt-4o',
+    model: activeProfile.model || '',
     customEndpoint: normalizeEndpointForProvider(activeProfile.provider || 'openai', activeProfile.customEndpoint || ''),
     systemPrompt: activeProfile.systemPrompt || this.getDefaultSystemPrompt(),
     maxTokens: activeProfile.maxTokens || 4096,

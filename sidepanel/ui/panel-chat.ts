@@ -49,6 +49,8 @@ import { SidePanelUI } from './panel-ui.js';
 
   this.updateStatus('Processing...', 'active');
   this.elements.composer?.classList.add('running');
+  this.elements.sendBtn?.setAttribute('disabled', 'true');
+  this.elements.sendBtn?.classList.add('loading');
 
   try {
     await chrome.runtime.sendMessage({
@@ -84,6 +86,8 @@ import { SidePanelUI } from './panel-ui.js';
     this.activeToolName = null;
     this.updateStatus(`Error: ${errorMessage}`, 'error');
     this.elements.composer?.classList.remove('running');
+    this.elements.sendBtn?.removeAttribute('disabled');
+    this.elements.sendBtn?.classList.remove('loading');
     this.showErrorBanner?.(errorMessage);
     this.updateActivityState();
   }
@@ -152,6 +156,8 @@ import { SidePanelUI } from './panel-ui.js';
     }
     this.updateStatus('Ready', 'success');
     this.elements.composer?.classList.remove('running');
+    this.elements.sendBtn?.removeAttribute('disabled');
+    this.elements.sendBtn?.classList.remove('loading');
     this.pendingToolCount = 0;
     this.updateActivityState();
     return;
@@ -211,6 +217,8 @@ import { SidePanelUI } from './panel-ui.js';
     this.scrollToBottom();
     this.updateStatus('Ready', 'success');
     this.elements.composer?.classList.remove('running');
+    this.elements.sendBtn?.removeAttribute('disabled');
+    this.elements.sendBtn?.classList.remove('loading');
     this.pendingToolCount = 0;
     this.updateActivityState();
     this.persistHistory();
@@ -292,6 +300,8 @@ import { SidePanelUI } from './panel-ui.js';
   this.scrollToBottom();
   this.updateStatus('Ready', 'success');
   this.elements.composer?.classList.remove('running');
+  this.elements.sendBtn?.removeAttribute('disabled');
+  this.elements.sendBtn?.classList.remove('loading');
   this.pendingToolCount = 0;
   this.updateActivityState();
   this.persistHistory();

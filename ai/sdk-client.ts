@@ -23,7 +23,7 @@ export type ToolDefinition = {
 
 export function resolveLanguageModel(settings: SDKModelSettings) {
   const provider = settings.provider || 'openai';
-  const modelId = settings.model || 'gpt-4o';
+  const modelId = settings.model || '';
   const apiKey = settings.apiKey || '';
 
   if (provider === 'anthropic') {
@@ -57,23 +57,24 @@ export function resolveLanguageModel(settings: SDKModelSettings) {
   }
 
   if (provider === 'custom') {
-    // Normalize the base URL
-    // - Remove /chat/completions suffix if present (SDK will add it)
-    // - Remove /messages suffix if present
-    // - Remove trailing slashes
+    // Normalize the base URL:
+    // - Strip known path suffixes the SDK appends itself
+    // - Ensure the URL ends with /v1 (OpenAI-compatible convention)
     const rawBase = settings.customEndpoint
       ? settings.customEndpoint
           .replace(/\/chat\/completions\/?$/i, '')
           .replace(/\/v1\/messages\/?$/i, '')
           .replace(/\/messages\/?$/i, '')
+          .replace(/\/v1\/models\/?$/i, '')
+          .replace(/\/v1\/?$/i, '')
           .replace(/\/+$/, '')
       : '';
 
-    let baseURL = rawBase;
-
-    if (!baseURL) {
+    if (!rawBase) {
       throw new Error('Custom provider requires a customEndpoint to be configured');
     }
+
+    const baseURL = `${rawBase}/v1`;
 
     const customProvider = createOpenAICompatible({
       name: provider,

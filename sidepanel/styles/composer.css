@@ -2,7 +2,7 @@
   padding: 12px;
   display: flex;
   justify-content: center;
-  background: linear-gradient(180deg, rgba(13, 13, 20, 0), rgba(13, 13, 20, 0.9) 30%);
+  background: linear-gradient(180deg, rgba(10, 10, 15, 0), rgba(10, 10, 15, 0.92) 30%);
 }
 
 .composer {
@@ -17,8 +17,8 @@
 }
 
 .composer:focus-within {
-  border-color: rgba(139, 92, 246, 0.6);
-  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.2), 0 20px 36px rgba(0, 0, 0, 0.42);
+  border-color: rgba(34, 211, 238, 0.6);
+  box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.2), 0 20px 36px rgba(0, 0, 0, 0.42);
 }
 
 .composer.running {
@@ -118,8 +118,8 @@
 
 .activity-toggle.active {
   color: var(--accent);
-  background: rgba(139, 92, 246, 0.08);
-  border-color: rgba(139, 92, 246, 0.2);
+  background: rgba(34, 211, 238, 0.08);
+  border-color: rgba(34, 211, 238, 0.2);
 }
 
 /* Center Meta: Status */
@@ -156,7 +156,7 @@
 
 .status-dot.active {
   background: var(--accent);
-  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.2);
+  box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.2);
 }
 
 .status-dot.warning {
@@ -206,7 +206,7 @@
 
 .tool-item.has-selection {
   color: var(--accent);
-  background: rgba(139, 92, 246, 0.1);
+  background: rgba(34, 211, 238, 0.1);
 }
 
 /* Model Picker Redesign */
@@ -311,7 +311,7 @@
 }
 
 .model-option.selected {
-  background: rgba(139, 92, 246, 0.12);
+  background: rgba(34, 211, 238, 0.12);
 }
 
 .model-option-name {
@@ -334,25 +334,28 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--accent);
-  color: #fff;
-  box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3);
+  background: linear-gradient(145deg, var(--accent), var(--accent-strong));
+  color: #0a0a0f;
+  box-shadow: 0 4px 12px rgba(34, 211, 238, 0.25), 0 0 0 1px rgba(34, 211, 238, 0.10);
   transition: all 200ms cubic-bezier(0.175, 0.885, 0.32, 1.275);
   flex-shrink: 0;
   align-self: center;
 }
 
 .send-action:hover {
-  transform: scale(1.05);
-  background: var(--accent-strong);
-  box-shadow: 0 6px 16px rgba(139, 92, 246, 0.45);
+  transform: scale(1.08);
+  background: linear-gradient(145deg, #67e8f9, var(--accent));
+  box-shadow: 0 6px 20px rgba(34, 211, 238, 0.40), 0 0 0 1px rgba(34, 211, 238, 0.15);
 }
 
-.send-action:disabled {
-  opacity: 0.4;
+.send-action:disabled,
+.send-action.loading {
+  opacity: 0.5;
   background: var(--muted-dim);
   box-shadow: none;
   transform: none;
+  cursor: wait;
+  pointer-events: none;
 }
 
 @container (max-width: 700px) {

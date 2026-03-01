@@ -65,6 +65,9 @@ export class SidePanelUI {
   activeToolName: string | null;
   streamingReasoning: string;
   currentPlan: RunPlan | null;
+  // Document-level event handlers for cleanup
+  _documentClickHandler: ((event: Event) => void) | null;
+  _documentKeydownHandler: ((event: KeyboardEvent) => void) | null;
 
   // Methods attached via prototype in panel-modules
   declare init: () => Promise<void>;
@@ -123,6 +126,8 @@ export class SidePanelUI {
     this.activeToolName = null;
     this.streamingReasoning = '';
     this.currentPlan = null;
+    this._documentClickHandler = null;
+    this._documentKeydownHandler = null;
     void this.init();
   }
 }

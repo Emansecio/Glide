@@ -30,8 +30,8 @@
 
 .settings-quick-setup {
   border-radius: 16px;
-  border: 1px solid rgba(139, 92, 246, 0.4);
-  background: linear-gradient(145deg, rgba(139, 92, 246, 0.12), rgba(139, 92, 246, 0.03));
+  border: 1px solid rgba(34, 211, 238, 0.4);
+  background: linear-gradient(145deg, rgba(34, 211, 238, 0.12), rgba(34, 211, 238, 0.03));
   padding: 12px;
   display: flex;
   flex-direction: column;
@@ -131,8 +131,8 @@
 .form-group input:focus,
 .form-group select:focus,
 .form-group textarea:focus {
-  border-color: rgba(139, 92, 246, 0.6);
-  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.15);
+  border-color: rgba(34, 211, 238, 0.6);
+  box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.15);
 }
 
 .form-group small {
@@ -141,7 +141,7 @@
 }
 
 .form-group.required label {
-  color: #d8c4ff;
+  color: #a5f3fc;
 }
 
 .optional-badge {
@@ -179,9 +179,9 @@
 }
 
 .role-pill.active {
-  background: rgba(139, 92, 246, 0.18);
-  border-color: rgba(139, 92, 246, 0.5);
-  color: #dccdff;
+  background: rgba(34, 211, 238, 0.18);
+  border-color: rgba(34, 211, 238, 0.5);
+  color: #a5f3fc;
 }
 
 .profile-editor {
@@ -341,9 +341,9 @@
   border-radius: 999px;
   padding: 2px 8px;
   font-size: 10px;
-  background: rgba(139, 92, 246, 0.2);
-  border: 1px solid rgba(139, 92, 246, 0.45);
-  color: #dccdff;
+  background: rgba(34, 211, 238, 0.2);
+  border: 1px solid rgba(34, 211, 238, 0.45);
+  color: #a5f3fc;
 }
 
 .account-list {
@@ -535,8 +535,8 @@
 }
 
 .tab-item.selected {
-  background: rgba(139, 92, 246, 0.18);
-  border-color: rgba(139, 92, 246, 0.55);
+  background: rgba(34, 211, 238, 0.18);
+  border-color: rgba(34, 211, 238, 0.55);
 }
 
 .tab-item-checkbox {

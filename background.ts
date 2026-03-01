@@ -61,6 +61,7 @@ const EXECUTION_TEXT_LIMIT = 500;
 const BROWSER_ACTION_TOOLS = ['navigate', 'click', 'type', 'scroll', 'pressKey'] as const;
 const DEDICATED_RUN_TAB_URL = 'https://example.com';
 const SIDE_PANEL_EXTENSION_PATH = 'sidepanel/panel.html';
+const ACTIVE_RUN_TIMEOUT_MS = 120000; // 2 minutes safety timeout
 const LOCKED_TAB_ALLOWED_BROWSER_TOOLS = new Set([
   'navigate',
   'click',
@@ -180,6 +181,7 @@ class BackgroundService {
   subAgentCount: number;
   subAgentProfileCursor: number;
   activeRunId: string | null;
+  activeRunTimeoutId: ReturnType<typeof setTimeout> | null;
   dedicatedTabId: number | null;
   dedicatedTabWindowId: number | null;
   activeRunLockedTabId: number | null;
@@ -202,6 +204,7 @@ class BackgroundService {
     this.subAgentCount = 0;
     this.subAgentProfileCursor = 0;
     this.activeRunId = null;
+    this.activeRunTimeoutId = null;
     this.dedicatedTabId = null;
     this.dedicatedTabWindowId = null;
     this.activeRunLockedTabId = null;
@@ -706,6 +709,14 @@ class BackgroundService {
         return;
       }
       this.activeRunId = runMeta.runId;
+      // Safety timeout to reset activeRunId if it gets stuck
+      this.activeRunTimeoutId = setTimeout(() => {
+        if (this.activeRunId === runMeta.runId) {
+          console.warn('[Glide] activeRunId timeout - forcing reset after', ACTIVE_RUN_TIMEOUT_MS, 'ms');
+          this.activeRunId = null;
+          this.activeRunTimeoutId = null;
+        }
+      }, ACTIVE_RUN_TIMEOUT_MS);
       const settings = await this.loadRuntimeSettings();
 
       // Fix 4: Isolate mutable execution state per call to prevent races between parallel prompts.
@@ -1327,11 +1338,21 @@ class BackgroundService {
       }
     } catch (error) {
       console.error('Error processing user message:', error);
+      const errorMessage = error?.message || 'Unknown error';
       this.sendRuntime(runMeta, {
         type: 'run_error',
-        message: error?.message || 'Unknown error',
+        message: `Run failed: ${errorMessage}`,
+        details: {
+          runId: runMeta.runId,
+          sessionId: runMeta.sessionId,
+          timestamp: Date.now(),
+        },
       });
     } finally {
+      if (this.activeRunTimeoutId) {
+        clearTimeout(this.activeRunTimeoutId);
+        this.activeRunTimeoutId = null;
+      }
       if (this.activeRunId === runMeta.runId) {
         this.activeRunId = null;
       }
@@ -3078,7 +3099,7 @@ class BackgroundService {
     const teamProfiles = Array.isArray(context.teamProfiles) ? context.teamProfiles : [];
     const teamSection = teamProfiles.length
       ? `Team profiles available for sub-agents:\n${teamProfiles
-        .map((profile) => `  - ${profile.name}: ${profile.provider || 'provider'} · ${profile.model || 'model'}`)
+        .map((profile) => `  - ${profile.name}: ${profile.provider || 'provider'} ï¿½ ${profile.model || 'model'}`)
         .join('\n')}\nUse spawn_subagent to delegate parallel browser work.`
       : '';
     const orchestratorSection = context.orchestratorEnabled ? 'Orchestrator mode is enabled.' : '';

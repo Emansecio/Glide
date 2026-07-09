@@ -10,6 +10,6 @@ import './panel-scroll.js';
 import './panel-settings.js';
 import './panel-status.js';
 import './panel-streaming.js';
-import './panel-tabs.js';
+import './panel-attachments.js';
 import './panel-tools.js';
 import './panel-usage.js';

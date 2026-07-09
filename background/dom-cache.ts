@@ -9,6 +9,10 @@ export type DomCacheLookup = {
   maxChars?: number;
   maxItems?: number;
   maxResults?: number;
+  /** findElement scope: auto | dialog | page */
+  scope?: string;
+  /** findElement fuzzy flag */
+  fuzzy?: boolean;
 };
 
 export type DomCacheEntry = DomCacheLookup & {
@@ -16,7 +20,7 @@ export type DomCacheEntry = DomCacheLookup & {
   result: unknown;
 };
 
-const buildCacheKey = (lookup: DomCacheLookup) =>
+export const buildDomCacheKey = (lookup: DomCacheLookup) =>
   [
     lookup.tabId,
     lookup.tool,
@@ -26,7 +30,11 @@ const buildCacheKey = (lookup: DomCacheLookup) =>
     lookup.maxChars ?? '',
     lookup.maxItems ?? '',
     lookup.maxResults ?? '',
+    lookup.scope || '',
+    lookup.fuzzy === undefined ? '' : lookup.fuzzy ? '1' : '0',
   ].join('|');
+
+const buildCacheKey = buildDomCacheKey;
 
 export class DomCacheLru {
   private entries = new Map<string, DomCacheEntry>();

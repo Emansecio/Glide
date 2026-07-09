@@ -153,6 +153,24 @@
   justify-content: center;
 }
 
+.btn-leading-icon {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  display: block;
+  stroke: currentColor;
+  color: var(--muted);
+}
+
+.oauth-helper-btn:hover .btn-leading-icon,
+.btn:hover .btn-leading-icon {
+  color: var(--foreground);
+}
+
+.btn-label {
+  line-height: 1.2;
+}
+
 .btn-sm {
   padding: 5px 9px;
   font-size: 11.5px;

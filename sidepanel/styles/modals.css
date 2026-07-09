@@ -62,23 +62,6 @@
   line-height: 1.45;
 }
 
-.tab-selector-summary {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--muted-dim);
-}
-
-.tab-selector-actions {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.tab-selector-hint {
-  font-size: 11px;
-  color: var(--muted-dim);
-}
-
 .modal--bottom-sheet .modal-content {
   align-self: flex-end;
   width: min(520px, 100%);

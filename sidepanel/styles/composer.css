@@ -9,6 +9,91 @@
   background: var(--background);
 }
 
+/* Pending attachments (files + pasted screenshots) above the composer */
+.attachments-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 2px;
+}
+
+.attachments-bar.hidden {
+  display: none;
+}
+
+.attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  padding: 4px 6px 4px 6px;
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--background-elevated);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.attachment-chip--image {
+  padding-left: 4px;
+}
+
+.attachment-thumb {
+  width: 28px;
+  height: 28px;
+  border-radius: 3px;
+  object-fit: cover;
+  background: var(--background);
+  flex-shrink: 0;
+}
+
+.attachment-file-icon {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+
+.attachment-chip-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+
+.attachment-chip-name {
+  color: var(--foreground);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 140px;
+}
+
+.attachment-chip-size {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted-dim);
+}
+
+.attachment-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-left: 2px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted-dim);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.attachment-chip-remove:hover {
+  color: var(--foreground);
+  background: var(--card-hover);
+}
+
 /* Solid input tray — no glass dock */
 .composer {
   width: 100%;
@@ -330,32 +415,6 @@
 .send-action.loading {
   opacity: 0.4;
   cursor: not-allowed;
-}
-
-.selected-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  padding: 0 2px;
-}
-
-.selected-tab-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  border: var(--hairline);
-  border-radius: var(--radius-sm);
-  background: var(--background-elevated);
-  font-size: 11px;
-  color: var(--muted);
-  max-width: 180px;
-}
-
-.selected-tab-chip span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 #modelSelect {

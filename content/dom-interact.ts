@@ -922,6 +922,44 @@ export const findElementsByQuery = (options: {
     searchRoot = dialogs[dialogs.length - 1] || document;
   }
 
+  // Profile stats first — "seguindo"/"following" must beat noisy utility-class nodes.
+  let profileStatSeed: FindElementCandidate | null = null;
+  const profileStatEl = resolveProfileStatLink(needle, searchRoot === document ? document : searchRoot);
+  if (profileStatEl) {
+    const rect = profileStatEl.getBoundingClientRect();
+    profileStatSeed = {
+      selector: buildOptimalSelector(profileStatEl),
+      tag: profileStatEl.tagName.toLowerCase(),
+      text: normalizeText(profileStatEl.textContent || profileStatEl.getAttribute('aria-label') || '').slice(0, 120),
+      visible: true,
+      position: {
+        top: Math.round(rect.top),
+        left: Math.round(rect.left),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+      },
+      attributes: {
+        id: profileStatEl.id || undefined,
+        name: profileStatEl.getAttribute('name') || undefined,
+        'data-testid': profileStatEl.getAttribute('data-testid') || undefined,
+        'aria-label': profileStatEl.getAttribute('aria-label') || undefined,
+        href: profileStatEl.getAttribute('href') || undefined,
+      },
+    };
+    if (maxRes <= 1) {
+      return {
+        success: true,
+        query: searchQuery,
+        count: 1,
+        candidates: [profileStatSeed],
+        fuzzy: useFuzzy,
+        scope: searchScope,
+        dialogsOpen: listOpenDialogs().length,
+        searchedInDialog: searchRoot !== document,
+      };
+    }
+  }
+
   let allElements = collectElements<HTMLElement>(INTERACTIVE, searchRoot, MAX_CANDIDATE_SCAN);
   if (allElements.length === 0 && searchRoot !== document && searchScope !== 'dialog') {
     allElements = collectElements<HTMLElement>(INTERACTIVE, document, MAX_CANDIDATE_SCAN);
@@ -1022,7 +1060,7 @@ export const findElementsByQuery = (options: {
     }
   }
 
-  if (combined.length === 0) {
+  if (combined.length === 0 && !profileStatSeed) {
     return {
       success: false,
       code: 'ELEMENT_NOT_FOUND',
@@ -1032,7 +1070,7 @@ export const findElementsByQuery = (options: {
     };
   }
 
-  const candidates: FindElementCandidate[] = combined.map((element) => {
+  const mapped: FindElementCandidate[] = combined.map((element) => {
     const rect = element.getBoundingClientRect();
     return {
       selector: buildOptimalSelector(element),
@@ -1056,11 +1094,24 @@ export const findElementsByQuery = (options: {
     };
   });
 
+  // Profile-stat link always first (stable href), then other matches without duplicate selectors.
+  const candidates: FindElementCandidate[] = [];
+  const seed = profileStatSeed;
+  if (seed) candidates.push(seed);
+  for (const c of mapped) {
+    if (candidates.length >= maxRes) break;
+    if (seed && c.selector === seed.selector) continue;
+    if (seed && profileStatEl && combined.includes(profileStatEl) && c.tag === seed.tag && c.text === seed.text) {
+      continue;
+    }
+    candidates.push(c);
+  }
+
   return {
     success: true,
     query: searchQuery,
     count: candidates.length,
-    candidates,
+    candidates: candidates.slice(0, maxRes),
     fuzzy: useFuzzy,
     scope: searchScope,
     dialogsOpen: openDialogs.length,

@@ -20,10 +20,10 @@ export const buildToolDefinitions = (maxSessionTabs: number): ToolDefinition[] =
   ),
   defineTool(
     'click',
-    'Click an element by CSS selector or visible text hint. Uses full pointer/mouse events (works on React/Instagram). After click, reports if a dialog/modal opened. If the selector fails, use findElement({ query: "button text" }) first. Prefer id, data-testid, aria-label, or short visible labels (e.g. "seguidores", "followers").',
+    'Click an element by CSS selector or visible text hint. Uses full pointer/mouse events (works on React/Instagram). After click, reports if a dialog/modal opened. If the selector fails, use findElement({ query: "button text" }) first. Prefer id, data-testid, aria-label, short labels (e.g. "seguindo", "seguidores"), or a[href*="/following"]. NEVER use Instagram utility classes like .x1i10hfl — they match the wrong element.',
     {
       selector: SELECTOR_PROP(
-        'CSS selector or short visible label to click. Example: "#submit", "[aria-label=Close]", "seguidores".',
+        'CSS selector or short visible label. Prefer "seguindo", "a[href*=\'/following\']", "#submit" — not .x* utility classes.',
       ),
       tabId: TAB_ID_PROP,
       retries: RETRIES_PROP,
@@ -164,11 +164,11 @@ export const buildToolDefinitions = (maxSessionTabs: number): ToolDefinition[] =
   ),
   defineTool(
     'findElement',
-    'Find an interactive element by text, aria-label, placeholder, name, or data-testid. Prefer scope="dialog" when a modal is open (Instagram followers list, etc.). Use BEFORE click/type when selectors are unknown. Returns CSS selector + metadata.',
+    'Find an interactive element by text, aria-label, placeholder, name, or data-testid. Prefer scope="dialog" when a modal is open (Instagram followers list, etc.). Use BEFORE click/type when selectors are unknown. For Instagram profile stats use query "seguindo" or "seguidores" (returns stable a[href*="/following"] selectors — not .x* classes).',
     {
       query: {
         type: 'string',
-        description: 'Text to search for. Example: "seguidores", "followers", "Close", "Seguir".',
+        description: 'Text to search for. Example: "seguindo", "seguidores", "followers", "Close", "Seguir".',
       },
       type: { type: 'string', description: 'Optional element type filter: button, link, input, any. Default: any.' },
       scope: {

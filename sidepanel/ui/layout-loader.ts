@@ -28,16 +28,14 @@ export const loadPanelLayout = async () => {
   const appRoot = document.getElementById('appRoot');
   if (!appRoot) return;
 
-  const [sidebarShell, mainContent, historyPanel, settingsPanel, settingsGeneral, tabSelector, oauthHelp] =
-    await Promise.all([
-      loadTemplate('sidebar-shell.html'),
-      loadTemplate('main.html'),
-      loadTemplate('panels/history.html'),
-      loadTemplate('panels/settings.html'),
-      loadTemplate('panels/settings-general.html'),
-      loadTemplate('tab-selector.html'),
-      loadTemplate('modals/oauth-help.html'),
-    ]);
+  const [sidebarShell, mainContent, historyPanel, settingsPanel, settingsGeneral, oauthHelp] = await Promise.all([
+    loadTemplate('sidebar-shell.html'),
+    loadTemplate('main.html'),
+    loadTemplate('panels/history.html'),
+    loadTemplate('panels/settings.html'),
+    loadTemplate('panels/settings-general.html'),
+    loadTemplate('modals/oauth-help.html'),
+  ]);
 
   appRoot.className = 'app-container';
   appRoot.innerHTML = '';
@@ -53,6 +51,6 @@ export const loadPanelLayout = async () => {
 
   const modalRoot = document.getElementById('modalRoot');
   if (modalRoot) {
-    modalRoot.innerHTML = `${tabSelector.trim()}${oauthHelp.trim()}`;
+    modalRoot.innerHTML = oauthHelp.trim();
   }
 };

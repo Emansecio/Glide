@@ -7,7 +7,8 @@ import { SidePanelUI } from './panel-ui.js';
 
 (SidePanelUI.prototype as any).sendMessage = async function sendMessage() {
   const userMessage = this.elements.userInput.value.trim();
-  if (!userMessage) return;
+  const attachments = Array.isArray(this.pendingAttachments) ? [...this.pendingAttachments] : [];
+  if (!userMessage && attachments.length === 0) return;
   const runInProgress =
     this.elements.composer?.classList.contains('running') || this.isStreaming || this.pendingToolCount > 0;
   if (runInProgress) {
@@ -17,8 +18,13 @@ import { SidePanelUI } from './panel-ui.js';
 
   this.elements.userInput.value = '';
   this.elements.userInput.style.height = '';
+  this.clearPendingAttachments?.();
+
+  const titleSeed =
+    userMessage ||
+    (attachments.some((a: { kind: string }) => a.kind === 'image') ? 'Print anexado' : 'Arquivo anexado');
   if (!this.firstUserMessage) {
-    this.firstUserMessage = userMessage;
+    this.firstUserMessage = titleSeed;
   }
 
   this.pendingToolCount = 0;
@@ -28,20 +34,24 @@ import { SidePanelUI } from './panel-ui.js';
   this.clearRunIncompleteBanner();
   this.updateActivityState();
 
-  const tabsContext = this.getSelectedTabsContext();
-  const fullMessage = userMessage + tabsContext;
+  // Model payload: multimodal parts when images present; text files wrapped in <attached_file>.
+  const modelContent = this.buildAttachmentModelContent?.(userMessage, attachments) ?? userMessage;
+  // Display / history: keep UI clean (no base64 dumps).
+  const displayText =
+    userMessage ||
+    attachments.map((a: { kind: string; name: string }) => (a.kind === 'image' ? `[imagem: ${a.name}]` : `[arquivo: ${a.name}]`)).join(' ');
 
   this.currentPlan = null;
 
-  this.displayUserMessage(userMessage);
+  this.displayUserMessage(userMessage, attachments);
   const pendingTurn = this.lastChatTurn;
 
-  const displayEntry = createMessage({ role: 'user', content: userMessage });
+  const displayEntry = createMessage({ role: 'user', content: displayText });
   if (displayEntry) {
     this.displayHistory.push(displayEntry);
   }
 
-  const contextEntry = createMessage({ role: 'user', content: fullMessage });
+  const contextEntry = createMessage({ role: 'user', content: modelContent as Message['content'] });
   if (contextEntry) {
     this.contextHistory.push(contextEntry);
     this.bumpContextUsageWithMessages?.([contextEntry]);
@@ -57,9 +67,9 @@ import { SidePanelUI } from './panel-ui.js';
     const panelTabId = await resolvePanelTabId();
     await chrome.runtime.sendMessage({
       type: 'user_message',
-      message: fullMessage,
+      message: typeof modelContent === 'string' ? modelContent : displayText,
       conversationHistory: this.contextHistory,
-      selectedTabs: Array.from(this.selectedTabs.values()),
+      selectedTabs: [],
       sessionId: this.sessionId,
       panelTabId,
     });
@@ -79,7 +89,10 @@ import { SidePanelUI } from './panel-ui.js';
       this.lastChatTurn = null;
     }
 
+    // Restore composer state on failure
     this.elements.userInput.value = userMessage;
+    this.pendingAttachments = attachments;
+    this.renderPendingAttachments?.();
     this.elements.userInput.focus();
     this.updateContextUsage();
     this.updateChatEmptyState();
@@ -109,14 +122,28 @@ import { SidePanelUI } from './panel-ui.js';
   `;
 };
 
-(SidePanelUI.prototype as any).displayUserMessage = function displayUserMessage(content: string) {
+(SidePanelUI.prototype as any).displayUserMessage = function displayUserMessage(
+  content: string,
+  attachments: Array<{
+    id: string;
+    kind: 'text' | 'image';
+    name: string;
+    mime: string;
+    sizeLabel: string;
+    text?: string;
+    dataUrl?: string;
+    previewUrl?: string;
+  }> = [],
+) {
   const turn = document.createElement('div');
   turn.className = 'chat-turn';
   const messageDiv = document.createElement('div');
   messageDiv.className = 'message user';
-  messageDiv.innerHTML = `
-      <div class="message-content">${this.escapeHtml(content)}</div>
-    `;
+  if (typeof this.buildAttachmentDisplayHtml === 'function' && attachments.length) {
+    messageDiv.innerHTML = this.buildAttachmentDisplayHtml(content, attachments);
+  } else {
+    messageDiv.innerHTML = `<div class="message-content">${this.escapeHtml(content)}</div>`;
+  }
   turn.appendChild(messageDiv);
   this.elements.chatMessages.appendChild(turn);
   this.lastChatTurn = turn;

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+  <!-- Monochrome mark for UI (inherits currentColor) -->
+  <g fill="currentColor" transform="translate(12 12)">
+    <circle r="2.15"/>
+    <!-- Primary rays -->
+    <path d="M0 -3.7 L0.85 -5.5 L0 -9.6 L-0.85 -5.5 Z"/>
+    <path d="M3.7 0 L5.5 0.85 L9.6 0 L5.5 -0.85 Z"/>
+    <path d="M0 3.7 L0.85 5.5 L0 9.6 L-0.85 5.5 Z"/>
+    <path d="M-3.7 0 L-5.5 0.85 L-9.6 0 L-5.5 -0.85 Z"/>
+    <!-- Secondary rays -->
+    <g transform="rotate(45)">
+      <path d="M0 -3.4 L0.55 -4.7 L0 -7.2 L-0.55 -4.7 Z"/>
+      <path d="M3.4 0 L4.7 0.55 L7.2 0 L4.7 -0.55 Z"/>
+      <path d="M0 3.4 L0.55 4.7 L0 7.2 L-0.55 4.7 Z"/>
+      <path d="M-3.4 0 L-4.7 0.55 L-7.2 0 L-4.7 -0.55 Z"/>
+    </g>
+  </g>
+</svg>

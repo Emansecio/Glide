@@ -73,20 +73,20 @@ import { SidePanelUI } from './panel-ui.js';
     });
   });
 
-  // File upload
+  // File / image upload + paste screenshot (Ctrl+V)
   this.elements.fileBtn?.addEventListener('click', () => {
     this.elements.fileInput?.click();
   });
-  this.elements.fileInput?.addEventListener('change', (event) => this.handleFileSelection(event));
-
-  this.tabSelectorController = createModalController({
-    root: this.elements.tabSelector,
-    closeButtons: [this.elements.closeTabSelector],
-    backdrop: this.elements.tabSelector?.querySelector('.modal-backdrop') as HTMLElement | null,
-    onOpen: async () => {
-      await this.loadTabs();
-      this.updateTabSelectorButton();
-    },
+  this.elements.fileInput?.addEventListener('change', (event) => {
+    void this.handleFileSelection?.(event);
+  });
+  this.elements.userInput?.addEventListener('paste', (event: ClipboardEvent) => {
+    void this.handleComposerPaste?.(event);
+  });
+  // Also accept paste when focus is on the composer tray (not only textarea)
+  this.elements.composer?.addEventListener('paste', (event: ClipboardEvent) => {
+    if (event.target === this.elements.userInput) return; // already handled
+    void this.handleComposerPaste?.(event);
   });
 
   this.oauthHelpModalController = createModalController({
@@ -94,11 +94,6 @@ import { SidePanelUI } from './panel-ui.js';
     closeButtons: [this.elements.closeOauthHelpBtn, this.elements.closeOauthHelpBtnOk],
     backdrop: this.elements.oauthHelpModalBackdrop,
   });
-
-  // Tab selector
-  this.elements.tabSelectorBtn?.addEventListener('click', () => this.toggleTabSelector());
-  this.elements.tabSelectorAddActive?.addEventListener('click', () => this.addActiveTabToSelection());
-  this.elements.tabSelectorClear?.addEventListener('click', () => this.clearSelectedTabs());
 
   this.elements.oauthHelpBtn?.addEventListener('click', () => {
     void this.oauthHelpModalController?.open();

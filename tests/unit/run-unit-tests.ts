@@ -34,7 +34,7 @@ import {
 } from '../../ai/runtime-cache.js';
 import { buildAnthropicOAuthHeaders, migrateStoredProvider, resolveProviderBaseUrl } from '../../ai/sdk-client.js';
 import { buildToolTurnMessages } from '../../ai/tool-history.js';
-import { DomCacheLru } from '../../background/dom-cache.js';
+import { DomCacheLru, buildDomCacheKey } from '../../background/dom-cache.js';
 import { RunPassCache } from '../../background/run-pass-cache.js';
 import { PARENT_ONLY_TOOLS } from '../../background/run-scope.js';
 import { RuntimeBatcher, buildStreamDeltaPayload } from '../../background/runtime-batcher.js';
@@ -922,6 +922,33 @@ function testDomCache(runner: TestRunner) {
     cache.set({ tabId: 9, tool: 'findElement', query: 'login' }, { success: true });
     cache.invalidateTab(9);
     runner.assertEqual(cache.get({ tabId: 9, tool: 'findElement', query: 'login' }), null);
+  });
+
+  runner.test('Dom cache keys differ by findElement scope and fuzzy', () => {
+    const base = {
+      tabId: 1,
+      tool: 'findElement' as const,
+      query: 'seguindo',
+      mode: 'any',
+      maxResults: 5,
+    };
+    const keyPage = buildDomCacheKey({ ...base, scope: 'page', fuzzy: true });
+    const keyDialog = buildDomCacheKey({ ...base, scope: 'dialog', fuzzy: true });
+    const keyNoFuzzy = buildDomCacheKey({ ...base, scope: 'page', fuzzy: false });
+    runner.assertTrue(keyPage !== keyDialog, 'scope must change cache key');
+    runner.assertTrue(keyPage !== keyNoFuzzy, 'fuzzy must change cache key');
+
+    const cache = new DomCacheLru(8, 10_000);
+    cache.set({ ...base, scope: 'page', fuzzy: true }, { success: true, where: 'page' });
+    cache.set({ ...base, scope: 'dialog', fuzzy: true }, { success: true, where: 'dialog' });
+    runner.assertEqual(
+      (cache.get({ ...base, scope: 'page', fuzzy: true }) as { where?: string })?.where,
+      'page',
+    );
+    runner.assertEqual(
+      (cache.get({ ...base, scope: 'dialog', fuzzy: true }) as { where?: string })?.where,
+      'dialog',
+    );
   });
 }
 

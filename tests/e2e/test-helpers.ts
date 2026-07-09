@@ -60,12 +60,19 @@ export async function openSidebar(panel: Page): Promise<void> {
 }
 
 export async function dismissOpenModals(panel: Page): Promise<void> {
-  const isOpen = await panel.locator('#tabSelector').evaluate((el) => !el.classList.contains('hidden'));
-  if (!isOpen) return;
-  await panel.click('#closeTabSelector');
-  await panel.waitForFunction(() => document.getElementById('tabSelector')?.classList.contains('hidden') === true, {
-    timeout: timeoutMs,
-  });
+  // Close any open modal (e.g. OAuth help) via Escape / close control.
+  const oauthOpen = await panel
+    .locator('#oauthHelpModal')
+    .evaluate((el) => el && !el.classList.contains('hidden'))
+    .catch(() => false);
+  if (oauthOpen) {
+    await panel.locator('#closeOauthHelpBtn, #closeOauthHelpBtnOk').first().click({ timeout: 2000 }).catch(() => {});
+    await panel
+      .waitForFunction(() => document.getElementById('oauthHelpModal')?.classList.contains('hidden') === true, {
+        timeout: timeoutMs,
+      })
+      .catch(() => {});
+  }
 }
 
 export async function reloadHistoryList(panel: Page): Promise<void> {

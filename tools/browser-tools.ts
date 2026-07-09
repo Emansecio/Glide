@@ -521,11 +521,21 @@ export class BrowserTools {
     return `${toolName}:${requestedTabId}:${strictTabId}:${this.currentSessionTabId ?? 'none'}`;
   }
 
+  /**
+   * Call the content-script bridge. Returns:
+   * - null when bridge is off / unavailable / timed out (caller may inject)
+   * - full response (success or structured failure) when the bridge handled the op
+   *   so we do NOT fall through to the inject path and re-pay DOM work.
+   */
   private async tryBridge(tabId: number, op: GlideBridgeOp, payload: Record<string, unknown>) {
     if (!this.useContentBridge) return null;
     const response = await sendGlideBridge(tabId, op, payload);
-    if (!response?.success) return null;
-    return response;
+    if (!response) return null;
+    // Trust any well-formed bridge payload (success or ELEMENT_NOT_FOUND etc.).
+    if (typeof response.success === 'boolean' || response.bridge || response.code) {
+      return response;
+    }
+    return null;
   }
 
   async resolveExecutableTab(args: Record<string, any> = {}, toolName = 'tool') {
@@ -833,12 +843,27 @@ export class BrowserTools {
     const { resolution } = resolved;
     const tabId = resolution.tabId;
     const selector = String(args.selector || '');
-    // Default 2 attempts (was 3) � recovery Layer 3 handles hard misses cheaper than inject retries.
+    // Default 2 attempts (was 3) — recovery Layer 3 handles hard misses cheaper than inject retries.
     const retries = typeof args.retries === 'number' ? Math.max(1, Math.min(5, Math.round(args.retries))) : 2;
     const waitForDialog = args.waitForDialog !== false;
 
+    // Pure Instagram/React utility classes collide site-wide — never inject-click them alone.
+    // Prefer fail + recovery candidates over success-on-wrong-target.
+    if (/^\.x[a-z0-9]{4,}$/i.test(selector.trim())) {
+      return this.attachResolutionMeta(
+        {
+          success: false,
+          code: 'ELEMENT_NOT_FOUND',
+          error: `Refusing unstable Instagram utility selector: ${selector}`,
+          hint: 'Use a visible label (e.g. "seguindo") or a[href*="/following"]. Never reuse generic .x* classes.',
+          similar_elements: [],
+        },
+        resolution,
+      );
+    }
+
     const bridged = await this.tryBridge(tabId, 'click', { selector, retries, waitForDialog });
-    if (bridged?.success) {
+    if (bridged) {
       return this.attachResolutionMeta(bridged, resolution);
     }
 
@@ -1290,7 +1315,7 @@ export class BrowserTools {
     const retries = typeof args.retries === 'number' ? Math.max(1, Math.min(5, Math.round(args.retries))) : 3;
 
     const bridged = await this.tryBridge(tabId, 'hover', { selector, retries });
-    if (bridged?.success) {
+    if (bridged) {
       return this.attachResolutionMeta(bridged, resolution);
     }
 
@@ -1476,7 +1501,7 @@ export class BrowserTools {
     const retries = typeof args.retries === 'number' ? Math.max(1, Math.min(5, Math.round(args.retries))) : 3;
 
     const bridged = await this.tryBridge(tabId, 'mouse', { selector, action, retries });
-    if (bridged?.success) {
+    if (bridged) {
       return this.attachResolutionMeta(bridged, resolution);
     }
 
@@ -1681,7 +1706,7 @@ export class BrowserTools {
     const retries = typeof args.retries === 'number' ? Math.max(1, Math.min(5, Math.round(args.retries))) : 2;
 
     const bridged = await this.tryBridge(tabId, 'type', { selector, text, retries });
-    if (bridged?.success) {
+    if (bridged) {
       return this.attachResolutionMeta(bridged, resolution);
     }
 
@@ -2160,7 +2185,7 @@ export class BrowserTools {
     const selector = args.selector ? String(args.selector) : '';
 
     const bridged = await this.tryBridge(tabId, 'pressKey', { key, selector: selector || undefined });
-    if (bridged?.success) {
+    if (bridged) {
       return this.attachResolutionMeta(bridged, resolution);
     }
 
@@ -2274,7 +2299,7 @@ export class BrowserTools {
     const amount = typeof args.amount === 'number' ? args.amount : 600;
 
     const bridged = await this.tryBridge(tabId, 'scroll', { direction, amount });
-    if (bridged?.success) {
+    if (bridged) {
       return this.attachResolutionMeta(bridged, resolution);
     }
 
@@ -2315,7 +2340,7 @@ export class BrowserTools {
         fuzzy,
         scope,
       });
-      if (bridged?.success) {
+      if (bridged) {
         return this.attachResolutionMeta(bridged, resolution);
       }
 
@@ -2635,7 +2660,7 @@ export class BrowserTools {
     const tabId = resolution.tabId;
 
     const bridged = await this.tryBridge(tabId, 'dismissModal', {});
-    if (bridged && (bridged.success || bridged.code)) {
+    if (bridged) {
       return this.attachResolutionMeta(bridged, resolution);
     }
 

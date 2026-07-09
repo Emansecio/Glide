@@ -44,6 +44,58 @@
   opacity: 0.9;
 }
 
+/* User message attachments (files + screenshots) */
+.message.user .message-attachments {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.message.user .message-attachment {
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--background);
+  overflow: hidden;
+}
+
+.message.user .message-attachment--image {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px;
+}
+
+.message.user .message-attachment--image img {
+  display: block;
+  max-width: min(280px, 100%);
+  max-height: 200px;
+  border-radius: 3px;
+  object-fit: contain;
+  background: var(--background-elevated);
+}
+
+.message.user .message-attachment--image span,
+.message.user .message-attachment-title {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted-dim);
+  padding: 0 4px 2px;
+}
+
+.message.user .message-attachment-preview {
+  margin: 0;
+  padding: 6px 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 120px;
+  overflow: hidden;
+}
+
 .chat-empty-title {
   font-size: 15px;
   font-weight: 600;

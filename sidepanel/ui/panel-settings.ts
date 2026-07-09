@@ -43,9 +43,14 @@ const normalizeConfig = (raw: Record<string, any> = {}, fallbackPrompt = ''): Pa
 
 (SidePanelUI.prototype as any).startCodexOAuth = async function startCodexOAuth() {
   const button = document.getElementById('codexOauthBtn') as HTMLButtonElement | null;
+  const setBtnLabel = (text: string) => {
+    const label = button?.querySelector('.btn-label') as HTMLElement | null;
+    if (label) label.textContent = text;
+    else if (button) button.textContent = text;
+  };
   if (button) {
     button.disabled = true;
-    button.textContent = 'Aguardando login…';
+    setBtnLabel('Aguardando login…');
   }
   this.updateStatus('Login OAuth em andamento no navegador…', 'active');
 
@@ -72,7 +77,7 @@ const normalizeConfig = (raw: Record<string, any> = {}, fallbackPrompt = ''): Pa
   } finally {
     if (button) {
       button.disabled = false;
-      button.textContent = '🔐 Conectar via navegador';
+      setBtnLabel('Conectar via navegador');
     }
   }
 };

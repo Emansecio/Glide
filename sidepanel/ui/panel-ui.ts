@@ -20,8 +20,17 @@ export class SidePanelUI {
   configs: Record<string, any>;
   toolCallViews: Map<string, any>;
   lastChatTurn: HTMLElement | null;
-  selectedTabs: Map<number, any>;
-  tabGroupInfo: Map<number, chrome.tabGroups.TabGroup>;
+  /** Pending composer attachments (text files + images/prints) for the next send. */
+  pendingAttachments: Array<{
+    id: string;
+    kind: 'text' | 'image';
+    name: string;
+    mime: string;
+    sizeLabel: string;
+    text?: string;
+    dataUrl?: string;
+    previewUrl?: string;
+  }>;
   scrollPositions: Map<string, number>;
   pendingToolCount: number;
   isStreaming: boolean;
@@ -76,7 +85,6 @@ export class SidePanelUI {
   // Document-level event handlers for cleanup
   _documentClickHandler: ((event: Event) => void) | null;
   _documentKeydownHandler: ((event: KeyboardEvent) => void) | null;
-  tabSelectorController: ModalController | null;
   oauthHelpModalController: ModalController | null;
 
   // Methods attached via prototype in panel-modules
@@ -190,8 +198,7 @@ export class SidePanelUI {
     this.configs = { default: {} };
     this.toolCallViews = new Map();
     this.lastChatTurn = null;
-    this.selectedTabs = new Map();
-    this.tabGroupInfo = new Map();
+    this.pendingAttachments = [];
     this.scrollPositions = new Map();
     this.pendingToolCount = 0;
     this.isStreaming = false;
@@ -236,7 +243,6 @@ export class SidePanelUI {
     this.activeExecutionTurnKey = null;
     this._documentClickHandler = null;
     this._documentKeydownHandler = null;
-    this.tabSelectorController = null;
     this.oauthHelpModalController = null;
     void this.init();
   }

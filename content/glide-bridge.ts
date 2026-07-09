@@ -69,10 +69,11 @@ const resolveClickTarget = (selector: string): HTMLElement | null => {
     if (byText) return byText;
   }
 
-  // Last resort for pure IG utility class: still try querySelector (may be wrong).
+  // Do NOT fall back to pure Instagram utility classes (.x1i10hfl) — first match is
+  // almost always the wrong node (success-on-wrong-target wastes a full model turn).
+  // Prefer ELEMENT_NOT_FOUND + similar_elements / profile-stat hints instead.
   if (looksLikeIgUtilityClass) {
-    const fallback = deepQuerySelector<HTMLElement>(selector);
-    if (fallback && isVisible(fallback)) return fallback;
+    return null;
   }
 
   return bySelector && isVisible(bySelector) ? bySelector : null;

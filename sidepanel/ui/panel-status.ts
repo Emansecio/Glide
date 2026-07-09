@@ -194,9 +194,14 @@ const PROVIDER_FAMILY_LABELS: Record<string, string> = {
   const apiKey = String(this.elements.apiKey?.value || '');
   const customEndpoint = String(this.elements.customEndpoint?.value || '').trim();
   const button = document.getElementById('detectModelsBtn') as HTMLButtonElement | null;
+  const setBtnLabel = (text: string) => {
+    const label = button?.querySelector('.btn-label') as HTMLElement | null;
+    if (label) label.textContent = text;
+    else if (button) button.textContent = text;
+  };
   if (button) {
     button.disabled = true;
-    button.textContent = 'Detectando…';
+    setBtnLabel('Detectando…');
   }
 
   try {
@@ -221,7 +226,7 @@ const PROVIDER_FAMILY_LABELS: Record<string, string> = {
   } finally {
     if (button) {
       button.disabled = false;
-      button.textContent = '🔍 Detectar modelos disponíveis';
+      setBtnLabel('Detectar modelos disponíveis');
     }
   }
 };

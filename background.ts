@@ -883,6 +883,10 @@ class BackgroundService {
             const candidate = part as Record<string, unknown>;
             if (typeof candidate.text === 'string') return candidate.text;
             if (typeof candidate.content === 'string') return candidate.content;
+            // Multimodal user messages may include image parts without text.
+            if (candidate.type === 'image' || candidate.image || candidate.image_url) {
+              return '[image attached]';
+            }
           }
           return '';
         })
@@ -2129,6 +2133,8 @@ class BackgroundService {
                   query: String(toolArgs.query || ''),
                   mode: String(toolArgs.type || 'any'),
                   maxResults: typeof toolArgs.maxResults === 'number' ? toolArgs.maxResults : undefined,
+                  scope: String(toolArgs.scope || 'auto'),
+                  fuzzy: toolArgs.fuzzy !== false,
                 };
           const cachedResult = this.domCacheLru.get(lookup);
           if (cachedResult) {
@@ -2165,6 +2171,8 @@ class BackgroundService {
                   query: String(toolArgs.query || ''),
                   mode: String(toolArgs.type || 'any'),
                   maxResults: typeof toolArgs.maxResults === 'number' ? toolArgs.maxResults : undefined,
+                  scope: String(toolArgs.scope || 'auto'),
+                  fuzzy: toolArgs.fuzzy !== false,
                 },
                 result,
               );
@@ -2283,13 +2291,26 @@ class BackgroundService {
       const finalResult: Record<string, any> = { ...(result as Record<string, any>) };
       let recoveryStage: RecoveryStage = 'none';
 
-      // Layer 4: Auto-screenshot on browser action failure (budgeted; vision async by default)
+      // Layer 4: Auto-screenshot on browser action failure (budgeted; vision async by default).
+      // Skip when Layer 3 already supplied actionable selectors — screenshot/vision only adds
+      // latency and noise when the model can retry with candidates immediately.
+      const hasRecoveryCandidates =
+        (Array.isArray(finalResult.findElementCandidates) && finalResult.findElementCandidates.length > 0) ||
+        (Array.isArray(finalResult.similar_elements) &&
+          finalResult.similar_elements.some(
+            (entry: unknown) =>
+              entry &&
+              typeof entry === 'object' &&
+              Boolean(String((entry as { selector?: string }).selector || '').trim()),
+          ));
+
       const mayScreenshot =
         isBrowserAction &&
         finalResult?.success === false &&
         effectiveSettings.screenshotOnFailure !== false &&
         recoveryBudget.maxScreenshot > 0 &&
-        this.recoveryScreenshotCount < recoveryBudget.maxScreenshot;
+        this.recoveryScreenshotCount < recoveryBudget.maxScreenshot &&
+        !hasRecoveryCandidates;
 
       if (mayScreenshot) {
         try {

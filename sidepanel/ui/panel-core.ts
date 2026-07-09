@@ -1,6 +1,9 @@
 import { createMessage, normalizeConversationHistory } from '../../ai/message-schema.js';
 import type { Message } from '../../ai/message-schema.js';
 import { isRuntimeMessage } from '../../types/runtime-messages.js';
+import { bindModelPicker } from './bind-model-picker.js';
+import { bindSettings } from './bind-settings.js';
+import { createModalController } from './modal-controller.js';
 import { bindSidebarNavigation } from './panel-navigation.js';
 import { SidePanelUI } from './panel-ui.js';
 
@@ -21,6 +24,10 @@ import { SidePanelUI } from './panel-ui.js';
     console.log('[Glide] loadSettings done, configs:', Object.keys(this.configs), 'current:', this.currentConfig);
     console.log('[Glide] Config details:', JSON.stringify(this.configs[this.currentConfig] || {}).slice(0, 200));
   }
+
+  // Auto-detect local Ollama and fetch available models
+  void this.fetchAvailableModels?.();
+
   await this.loadHistoryList();
   this.updateStatus('Pronto', 'success');
   this.updateModelDisplay();
@@ -40,40 +47,8 @@ import { SidePanelUI } from './panel-ui.js';
   this.elements.startNewSessionBtn?.addEventListener('click', () => this.startNewSession());
   this.elements.clearHistoryBtn?.addEventListener('click', () => this.clearAllHistory());
 
-  // Provider change
-  this.elements.provider?.addEventListener('change', () => {
-    this.toggleCustomEndpoint();
-    this.updateScreenshotToggleState();
-  });
-
-  // Custom endpoint validation
-  this.elements.customEndpoint?.addEventListener('input', () => this.validateCustomEndpoint());
-
-  this.elements.settingsTabGeneralBtn?.addEventListener('click', () => this.switchSettingsTab('general'));
-
-  // View toggles
-  this.elements.viewChatBtn?.addEventListener('click', () => this.switchView('chat'));
-  this.elements.viewHistoryBtn?.addEventListener('click', () => this.switchView('history'));
-
-  // Screenshot controls
-  this.elements.enableScreenshots?.addEventListener('change', () => this.updateScreenshotToggleState());
-  this.elements.sendScreenshotsAsImages?.addEventListener('change', () => this.updateScreenshotToggleState());
-
-  // Save settings
-  this.elements.saveSettingsBtn?.addEventListener('click', () => {
-    void this.saveSettings();
-  });
-
-  // Cancel settings
-  this.elements.cancelSettingsBtn?.addEventListener('click', () => {
-    void this.cancelSettings();
-  });
-
-  this.elements.exportSettingsBtn?.addEventListener('click', () => this.exportSettings());
-  this.elements.importSettingsBtn?.addEventListener('click', () => {
-    this.elements.importSettingsInput?.click();
-  });
-  this.elements.importSettingsInput?.addEventListener('change', (event) => this.importSettings(event));
+  bindSettings(this);
+  bindModelPicker(this);
 
   // Send message
   this.elements.sendBtn?.addEventListener('click', () => {
@@ -91,88 +66,12 @@ import { SidePanelUI } from './panel-ui.js';
 
   // Auto-expand textarea height as user types
   const userInput = this.elements.userInput;
-  userInput?.addEventListener('input', function () {
-    userInput.style.height = 'auto';
-    userInput.style.height = `${userInput.scrollHeight}px`;
+  userInput?.addEventListener('input', () => {
+    requestAnimationFrame(() => {
+      userInput.style.height = 'auto';
+      userInput.style.height = `${userInput.scrollHeight}px`;
+    });
   });
-
-  // Model selector
-  this.elements.modelSelect?.addEventListener('change', () => this.handleModelSelectChange());
-  this.elements.modelSelectTrigger?.addEventListener('click', (event: Event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    this.toggleModelMenu();
-  });
-  this.elements.modelSelectTrigger?.addEventListener('keydown', (event: KeyboardEvent) => {
-    if (event.key === 'Enter' || event.key === ' ' || event.key === 'Spacebar') {
-      event.preventDefault();
-      this.toggleModelMenu('selected');
-      return;
-    }
-    if (event.key === 'ArrowDown') {
-      event.preventDefault();
-      if (this.isModelMenuOpen?.()) {
-        this.moveModelMenuFocus(1);
-      } else {
-        this.toggleModelMenu('first');
-      }
-      return;
-    }
-    if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      if (this.isModelMenuOpen?.()) {
-        this.moveModelMenuFocus(-1);
-      } else {
-        this.toggleModelMenu('last');
-      }
-      return;
-    }
-    if (event.key === 'Escape' && this.isModelMenuOpen?.()) {
-      event.preventDefault();
-      this.closeModelMenu({ focusTrigger: true });
-    }
-  });
-  this.elements.modelSelectMenu?.addEventListener('keydown', (event: KeyboardEvent) => {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      event.stopPropagation();
-      this.closeModelMenu({ focusTrigger: true });
-      return;
-    }
-    if (event.key === 'ArrowDown') {
-      event.preventDefault();
-      this.moveModelMenuFocus(1);
-      return;
-    }
-    if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      this.moveModelMenuFocus(-1);
-      return;
-    }
-    if (event.key === 'Enter' || event.key === ' ' || event.key === 'Spacebar') {
-      const target = event.target as HTMLElement | null;
-      const option = target?.closest('.model-option') as HTMLElement | null;
-      if (!option) return;
-      event.preventDefault();
-      event.stopPropagation();
-      this.selectModelOptionByElement(option);
-    }
-  });
-  // Store document-level handlers for cleanup
-  this._documentClickHandler = (event: Event) => {
-    const target = event.target as HTMLElement | null;
-    const withinSelector = target?.closest('.model-picker');
-    if (!withinSelector) {
-      this.closeModelMenu();
-    }
-  };
-  this._documentKeydownHandler = (event: KeyboardEvent) => {
-    if (event.key === 'Escape') {
-      this.closeModelMenu();
-    }
-  };
-  document.addEventListener('click', this._documentClickHandler);
-  document.addEventListener('keydown', this._documentKeydownHandler);
 
   // File upload
   this.elements.fileBtn?.addEventListener('click', () => {
@@ -180,13 +79,30 @@ import { SidePanelUI } from './panel-ui.js';
   });
   this.elements.fileInput?.addEventListener('change', (event) => this.handleFileSelection(event));
 
+  this.tabSelectorController = createModalController({
+    root: this.elements.tabSelector,
+    closeButtons: [this.elements.closeTabSelector],
+    backdrop: this.elements.tabSelector?.querySelector('.modal-backdrop') as HTMLElement | null,
+    onOpen: async () => {
+      await this.loadTabs();
+      this.updateTabSelectorButton();
+    },
+  });
+
+  this.oauthHelpModalController = createModalController({
+    root: this.elements.oauthHelpModal,
+    closeButtons: [this.elements.closeOauthHelpBtn, this.elements.closeOauthHelpBtnOk],
+    backdrop: this.elements.oauthHelpModalBackdrop,
+  });
+
   // Tab selector
   this.elements.tabSelectorBtn?.addEventListener('click', () => this.toggleTabSelector());
-  this.elements.closeTabSelector?.addEventListener('click', () => this.closeTabSelector());
   this.elements.tabSelectorAddActive?.addEventListener('click', () => this.addActiveTabToSelection());
   this.elements.tabSelectorClear?.addEventListener('click', () => this.clearSelectedTabs());
-  const tabBackdrop = this.elements.tabSelector?.querySelector('.modal-backdrop');
-  tabBackdrop?.addEventListener('click', () => this.closeTabSelector());
+
+  this.elements.oauthHelpBtn?.addEventListener('click', () => {
+    void this.oauthHelpModalController?.open();
+  });
 
   this.elements.chatMessages?.addEventListener('scroll', () => this.handleChatScroll());
   this.elements.scrollToLatestBtn?.addEventListener('click', () => this.scrollToBottom({ force: true }));
@@ -197,12 +113,43 @@ import { SidePanelUI } from './panel-ui.js';
     void this.exportExecutionLog?.();
   });
 
+  this._pendingStreamMessages = [];
+  this._streamDrainScheduled = false;
+
   // Listen for messages from background
-  chrome.runtime.onMessage.addListener((message) => {
-    if (isRuntimeMessage(message)) {
-      this.handleRuntimeMessage(message);
+  this._runtimeMessageHandler = (message: any) => {
+    if (!isRuntimeMessage(message)) return;
+    if (
+      message.type === 'assistant_stream_start' ||
+      message.type === 'assistant_stream_delta' ||
+      message.type === 'assistant_stream_stop'
+    ) {
+      this._pendingStreamMessages.push(message);
+      if (!this._streamDrainScheduled) {
+        this._streamDrainScheduled = true;
+        requestAnimationFrame(() => {
+          this._streamDrainScheduled = false;
+          const batch = this._pendingStreamMessages.splice(0);
+          for (const queued of batch) {
+            this.handleRuntimeMessage(queued);
+          }
+        });
+      }
+      return;
     }
-  });
+    // Terminal/non-stream messages (e.g. assistant_final) are delivered
+    // synchronously and can overtake stream deltas still queued for the next
+    // animation frame. Drain the queue first so ordering is preserved and we
+    // never build a duplicate or empty assistant bubble.
+    if (this._pendingStreamMessages.length > 0) {
+      const pending = this._pendingStreamMessages.splice(0);
+      for (const queued of pending) {
+        this.handleRuntimeMessage(queued);
+      }
+    }
+    this.handleRuntimeMessage(message);
+  };
+  chrome.runtime.onMessage.addListener(this._runtimeMessageHandler);
 };
 
 (SidePanelUI.prototype as any).setupResizeObserver = function setupResizeObserver() {
@@ -225,6 +172,11 @@ import { SidePanelUI } from './panel-ui.js';
 };
 
 (SidePanelUI.prototype as any).destroy = function destroy() {
+  // Clean up runtime message listener
+  if (this._runtimeMessageHandler) {
+    chrome.runtime.onMessage.removeListener(this._runtimeMessageHandler);
+    this._runtimeMessageHandler = null;
+  }
   // Clean up document-level event listeners
   if (this._documentClickHandler) {
     document.removeEventListener('click', this._documentClickHandler);
@@ -259,7 +211,39 @@ import { SidePanelUI } from './panel-ui.js';
   }
 };
 
+(SidePanelUI.prototype as any).finishActiveRun = function finishActiveRun() {
+  if (this.pendingSessionId) {
+    this.sessionId = this.pendingSessionId;
+    this.acceptedSessionIds.add(this.pendingSessionId);
+    this.pendingSessionId = null;
+  }
+  if (this.activeRunId) {
+    this.completedRunIds.add(this.activeRunId);
+  }
+  this.activeRunId = null;
+};
+
 (SidePanelUI.prototype as any).handleRuntimeMessage = function handleRuntimeMessage(message: any) {
+  const sessionOk =
+    !message.sessionId || this.acceptedSessionIds.has(message.sessionId) || message.sessionId === this.sessionId;
+  const incomingRunId = typeof message.runId === 'string' && message.runId.trim() ? message.runId.trim() : null;
+
+  let runOk = false;
+  if (!incomingRunId) {
+    runOk = true;
+  } else if (this.completedRunIds.has(incomingRunId)) {
+    runOk = false;
+  } else if (this.activeRunId === null) {
+    runOk = sessionOk;
+  } else {
+    runOk = incomingRunId === this.activeRunId;
+  }
+
+  if (!sessionOk || !runOk) return;
+
+  if (incomingRunId && this.activeRunId === null) {
+    this.activeRunId = incomingRunId;
+  }
   if (message.type === 'assistant_stream_start') {
     this.streamingReasoning = '';
     this.handleAssistantStream({ status: 'start' });
@@ -318,6 +302,7 @@ import { SidePanelUI } from './panel-ui.js';
     } else {
       this.updateContextUsage();
     }
+    this.finishActiveRun?.();
     return;
   }
 
@@ -337,6 +322,7 @@ import { SidePanelUI } from './panel-ui.js';
     this.finishStreamingMessage();
     this.showErrorBanner(message.message);
     this.updateStatus('Error', 'error');
+    this.finishActiveRun?.();
     return;
   }
   if (message.type === 'run_warning') {
@@ -361,6 +347,10 @@ import { SidePanelUI } from './panel-ui.js';
   }
   if (message.type === 'subagent_complete') {
     this.updateSubagentStatus(message.id, message.success ? 'completed' : 'error');
+    return;
+  }
+  if (message.type === 'vision_context_ready') {
+    this.updateStatus('Visual context ready', 'active');
     return;
   }
 };
@@ -389,26 +379,23 @@ import { SidePanelUI } from './panel-ui.js';
 
 (SidePanelUI.prototype as any).handleContextCompaction = function handleContextCompaction(message: any) {
   const normalized = normalizeConversationHistory(message.contextMessages as unknown as Message[]);
-  this.contextHistory = normalized;
-  this.invalidateContextUsageCache?.();
-  this.sessionId = message.newSessionId || this.sessionId;
-
-  const summaryText = message.summary || 'Context compacted.';
-  const summaryEntry = createMessage({
-    role: 'system',
-    content: summaryText,
-    meta: {
-      kind: 'summary',
-      summaryOfCount: message.trimmedCount,
-      source: 'auto',
-    },
-  });
-  if (summaryEntry) {
-    this.displayHistory.push(summaryEntry);
-    this.displaySummaryMessage(summaryEntry);
+  if (message.newSessionId) {
+    this.acceptedSessionIds.add(message.newSessionId);
+    this.pendingSessionId = message.newSessionId;
   }
+  this.abortActiveStreaming?.();
+  this.contextHistory = normalized;
+  this.displayHistory = normalized;
+  this.resetContextUsageTracking?.();
+  const trimmed = Number(message.trimmedCount) || 0;
+  const preserved = Number(message.preservedCount) || 0;
+  this.showSuccessToast?.(`Contexto compactado: ${trimmed} resumidas, ${preserved} preservadas`);
 
   if (message.contextUsage?.approxTokens) {
-    this.updateContextUsage(message.contextUsage.approxTokens);
+    this.applyContextUsageSnapshot?.(message.contextUsage);
+  } else {
+    this.scheduleContextUsageRecompute?.({ force: true });
   }
+
+  this.renderConversationHistory?.();
 };

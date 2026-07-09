@@ -1,231 +1,51 @@
 # Glide API Reference
 
-This document describes the internal extension APIs used between Sidepanel UI and Background Service Worker.
+Glide exposes browser-control tools from `tools/browser-tools.ts` to the assistant loop in `background.ts`.
 
-## Runtime Envelope
+## Browser Tools
 
-Background -> sidepanel runtime events use a common envelope (`types/runtime-messages.ts`):
+| Tool | Purpose |
+| --- | --- |
+| `navigate` | Navigate the current executable tab to an absolute URL. |
+| `openTab` | Open a new session tab, subject to the session tab limit. |
+| `click` | Click a DOM element by selector, text hint, or attribute hint. Supports retries, accessible frames, and `>>>` shadow DOM selectors. |
+| `hover` | Move the pointer over an element to reveal menus, flyouts, toolbars, and CSS hover states. Supports retries, accessible frames, and `>>>` shadow DOM selectors. |
+| `mouse` | Perform advanced mouse actions: `doubleClick` and `rightClick`. Supports retries, accessible frames, and `>>>` shadow DOM selectors. |
+| `type` | Fill `input`, `textarea`, `select`, and `contenteditable` fields. Supports retries, accessible frames, shadow DOM selectors, native value setters, and input/change events. |
+| `pressKey` | Dispatch keyboard events to a selected or focused element. |
+| `scroll` | Scroll the page or an element. |
+| `getContent` | Extract text, HTML, title, URL, links, or structured page data with selectors. |
+| `screenshot` | Capture the current tab. |
+| `getTabs` | List known browser tabs. |
+| `closeTab` | Close a tab. |
+| `switchTab` | Switch the active executable tab. |
+| `focusTab` | Focus an existing tab. |
+| `groupTabs` | Group session tabs. |
+| `describeSessionTabs` | Describe the current session tab set. |
+| `findElement` | Search visible interactive elements by text, label, placeholder, name, or test id. |
+| `wait` | Wait for a fixed time or for a selector to appear. Supports `>>>` shadow DOM selectors and accessible frames. |
+| `executeScript` | Execute JavaScript in the page context and return the result. |
+| `getNetworkRequests` | Inspect buffered Fetch/XHR and resource timing data. |
+| `getStorageData` | Read localStorage, sessionStorage, or cookies with truncation. |
+| `getPerformanceMetrics` | Return navigation, paint, resource, and memory metrics. |
+| `getConsoleOutput` | Capture buffered console output and page errors. |
 
-```ts
-{
-  schemaVersion: 2;
-  runId: string;
-  sessionId: string;
-  turnId?: string;
-  timestamp: number;
-  type: RuntimeMessageType;
-  // payload fields...
-}
-```
+## Selector Notes
 
-## Sidepanel -> Background Messages
+- Prefer `findElement` before `click` or `type` when a selector is uncertain.
+- Prefer stable selectors: `id`, `data-testid`, `name`, `aria-label`, and placeholder.
+- Use `host-selector >>> inner-selector` for open shadow roots.
+- Frame-aware tools inject into accessible frames when the main document does not contain the target.
 
-### `user_message`
+## Runtime Messages
 
-Start a normal assistant run.
+Runtime messages are defined in `types/runtime-messages.ts` and normalized through the sidepanel/background flow.
 
-```ts
-{
-  type: 'user_message';
-  message: string;
-  conversationHistory: Message[];
-  selectedTabs?: chrome.tabs.Tab[];
-  sessionId?: string;
-}
-```
+Primary message categories:
 
-Response (immediate):
+- User input and assistant responses.
+- Tool call start/progress/result updates.
+- Plan and activity updates.
+- Settings, history, and tab context updates.
 
-```ts
-{ success: true; queued: true }
-```
-
-### `execute_tool`
-
-Manual tool execution path.  
-Important: this path now uses the same permission checks as normal runs.
-
-```ts
-{
-  type: 'execute_tool';
-  tool: string;
-  args?: Record<string, unknown>;
-  sessionId?: string;
-  toolCallId?: string;
-}
-```
-
-Response:
-
-```ts
-{
-  success: boolean;
-  result?: unknown;
-  error?: string;
-}
-```
-
-### `get_execution_events`
-
-Read persisted execution events.
-
-```ts
-{ type: 'get_execution_events' }
-```
-
-Response:
-
-```ts
-{
-  success: boolean;
-  events?: ExecutionEvent[];
-  error?: string;
-}
-```
-
-## Background -> Sidepanel Message Types
-
-Main streaming and run lifecycle events:
-
-- `assistant_stream_start`
-- `assistant_stream_delta` (`channel: 'text' | 'reasoning'`)
-- `assistant_stream_stop`
-- `assistant_final`
-- `run_error`
-- `run_warning`
-- `context_compacted`
-- `tool_execution_start`
-- `tool_execution_result`
-- `plan_update`
-- `manual_plan_update`
-- `subagent_start`
-- `subagent_complete`
-
-Reference source of truth: `types/runtime-messages.ts`.
-Non-schema messages are not used for runtime errors; failures are emitted as `run_error`.
-
-## Storage Keys (`chrome.storage.local`)
-
-Main settings keys:
-
-- `provider`, `apiKey`, `model`, `customEndpoint`
-- `systemPrompt`, `temperature`, `maxTokens`, `timeout`, `contextLimit`
-- `configs`, `activeConfig`
-- `visionBridge`, `visionProfile`
-- `useOrchestrator`, `orchestratorProfile`, `auxAgentProfiles`
-- `toolPermissions`, `allowedDomains`
-- `enableScreenshots`, `sendScreenshotsAsImages`, `screenshotQuality`
-- `autoRecoveryMode`, `screenshotOnFailure`, `screenshotRetention`
-- `showThinking`, `streamResponses`, `autoScroll`, `confirmActions`, `saveHistory`
-
-Provider values currently supported in runtime model resolution:
-
-- `openai`
-- `anthropic`
-- `google`
-- `ollama`
-- `kimi`
-- `custom`
-
-## Tool Definitions
-
-Defined by `BrowserTools.getToolDefinitions()` in `tools/browser-tools.ts`.
-
-Current tool names:
-
-- `navigate`
-- `openTab`
-- `click`
-- `type`
-- `pressKey`
-- `scroll`
-- `getContent`
-- `screenshot`
-- `getTabs`
-- `closeTab`
-- `switchTab`
-- `focusTab`
-- `groupTabs`
-- `describeSessionTabs`
-
-## `getContent` Modes
-
-`getContent` supports:
-
-- `text` (default)
-- `html` (preview/truncated)
-- `title`
-- `url`
-- `links`
-- `structure`
-
-Optional controls:
-
-- `selector`
-- `maxChars`
-- `maxItems`
-- `tabId`
-
-## Security-Relevant API Behavior
-
-### Dedicated Locked-Tab Mode
-
-`user_message` runs execute in a single dedicated tab managed by the background service worker.
-
-- The tab is created automatically (if needed) and reused across runs.
-- Browser tool calls are pinned to the locked tab id.
-- Passing a different `tabId` is blocked with:
-  - `code: "TAB_LOCK_POLICY"`
-  - `policy.type: "tab_lock"`
-
-Browser tools allowed while lock is active:
-
-- `navigate`
-- `click`
-- `type`
-- `pressKey`
-- `scroll`
-- `getContent`
-- `screenshot`
-
-Blocked browser tools while lock is active:
-
-- `openTab`
-- `focusTab`
-- `switchTab`
-- `closeTab`
-- `groupTabs`
-- `getTabs`
-- `describeSessionTabs`
-
-### Permission and Domain Gates
-
-Every tool execution path checks:
-
-1. Category permission (`read`, `interact`, `navigate`, `tabs`, `screenshots`)
-2. Optional domain allowlist (`allowedDomains`)
-
-### Screenshot Data Retention
-
-Screenshot `dataUrl` is filtered according to `screenshotRetention`:
-
-- `ephemeral`: do not retain image payload
-- `debug-short`: keep only when image sending is enabled
-- `persistent`: keep payload
-
-Execution telemetry persisted for diagnostics is trimmed and redacted for sensitive keys (`apiKey`, `token`, `password`, `authorization`, `text`, `value`, `content`).
-
-When `screenshot` needs a non-active target tab, it may temporarily focus that tab for capture and then restore previous focus.
-The result can include:
-
-- `focusedForCapture?: boolean`
-- `restoredFocus?: boolean`
-- `capturedTabId?: number`
-
-### Markdown URL Policy (UI)
-
-Rendered markdown links/images are sanitized:
-
-- links: `http`, `https`, `mailto`
-- images: `http`, `https`
-- invalid/unsafe URLs are downgraded to plain text
+The background service worker is the execution boundary: UI code requests actions, the background validates permissions and arguments, then browser tools interact with Chrome APIs or page scripts.

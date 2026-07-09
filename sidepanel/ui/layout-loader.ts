@@ -1,10 +1,16 @@
 const loadTemplate = async (path: string) => {
   const url = chrome.runtime.getURL(`sidepanel/templates/${path}`);
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Failed to load template: ${path}`);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 5000);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) {
+      throw new Error(`Failed to load template: ${path}`);
+    }
+    return response.text();
+  } finally {
+    clearTimeout(timeoutId);
   }
-  return response.text();
 };
 
 const replaceWithHtml = (root: HTMLElement, selector: string, html: string) => {
@@ -22,21 +28,16 @@ export const loadPanelLayout = async () => {
   const appRoot = document.getElementById('appRoot');
   if (!appRoot) return;
 
-  const [
-    sidebarShell,
-    mainContent,
-    historyPanel,
-    settingsPanel,
-    settingsGeneral,
-    tabSelector,
-  ] = await Promise.all([
-    loadTemplate('sidebar-shell.html'),
-    loadTemplate('main.html'),
-    loadTemplate('panels/history.html'),
-    loadTemplate('panels/settings.html'),
-    loadTemplate('panels/settings-general.html'),
-    loadTemplate('tab-selector.html'),
-  ]);
+  const [sidebarShell, mainContent, historyPanel, settingsPanel, settingsGeneral, tabSelector, oauthHelp] =
+    await Promise.all([
+      loadTemplate('sidebar-shell.html'),
+      loadTemplate('main.html'),
+      loadTemplate('panels/history.html'),
+      loadTemplate('panels/settings.html'),
+      loadTemplate('panels/settings-general.html'),
+      loadTemplate('tab-selector.html'),
+      loadTemplate('modals/oauth-help.html'),
+    ]);
 
   appRoot.className = 'app-container';
   appRoot.innerHTML = '';
@@ -52,6 +53,6 @@ export const loadPanelLayout = async () => {
 
   const modalRoot = document.getElementById('modalRoot');
   if (modalRoot) {
-    modalRoot.innerHTML = tabSelector;
+    modalRoot.innerHTML = `${tabSelector.trim()}${oauthHelp.trim()}`;
   }
 };

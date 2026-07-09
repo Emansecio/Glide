@@ -1,6 +1,20 @@
 # Dependencies
 node_modules/
 
+# TS incremental build cache
+.tsbuildinfo
+
+# Agent/harness working state (not part of the extension)
+.agents/
+.codex/
+.code-review-graph/
+.pit/
+mcps/
+tasks/
+terminals/
+work/
+hermes-claude-code-max-oauth-routing.md
+
 # Build artifacts
 dist/
 build/

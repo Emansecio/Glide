@@ -16,14 +16,10 @@ const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'Glide-test-'));
 async function main() {
   console.log('🚀 Starting Glide agent test...');
   console.log('📁 Extension path:', extensionPath);
-  
+
   const context = await chromium.launchPersistentContext(userDataDir, {
     headless: false, // Must be false for extensions
-    args: [
-      `--disable-extensions-except=${extensionPath}`,
-      `--load-extension=${extensionPath}`,
-      '--no-sandbox',
-    ],
+    args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`, '--no-sandbox'],
     viewport: { width: 1400, height: 900 },
   });
 
@@ -33,7 +29,7 @@ async function main() {
     console.log('⏳ Waiting for service worker...');
     worker = await context.waitForEvent('serviceworker', { timeout: 30000 });
   }
-  
+
   const extensionId = new URL(worker.url()).host;
   console.log('✅ Extension loaded:', extensionId);
 
@@ -49,7 +45,7 @@ async function main() {
   console.log('📊 Status:', status);
 
   // Listen for console messages
-  panel.on('console', msg => {
+  panel.on('console', (msg) => {
     if (msg.type() === 'error') {
       console.log('❌ Panel error:', msg.text());
     }
@@ -64,11 +60,11 @@ async function main() {
   console.log('👉 The browser window will stay open for you to test.');
   console.log('👉 Press Ctrl+C to close when done.\n');
 
-  // Keep browser open
-  await new Promise(() => {});
+  // Keep browser open with an escape hatch
+  await new Promise((resolve) => setTimeout(resolve, 3_600_000)); // 1 hour
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('Test failed:', err);
   process.exit(1);
 });

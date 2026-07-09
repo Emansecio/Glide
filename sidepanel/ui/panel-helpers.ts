@@ -1,16 +1,15 @@
 import { SidePanelUI } from './panel-ui.js';
 
+export type ComposerDensity = 'tight' | 'compact' | 'normal';
+
+export const getComposerDensity = (composerWidth: number): ComposerDensity => {
+  if (composerWidth <= 420) return 'tight';
+  if (composerWidth <= 560) return 'compact';
+  return 'normal';
+};
+
 // Reusable element for escapeHtmlBasic (avoids creating DOM element per call)
 let escapeHelperDiv: HTMLDivElement | null = null;
-
-// HTML entities map for fast string-based escaping
-const HTML_ENTITIES: Record<string, string> = {
-  '&': '&amp;',
-  '<': '&lt;',
-  '>': '&gt;',
-  '"': '&quot;',
-  "'": '&#39;',
-};
 
 (SidePanelUI.prototype as any).safeJsonStringify = function safeJsonStringify(value: any) {
   try {
@@ -27,7 +26,7 @@ const HTML_ENTITIES: Record<string, string> = {
   return `${text.slice(0, limit)}...`;
 };
 
-(SidePanelUI.prototype as any).escapeHtmlBasic = function escapeHtmlBasic(text: string) {
+export const escapeHtmlBasic = (text: string) => {
   if (text == null) return '';
   // Fast path: use string replacement for common cases
   if (!/[&<>"']/.test(text)) return text;
@@ -39,10 +38,22 @@ const HTML_ENTITIES: Record<string, string> = {
   return escapeHelperDiv.innerHTML;
 };
 
-(SidePanelUI.prototype as any).escapeHtml = function escapeHtml(text: string) {
-  return this.escapeHtmlBasic(text).replace(/\n/g, '<br>');
-};
+export const escapeHtml = (text: string) => escapeHtmlBasic(text).replace(/\n/g, '<br>');
+
+(SidePanelUI.prototype as any).escapeHtmlBasic = escapeHtmlBasic;
+
+(SidePanelUI.prototype as any).escapeHtml = escapeHtml;
 
 (SidePanelUI.prototype as any).escapeAttribute = function escapeAttribute(value: string) {
   return this.escapeHtmlBasic(value).replace(/"/g, '&quot;');
+};
+
+(SidePanelUI.prototype as any).downloadJsonFile = function downloadJsonFile(data: unknown, filename: string) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
 };

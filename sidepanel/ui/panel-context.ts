@@ -2,7 +2,9 @@ import { SidePanelUI } from './panel-ui.js';
 
 const CONTEXT_USAGE_DEBOUNCE_MS = 350;
 
-(SidePanelUI.prototype as any).estimateContextContentChars = function estimateContextContentChars(value: unknown): number {
+(SidePanelUI.prototype as any).estimateContextContentChars = function estimateContextContentChars(
+  value: unknown,
+): number {
   if (value === null || value === undefined) return 0;
   if (typeof value === 'string') return value.length;
   if (Array.isArray(value)) {
@@ -25,7 +27,9 @@ const CONTEXT_USAGE_DEBOUNCE_MS = 350;
   return String(value).length;
 };
 
-(SidePanelUI.prototype as any).estimateContextMessageChars = function estimateContextMessageChars(message: any): number {
+(SidePanelUI.prototype as any).estimateContextMessageChars = function estimateContextMessageChars(
+  message: any,
+): number {
   if (!message || typeof message !== 'object') return 0;
   let total = this.estimateContextContentChars(message.content);
   if (typeof message.thinking === 'string') {
@@ -62,7 +66,9 @@ const CONTEXT_USAGE_DEBOUNCE_MS = 350;
   return total;
 };
 
-(SidePanelUI.prototype as any).scheduleContextUsageRecompute = function scheduleContextUsageRecompute({ force = false } = {}) {
+(SidePanelUI.prototype as any).scheduleContextUsageRecompute = function scheduleContextUsageRecompute({
+  force = false,
+} = {}) {
   if (this.contextUsageDebounceTimerId) {
     window.clearTimeout(this.contextUsageDebounceTimerId);
     this.contextUsageDebounceTimerId = null;
@@ -81,13 +87,46 @@ const CONTEXT_USAGE_DEBOUNCE_MS = 350;
   }, CONTEXT_USAGE_DEBOUNCE_MS);
 };
 
-(SidePanelUI.prototype as any).invalidateContextUsageCache = function invalidateContextUsageCache() {
+(SidePanelUI.prototype as any).resetContextUsageTracking = function resetContextUsageTracking() {
+  if (this.contextUsageDebounceTimerId) {
+    window.clearTimeout(this.contextUsageDebounceTimerId);
+    this.contextUsageDebounceTimerId = null;
+  }
   this.contextCharCount = 0;
   this.contextTrackedMessageCount = 0;
+};
+
+(SidePanelUI.prototype as any).applyContextUsageSnapshot = function applyContextUsageSnapshot(
+  usage: { approxTokens?: number; contextLimit?: number; percent?: number } = {},
+) {
+  if (this.contextUsageDebounceTimerId) {
+    window.clearTimeout(this.contextUsageDebounceTimerId);
+    this.contextUsageDebounceTimerId = null;
+  }
+
+  const approxTokens = Number(usage.approxTokens || 0);
+  if (!Number.isFinite(approxTokens) || approxTokens <= 0) return;
+
+  const maxContextTokens = usage.contextLimit || this.getConfiguredContextLimit();
+  const percent =
+    typeof usage.percent === 'number'
+      ? usage.percent
+      : Math.min(100, Math.round((approxTokens / maxContextTokens) * 100));
+
+  this.sessionTokensUsed = Math.max(this.sessionTokensUsed || 0, approxTokens);
+  this.contextUsage = { approxTokens, maxContextTokens, percent };
+  this.recomputeContextCharCount();
+  this.updateActivityState();
+};
+
+(SidePanelUI.prototype as any).invalidateContextUsageCache = function invalidateContextUsageCache() {
+  this.resetContextUsageTracking();
   this.scheduleContextUsageRecompute();
 };
 
-(SidePanelUI.prototype as any).bumpContextUsageWithMessages = function bumpContextUsageWithMessages(messages: any[] = []) {
+(SidePanelUI.prototype as any).bumpContextUsageWithMessages = function bumpContextUsageWithMessages(
+  messages: any[] = [],
+) {
   if (!Array.isArray(messages) || messages.length === 0) return;
   const historySize = Array.isArray(this.contextHistory) ? this.contextHistory.length : 0;
   if (this.contextTrackedMessageCount > historySize) {

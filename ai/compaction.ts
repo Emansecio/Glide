@@ -1,5 +1,6 @@
+import { compactValue } from './compact-value.js';
 import type { Message, Usage } from './message-schema.js';
-import { estimateTokensFromContent } from './message-utils.js';
+import { estimateTokensFromContent, isTextPart } from './message-utils.js';
 
 export type CompactionSettings = {
   enabled: boolean;
@@ -12,6 +13,19 @@ export const DEFAULT_COMPACTION_SETTINGS: CompactionSettings = {
   reserveTokens: 16384,
   keepRecentTokens: 20000,
 };
+
+export const COMPACTION_ENTER_PERCENT = 0.85;
+export const COMPACTION_RELEASE_PERCENT = 0.7;
+
+const compactionLatchBySession = new Map<string, boolean>();
+
+export function resetCompactionHysteresis(sessionId?: string) {
+  if (sessionId) {
+    compactionLatchBySession.delete(sessionId);
+    return;
+  }
+  compactionLatchBySession.clear();
+}
 
 export const SUMMARIZATION_SYSTEM_PROMPT = `You are a context summarization assistant. Your task is to read a conversation between a user and an AI coding assistant, then produce a structured summary following the exact format specified.
 
@@ -95,7 +109,7 @@ function calculateContextTokens(usage: Usage): number {
 
 function getAssistantUsage(message: Message): Usage | undefined {
   if (message.role !== 'assistant') return undefined;
-  return message.usage && message.usage.totalTokens >= 0 ? message.usage : undefined;
+  return message.usage && message.usage.totalTokens > 0 ? message.usage : undefined;
 }
 
 function getLastAssistantUsageInfo(messages: Message[]): { usage: Usage; index: number } | undefined {
@@ -112,11 +126,14 @@ export function estimateContextTokens(messages: Message[]): {
   trailingTokens: number;
   lastUsageIndex: number | null;
 } {
+  // A fresh per-call memo avoids both cross-call `idx_N` key collisions
+  // (stale counts for id-less messages) and unbounded module-global growth.
+  const memo = new Map<string, number>();
   const usageInfo = getLastAssistantUsageInfo(messages);
   if (!usageInfo) {
     let estimated = 0;
-    for (const message of messages) {
-      estimated += estimateTokens(message);
+    for (let i = 0; i < messages.length; i += 1) {
+      estimated += estimateMessageTokens(messages[i], i, memo);
     }
     return {
       tokens: estimated,
@@ -129,7 +146,7 @@ export function estimateContextTokens(messages: Message[]): {
   const usageTokens = calculateContextTokens(usageInfo.usage);
   let trailingTokens = 0;
   for (let i = usageInfo.index + 1; i < messages.length; i += 1) {
-    trailingTokens += estimateTokens(messages[i]);
+    trailingTokens += estimateMessageTokens(messages[i], i, memo);
   }
 
   return {
@@ -144,23 +161,47 @@ export function shouldCompact({
   contextTokens,
   contextLimit,
   settings = DEFAULT_COMPACTION_SETTINGS,
+  sessionId = 'default',
 }: {
   contextTokens: number;
   contextLimit: number;
   settings?: CompactionSettings;
+  sessionId?: string;
 }): { shouldCompact: boolean; approxTokens: number; percent: number } {
   if (!settings.enabled) {
     return { shouldCompact: false, approxTokens: contextTokens, percent: 0 };
   }
+
+  const latchKey = String(sessionId || 'default');
+  let compactionLatchActive = compactionLatchBySession.get(latchKey) ?? false;
   const percent = contextLimit > 0 ? contextTokens / contextLimit : 0;
+  if (percent < COMPACTION_RELEASE_PERCENT) {
+    compactionLatchActive = false;
+  }
+  if (percent >= COMPACTION_ENTER_PERCENT) {
+    compactionLatchActive = true;
+  }
+  compactionLatchBySession.set(latchKey, compactionLatchActive);
+
+  const overReserve = contextTokens > contextLimit - settings.reserveTokens;
+  const shouldRun = compactionLatchActive && overReserve;
+
   return {
-    shouldCompact: contextTokens > contextLimit - settings.reserveTokens,
+    shouldCompact: shouldRun,
     approxTokens: contextTokens,
     percent,
   };
 }
 
-function estimateTokens(message: Message): number {
+function messageMemoKey(message: Message, index: number): string {
+  return message.id || `idx_${index}`;
+}
+
+function estimateMessageTokens(message: Message, index: number, memo: Map<string, number>): number {
+  const key = messageMemoKey(message, index);
+  const cached = memo.get(key);
+  if (cached !== undefined) return cached;
+
   let tokens = estimateTokensFromContent(message.content);
   if (message.thinking) {
     tokens += Math.ceil(message.thinking.length / 4);
@@ -181,6 +222,8 @@ function estimateTokens(message: Message): number {
   if (message.role === 'assistant' && Array.isArray(message.toolCalls)) {
     tokens += Math.ceil(JSON.stringify(message.toolCalls).length / 4);
   }
+
+  memo.set(key, tokens);
   return tokens;
 }
 
@@ -188,26 +231,31 @@ function isValidCutPoint(message: Message): boolean {
   return message.role !== 'tool';
 }
 
-export function findCutPoint(messages: Message[], startIndex: number, keepRecentTokens: number): number {
-  const cutPoints = messages
-    .map((msg, index) => ({ msg, index }))
-    .filter(({ msg, index }) => index >= startIndex && isValidCutPoint(msg))
-    .map(({ index }) => index);
+function resolveCutPointAtOrAfter(messages: Message[], startIndex: number, fromIndex: number): number {
+  let cutIndex = Math.max(startIndex, fromIndex);
+  while (cutIndex < messages.length && !isValidCutPoint(messages[cutIndex])) {
+    cutIndex += 1;
+  }
+  if (cutIndex < messages.length) return cutIndex;
 
-  if (cutPoints.length === 0) return startIndex;
+  cutIndex = fromIndex;
+  while (cutIndex > startIndex && !isValidCutPoint(messages[cutIndex])) {
+    cutIndex -= 1;
+  }
+  return Math.max(startIndex, cutIndex);
+}
+
+export function findCutPoint(messages: Message[], startIndex: number, keepRecentTokens: number): number {
+  const memo = new Map<string, number>();
+  if (startIndex >= messages.length) return startIndex;
 
   let accumulatedTokens = 0;
-  let cutIndex = cutPoints[0];
+  let cutIndex = startIndex;
 
   for (let i = messages.length - 1; i >= startIndex; i -= 1) {
-    accumulatedTokens += estimateTokens(messages[i]);
+    accumulatedTokens += estimateMessageTokens(messages[i], i, memo);
     if (accumulatedTokens >= keepRecentTokens) {
-      for (let c = 0; c < cutPoints.length; c += 1) {
-        if (cutPoints[c] >= i) {
-          cutIndex = cutPoints[c];
-          break;
-        }
-      }
+      cutIndex = resolveCutPointAtOrAfter(messages, startIndex, i);
       break;
     }
   }
@@ -217,10 +265,46 @@ export function findCutPoint(messages: Message[], startIndex: number, keepRecent
     while (adjusted > startIndex && messages[adjusted].role === 'tool') {
       adjusted -= 1;
     }
-    cutIndex = adjusted;
+    cutIndex = Math.max(startIndex, adjusted);
   }
 
   return cutIndex;
+}
+
+export function forceCompactionCut(
+  messages: Message[],
+  compactionStart: number,
+  keepRecentTokens: number,
+): { cutIndex: number; messagesToSummarize: Message[] } {
+  for (let factor = 0.8; factor >= 0.2; factor -= 0.2) {
+    const reducedKeep = Math.max(500, Math.floor(keepRecentTokens * factor));
+    const cutIndex = findCutPoint(messages, compactionStart, reducedKeep);
+    const messagesToSummarize = messages.slice(compactionStart, cutIndex);
+    if (messagesToSummarize.length > 0) {
+      return { cutIndex, messagesToSummarize };
+    }
+  }
+
+  let cutIndex = compactionStart + 1;
+  while (cutIndex < messages.length && messages[cutIndex]?.role === 'tool') {
+    cutIndex += 1;
+  }
+  if (cutIndex >= messages.length) {
+    cutIndex = Math.max(compactionStart + 1, messages.length - 1);
+  }
+  return {
+    cutIndex,
+    messagesToSummarize: messages.slice(compactionStart, cutIndex),
+  };
+}
+
+function formatToolCallArgs(args: Record<string, unknown> | undefined): string {
+  const compacted = compactValue(args || {}, 'history', 'args');
+  try {
+    return JSON.stringify(compacted);
+  } catch {
+    return '{}';
+  }
 }
 
 export function serializeConversation(messages: Message[]): string {
@@ -234,9 +318,7 @@ export function serializeConversation(messages: Message[]): string {
       if (msg.thinking) parts.push(`[Assistant thinking]: ${msg.thinking}`);
       if (contentText) parts.push(`[Assistant]: ${contentText}`);
       if (Array.isArray(msg.toolCalls) && msg.toolCalls.length > 0) {
-        const toolCalls = msg.toolCalls
-          .map((call) => `${call.name}(${JSON.stringify(call.args || {})})`)
-          .join('; ');
+        const toolCalls = msg.toolCalls.map((call) => `${call.name}(${formatToolCallArgs(call.args)})`).join('; ');
         parts.push(`[Assistant tool calls]: ${toolCalls}`);
       }
     } else if (msg.role === 'tool') {
@@ -249,6 +331,20 @@ export function serializeConversation(messages: Message[]): string {
   return parts.join('\n\n');
 }
 
+export function buildTruncateOnlySummary(messages: Message[], maxChars = 6000): string {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return '## Goal\n(none)\n\n## Progress\n### Done\n- (none)\n\n## Next Steps\n1. Continue from recent context.';
+  }
+
+  const serialized = serializeConversation(messages);
+  const trimmed =
+    serialized.length > maxChars
+      ? `${serialized.slice(0, maxChars)}\n\n[Truncated ${messages.length} earlier messages for context recovery.]`
+      : serialized;
+
+  return `## Goal\nContinue the active task from the preserved recent context.\n\n## Progress\n### Done\n- Earlier context was truncated automatically (${messages.length} messages).\n\n## Critical Context\n${trimmed}`;
+}
+
 function normalizeContentText(content: Message['content']): string {
   if (!content) return '';
   if (typeof content === 'string') return content;
@@ -256,11 +352,11 @@ function normalizeContentText(content: Message['content']): string {
     return content
       .map((part) => {
         if (typeof part === 'string') return part;
+        if (isTextPart(part)) return part.text;
         if (part && typeof part === 'object') {
-          if (typeof part.text === 'string') return part.text;
-          if (typeof part.content === 'string') return part.content;
+          if (typeof (part as { content?: string }).content === 'string') return (part as { content: string }).content;
           try {
-            return JSON.stringify(part);
+            return JSON.stringify(compactValue(part, 'history'));
           } catch {
             return '';
           }
@@ -271,7 +367,7 @@ function normalizeContentText(content: Message['content']): string {
       .join('\n');
   }
   try {
-    return JSON.stringify(content);
+    return JSON.stringify(compactValue(content, 'history'));
   } catch {
     return String(content ?? '');
   }

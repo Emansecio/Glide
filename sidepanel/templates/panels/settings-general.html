@@ -6,258 +6,59 @@
                 <path
                     d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
             </svg>
-            Configuração Rápida
+            Configuracao
         </h3>
 
         <div class="form-group">
             <label for="provider">Provedor</label>
             <select id="provider">
-                <option value="anthropic">Anthropic (Claude)</option>
-                <option value="openai">OpenAI</option>
-                <option value="google">Google (Gemini)</option>
-                <option value="ollama">Ollama (Local)</option>
-                <option value="kimi">Kimi (Programação)</option>
-                <option value="custom">Customizado / OpenRouter</option>
+                <option value="anthropic" selected>Claude Code (OAuth / Anthropic)</option>
+                <option value="codex">Codex (OpenAI)</option>
+                <option value="opencode">OpenCode Zen</option>
+                <option value="ollama">Ollama (local)</option>
             </select>
         </div>
 
-        <div class="form-group">
-            <label for="apiKey">Chave de API</label>
-            <input type="password" id="apiKey" placeholder="Insira sua chave de API..." />
-            <small>A chave é armazenada localmente no navegador. Use apenas em dispositivos confiáveis.</small>
+        <div class="form-group" id="apiKeyGroup">
+            <label for="apiKey" id="apiKeyLabel">Token OAuth do Claude Code</label>
+            <input type="password" id="apiKey" placeholder="Cole seu token OAuth do Claude Code..." />
+            <small id="apiKeyHint">Seu token OAuth obtido em ~/.claude/.credentials.json ou Keychain.</small>
+            <div class="oauth-helper-actions">
+                <button type="button" id="codexOauthBtn" class="btn btn-secondary btn-sm oauth-helper-btn hidden">
+                    🔐 Conectar via navegador
+                </button>
+                <button type="button" id="importCredentialsBtn" class="btn btn-secondary btn-sm oauth-helper-btn">
+                    📂 Importar credenciais
+                </button>
+                <button type="button" id="oauthHelpBtn" class="btn btn-secondary btn-sm oauth-helper-btn">
+                    ❓ Como Obter?
+                </button>
+                <input type="file" id="credentialsFileInput" accept=".json" class="hidden" />
+            </div>
+        </div>
+
+        <div class="form-group hidden" id="customEndpointGroup">
+            <label for="customEndpoint" id="customEndpointLabel">Endpoint da API</label>
+            <input type="text" id="customEndpoint" placeholder="http://localhost:11434" />
+            <small id="endpointHint">Deixe vazio para usar o endpoint padrão do provedor.</small>
         </div>
 
         <div class="form-group">
             <label for="model">Modelo</label>
-            <input type="text" id="model" placeholder="Selecione o provedor primeiro..." />
-            <small id="modelHint">Selecione um provedor para ver o modelo recomendado.</small>
-        </div>
-
-        <div class="form-group" id="customEndpointGroup">
-            <label for="customEndpoint">URL da API <span class="optional-badge">(opcional)</span></label>
-            <input type="text" id="customEndpoint" placeholder="http://localhost:11434" />
-            <small>Use apenas quando precisar de endpoint customizado.</small>
+            <input type="text" id="model" placeholder="Ex: claude-sonnet-5" />
+            <small id="modelHint">Nome do modelo na Anthropic (ex: claude-sonnet-5, claude-opus-4-8).</small>
+            <div class="oauth-helper-actions hidden" id="detectModelsGroup">
+                <button type="button" id="detectModelsBtn" class="btn btn-secondary btn-sm oauth-helper-btn oauth-helper-btn--full">
+                    🔍 Detectar modelos disponíveis
+                </button>
+            </div>
         </div>
 
         <div class="settings-actions">
-            <button id="saveSettingsBtn" class="btn btn-primary">Salvar configurações</button>
+            <button id="saveSettingsBtn" class="btn btn-primary">Salvar</button>
             <button id="cancelSettingsBtn" class="btn btn-secondary">Cancelar</button>
         </div>
     </div>
-
-    <details class="settings-section" open>
-        <summary>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                aria-hidden="true">
-                <circle cx="12" cy="12" r="3" />
-                <path
-                    d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-            </svg>
-            Parâmetros do modelo
-        </summary>
-        <div class="settings-body">
-            <div class="form-group">
-                <label for="maxTokens">Tokens máximos de saída</label>
-                <input type="number" id="maxTokens" value="4096" min="256" max="32000" />
-            </div>
-            <div class="form-group">
-                <label for="contextLimit">Limite de contexto</label>
-                <input type="number" id="contextLimit" value="200000" min="4000" max="2000000" />
-            </div>
-            <div class="form-group">
-                <label for="timeout">Timeout (ms)</label>
-                <input type="number" id="timeout" value="90000" min="5000" step="1000" />
-            </div>
-            <div class="form-group">
-                <label for="qualityMode">Modo de qualidade</label>
-                <select id="qualityMode">
-                    <option value="max">Qualidade máxima</option>
-                    <option value="balanced">Equilibrado</option>
-                    <option value="speed">Velocidade</option>
-                </select>
-                <small>Temperatura é ajustada automaticamente por modo para manter previsibilidade.</small>
-            </div>
-            <div class="form-group">
-                <label for="autoTuneSafety">Auto-ajuste de segurança</label>
-                <select id="autoTuneSafety">
-                    <option value="true">Ativado</option>
-                    <option value="false">Desativado</option>
-                </select>
-                <small>Corrige automaticamente parâmetros de risco (timeout/tokens) durante a execução.</small>
-            </div>
-            <div class="form-group">
-                <label for="minimumReportSections">Seções mínimas do relatório</label>
-                <input type="number" id="minimumReportSections" value="5" min="3" max="8" />
-            </div>
-        </div>
-    </details>
-
-    <details class="settings-section">
-        <summary>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                aria-hidden="true">
-                <circle cx="12" cy="12" r="10" />
-                <line x1="2" y1="12" x2="22" y2="12" />
-                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-            </svg>
-            Controles do navegador
-        </summary>
-        <div class="settings-body">
-            <div class="form-group">
-                <label for="enableScreenshots">Capturas de tela</label>
-                <select id="enableScreenshots">
-                    <option value="true">Ativado</option>
-                    <option value="false">Desativado</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label for="sendScreenshotsAsImages">Enviar captura como imagem</label>
-                <select id="sendScreenshotsAsImages">
-                    <option value="true">Sim</option>
-                    <option value="false">Não</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label for="screenshotQuality">Qualidade da captura</label>
-                <select id="screenshotQuality">
-                    <option value="high">Alta</option>
-                    <option value="low">Baixa</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label for="visionBridge">Ponte de visão</label>
-                <select id="visionBridge">
-                    <option value="true">Ativado</option>
-                    <option value="false">Desativado</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label for="orchestratorToggle">Orquestrador</label>
-                <select id="orchestratorToggle">
-                    <option value="false">Desativado</option>
-                    <option value="true">Ativado</option>
-                </select>
-            </div>
-        </div>
-    </details>
-
-    <details class="settings-section">
-        <summary>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                aria-hidden="true">
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-            </svg>
-            Configurações de resposta
-        </summary>
-        <div class="settings-body">
-            <div class="form-group">
-                <label for="streamResponses">Streaming de respostas</label>
-                <select id="streamResponses">
-                    <option value="true">Ativado</option>
-                    <option value="false">Desativado</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label for="showThinking">Mostrar raciocínio</label>
-                <select id="showThinking">
-                    <option value="true">Mostrar</option>
-                    <option value="false">Ocultar</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label for="autoScroll">Auto-scroll</label>
-                <select id="autoScroll">
-                    <option value="true">Ativado</option>
-                    <option value="false">Desativado</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label for="confirmActions">Confirmar ações sensíveis</label>
-                <select id="confirmActions">
-                    <option value="true">Ativado</option>
-                    <option value="false">Desativado</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label for="saveHistory">Salvar histórico</label>
-                <select id="saveHistory">
-                    <option value="true">Ativado</option>
-                    <option value="false">Desativado</option>
-                </select>
-            </div>
-        </div>
-    </details>
-
-    <details class="settings-section">
-        <summary>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                aria-hidden="true">
-                <path d="M12 1v22M1 12h22" />
-            </svg>
-            Permissões de ferramentas
-        </summary>
-        <div class="settings-body">
-            <div class="form-group">
-                <label for="permissionRead">Leitura de página</label>
-                <select id="permissionRead">
-                    <option value="true">Permitido</option>
-                    <option value="false">Bloqueado</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label for="permissionInteract">Interação (click/type)</label>
-                <select id="permissionInteract">
-                    <option value="true">Permitido</option>
-                    <option value="false">Bloqueado</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label for="permissionNavigate">Navegação</label>
-                <select id="permissionNavigate">
-                    <option value="true">Permitido</option>
-                    <option value="false">Bloqueado</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label for="permissionTabs">Acesso a abas</label>
-                <select id="permissionTabs">
-                    <option value="true">Permitido</option>
-                    <option value="false">Bloqueado</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label for="permissionScreenshots">Capturas</label>
-                <select id="permissionScreenshots">
-                    <option value="true">Permitido</option>
-                    <option value="false">Bloqueado</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label for="allowedDomains">Domínios permitidos</label>
-                <input id="allowedDomains" type="text" placeholder="Ex.: github.com, docs.google.com" />
-                <small>Deixe em branco para permitir todos os domínios.</small>
-            </div>
-        </div>
-    </details>
-
-    <details class="settings-section">
-        <summary>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                aria-hidden="true">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="7 10 12 15 17 10" />
-                <line x1="12" y1="15" x2="12" y2="3" />
-            </svg>
-            Dados e backup
-        </summary>
-        <div class="settings-body">
-            <div class="settings-actions">
-                <button id="exportSettingsBtn" class="btn btn-secondary" type="button">Exportar configurações</button>
-                <button id="importSettingsBtn" class="btn btn-secondary" type="button">Importar configurações</button>
-                <input id="importSettingsInput" type="file" accept="application/json" class="hidden" />
-            </div>
-        </div>
-    </details>
 
     <details class="settings-section">
         <summary>
@@ -273,7 +74,7 @@
         <div class="settings-body">
             <div class="form-group">
                 <label for="systemPrompt">Prompt customizado</label>
-                <textarea id="systemPrompt" rows="8" placeholder="Deixe vazio para usar o padrão..."></textarea>
+                <textarea id="systemPrompt" rows="8" placeholder="Deixe vazio para usar o padrao..."></textarea>
             </div>
         </div>
     </details>

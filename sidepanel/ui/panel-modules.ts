@@ -13,4 +13,3 @@ import './panel-streaming.js';
 import './panel-tabs.js';
 import './panel-tools.js';
 import './panel-usage.js';
-import './panel-view.js';

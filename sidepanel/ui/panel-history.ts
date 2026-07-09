@@ -24,7 +24,10 @@ const historyTextEncoder = new TextEncoder();
   }
 };
 
-(SidePanelUI.prototype as any).truncateHistoryField = function truncateHistoryField(value: unknown, limit = HISTORY_MAX_CHARS_PER_FIELD) {
+(SidePanelUI.prototype as any).truncateHistoryField = function truncateHistoryField(
+  value: unknown,
+  limit = HISTORY_MAX_CHARS_PER_FIELD,
+) {
   const text = String(value ?? '');
   if (text.length <= limit) return text;
   return `${text.slice(0, limit)}...`;
@@ -100,10 +103,10 @@ const historyTextEncoder = new TextEncoder();
     const item = sanitized[i];
     const size = this.measureHistoryBytes(item);
     if (compacted.length > 0 && totalBytes + size > HISTORY_MAX_SESSION_BYTES) break;
-    compacted.unshift(item);
+    compacted.push(item);
     totalBytes += size;
   }
-  return compacted;
+  return compacted.reverse();
 };
 
 (SidePanelUI.prototype as any).pruneHistorySessions = function pruneHistorySessions(sessions: any[]) {
@@ -146,7 +149,9 @@ const historyTextEncoder = new TextEncoder();
   return this.safeJsonStringify(signaturePayload);
 };
 
-(SidePanelUI.prototype as any).saveHistorySessionsWithRetry = async function saveHistorySessionsWithRetry(sessions: any[]) {
+(SidePanelUI.prototype as any).saveHistorySessionsWithRetry = async function saveHistorySessionsWithRetry(
+  sessions: any[],
+) {
   let lastError: unknown = null;
   let current = Array.isArray(sessions) ? sessions.slice() : [];
 
@@ -173,13 +178,13 @@ const historyTextEncoder = new TextEncoder();
   // Default to saving history unless explicitly disabled
   const saveEnabled = this.elements.saveHistory?.value !== 'false';
   if (!saveEnabled) return;
-  
+
   // Only persist if there's actual content
   if (!this.displayHistory || this.displayHistory.length === 0) return;
 
   const transcript = this.buildHistoryTranscript(this.displayHistory);
   if (!transcript.length) return;
-  
+
   const entry = {
     id: this.sessionId,
     startedAt: this.sessionStartedAt,
@@ -193,14 +198,14 @@ const historyTextEncoder = new TextEncoder();
   if (signature === this.lastPersistedHistorySignature) {
     return;
   }
-  
+
   try {
-    const existing = await chrome.storage.local.get(['chatSessions']);
-    const sessions = existing.chatSessions || [];
-    const filtered = sessions.filter((s: any) => s.id !== entry.id);
-    filtered.unshift(entry);
+    const existing = this._cachedChatSessions || (await chrome.storage.local.get(['chatSessions'])).chatSessions || [];
+    const filtered = existing.filter((s: any) => s.id !== entry.id);
+    filtered.push(entry);
     const trimmed = this.pruneHistorySessions(filtered);
     await this.saveHistorySessionsWithRetry(trimmed);
+    this._cachedChatSessions = trimmed;
     this.lastPersistedHistorySignature = signature;
     this.historyListDirty = true;
     if (this.isHistoryPanelVisible()) {
@@ -208,12 +213,13 @@ const historyTextEncoder = new TextEncoder();
     }
   } catch (e) {
     console.error('Falha ao salvar historico:', e);
+    this.showErrorBanner?.('Falha ao salvar historico.');
   }
 };
 
-(SidePanelUI.prototype as any).persistHistory = async function persistHistory(
-  { immediate = false }: { immediate?: boolean } = {},
-) {
+(SidePanelUI.prototype as any).persistHistory = async function persistHistory({
+  immediate = false,
+}: { immediate?: boolean } = {}) {
   const runPersist = async () => {
     this.historyPersistDebounceTimerId = null;
     await this.persistHistoryNow();
@@ -245,17 +251,20 @@ const historyTextEncoder = new TextEncoder();
       '<div class="history-empty">Historico desativado. Ative "Salvar Historico" nas Configuracoes para ver conversas anteriores.</div>';
     return;
   }
-  
+
   try {
-    const { chatSessions = [] } = await chrome.storage.local.get(['chatSessions']);
+    const chatSessions =
+      this._cachedChatSessions || (await chrome.storage.local.get(['chatSessions'])).chatSessions || [];
+    this._cachedChatSessions = chatSessions;
     this.elements.historyItems.innerHTML = '';
-    
+
     if (!chatSessions.length) {
       this.elements.historyItems.innerHTML = '<div class="history-empty">Nenhuma conversa salva ainda.</div>';
       this.historyListDirty = false;
       return;
     }
-    
+
+    const fragment = document.createDocumentFragment();
     chatSessions.forEach((session: any) => {
       const item = document.createElement('div');
       item.className = 'history-item';
@@ -263,7 +272,7 @@ const historyTextEncoder = new TextEncoder();
       const msgCount = session.messageCount || session.transcript?.length || 0;
       const timeAgo = this.formatTimeAgo(date);
       const safeSessionId = this.escapeAttribute(String(session.id || ''));
-      
+
       item.innerHTML = `
         <div class="history-item-main">
           <div class="history-title">${this.escapeHtml(session.title || 'Sessao sem titulo')}</div>
@@ -283,28 +292,31 @@ const historyTextEncoder = new TextEncoder();
           </svg>
         </button>
       `;
-      
+
       // Click to load session
       item.querySelector('.history-item-main')?.addEventListener('click', () => {
         this.loadSession(session);
       });
-      
+
       // Delete button
       item.querySelector('.history-delete')?.addEventListener('click', (e: Event) => {
         e.stopPropagation();
         this.deleteSession(session.id);
       });
-      
-      this.elements.historyItems.appendChild(item);
+
+      fragment.appendChild(item);
     });
+    this.elements.historyItems.appendChild(fragment);
     this.historyListDirty = false;
   } catch (e) {
     console.error('Falha ao carregar historico:', e);
+    this.showErrorBanner?.('Falha ao carregar historico.');
     this.elements.historyItems.innerHTML = '<div class="history-empty">Falha ao carregar historico.</div>';
   }
 };
 
 (SidePanelUI.prototype as any).loadSession = function loadSession(session: any) {
+  this.abortActiveStreaming?.();
   this.switchView('chat');
   if (Array.isArray(session.transcript)) {
     this.recordScrollPosition();
@@ -313,37 +325,48 @@ const historyTextEncoder = new TextEncoder();
     this.contextHistory = normalized;
     this.invalidateContextUsageCache?.();
     this.sessionId = session.id || `session-${Date.now()}`;
+    this.activeRunId = null;
+    this.completedRunIds = new Set();
+    this.acceptedSessionIds = new Set([this.sessionId]);
+    this.pendingSessionId = null;
     this.firstUserMessage = session.title || '';
     this.renderConversationHistory();
     this.scheduleContextUsageRecompute?.({ force: true });
   }
+  this.closeSidebar();
 };
 
 (SidePanelUI.prototype as any).deleteSession = async function deleteSession(sessionId: string) {
   try {
-    const { chatSessions = [] } = await chrome.storage.local.get(['chatSessions']);
+    const chatSessions =
+      this._cachedChatSessions || (await chrome.storage.local.get(['chatSessions'])).chatSessions || [];
     const filtered = chatSessions.filter((s: any) => s.id !== sessionId);
     await chrome.storage.local.set({ chatSessions: filtered });
+    await chrome.runtime.sendMessage({ type: 'session_deleted', sessionId });
+    this._cachedChatSessions = filtered;
     this.historyListDirty = true;
     if (this.isHistoryPanelVisible()) {
       void this.loadHistoryList();
     }
   } catch (e) {
     console.error('Falha ao excluir sessao:', e);
+    this.showErrorBanner?.('Falha ao excluir sessao.');
   }
 };
 
 (SidePanelUI.prototype as any).clearAllHistory = async function clearAllHistory() {
   if (!confirm('Limpar todo o historico de conversa? Esta acao nao pode ser desfeita.')) return;
-  
+
   try {
     await chrome.storage.local.set({ chatSessions: [] });
+    this._cachedChatSessions = [];
     this.historyListDirty = true;
     if (this.isHistoryPanelVisible()) {
       void this.loadHistoryList();
     }
   } catch (e) {
     console.error('Falha ao limpar historico:', e);
+    this.showErrorBanner?.('Falha ao limpar historico.');
   }
 };
 
@@ -353,7 +376,7 @@ const historyTextEncoder = new TextEncoder();
   const minutes = Math.floor(diff / 60000);
   const hours = Math.floor(diff / 3600000);
   const days = Math.floor(diff / 86400000);
-  
+
   if (minutes < 1) return 'Agora';
   if (minutes < 60) return `${minutes} min atras`;
   if (hours < 24) return `${hours} h atras`;
@@ -361,12 +384,32 @@ const historyTextEncoder = new TextEncoder();
   return date.toLocaleDateString();
 };
 
+(SidePanelUI.prototype as any).bindThinkingToggle = function bindThinkingToggle(thinkingHeader: Element) {
+  thinkingHeader.addEventListener('click', () => {
+    const block = thinkingHeader.closest('.thinking-block');
+    if (!block || block.classList.contains('thinking-hidden')) return;
+    block.classList.toggle('collapsed');
+    const expanded = !block.classList.contains('collapsed');
+    thinkingHeader.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+  });
+};
+
+// Render markdown cache keyed by content string to avoid re-compiling identical text.
+let _renderMdCache: Map<string, string> | null = null;
+const RENDER_MD_CACHE_MAX = 50;
+
 (SidePanelUI.prototype as any).renderConversationHistory = function renderConversationHistory() {
   this.elements.chatMessages.innerHTML = '';
   this.toolCallViews.clear();
   this.lastChatTurn = null;
   this.resetActivityPanel();
 
+  // Lazily seed the markdown cache on first rebuild
+  if (!_renderMdCache) {
+    _renderMdCache = new Map();
+  }
+
+  const fragment = document.createDocumentFragment();
   this.displayHistory.forEach((msg: any) => {
     if (msg.role === 'system' || msg.meta?.kind === 'summary') {
       this.displaySummaryMessage(msg);
@@ -376,20 +419,21 @@ const historyTextEncoder = new TextEncoder();
       const messageDiv = document.createElement('div');
       messageDiv.className = 'message user';
       messageDiv.innerHTML = `
-          <div class="message-header">Voce</div>
           <div class="message-content">${this.escapeHtml(msg.content || '')}</div>
         `;
-      this.elements.chatMessages.appendChild(messageDiv);
+      fragment.appendChild(messageDiv);
     } else if (msg.role === 'assistant') {
       const rawContent = typeof msg.content === 'string' ? msg.content : this.safeJsonStringify(msg.content);
       const parsed = extractThinking(rawContent, msg.thinking || null);
       const messageDiv = document.createElement('div');
       messageDiv.className = 'message assistant';
-      let html = `<div class="message-header">Assistente</div>`;
-      const showThinking = this.elements.showThinking.value === 'true';
+      const htmlParts: string[] = [
+        `<div class="message-header assistant-header">${this.buildAssistantHeaderHtml(null)}</div>`,
+      ];
+      const showThinking = this.elements.showThinking?.value !== 'false';
       if (parsed.thinking && showThinking) {
         const cleanedThinking = dedupeThinking(parsed.thinking);
-        html += `
+        htmlParts.push(`
             <div class="thinking-block collapsed">
               <button class="thinking-header" type="button" aria-expanded="false">
                 <svg class="chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -399,27 +443,37 @@ const historyTextEncoder = new TextEncoder();
               </button>
               <div class="thinking-content">${this.escapeHtml(cleanedThinking)}</div>
             </div>
-          `;
+          `);
       }
       if (parsed.content && parsed.content.trim() !== '') {
-        html += `<div class="message-content markdown-body">${this.renderMarkdown(parsed.content)}</div>`;
+        // Memoized renderMarkdown: avoid re-running heavy regex on identical content
+        let rendered = _renderMdCache!.get(parsed.content);
+        if (rendered === undefined) {
+          rendered = this.renderMarkdown(parsed.content);
+          if (_renderMdCache!.size >= RENDER_MD_CACHE_MAX) {
+            const firstKey = _renderMdCache!.keys().next().value;
+            if (firstKey) _renderMdCache!.delete(firstKey);
+          }
+          _renderMdCache!.set(parsed.content, rendered!);
+        }
+        htmlParts.push(`<div class="message-content markdown-body">${rendered}</div>`);
       }
-      messageDiv.innerHTML = html;
+      messageDiv.innerHTML = htmlParts.join('');
 
       const thinkingHeader = messageDiv.querySelector('.thinking-header');
       if (thinkingHeader) {
-        thinkingHeader.addEventListener('click', () => {
-          const block = thinkingHeader.closest('.thinking-block');
-          if (!block || block.classList.contains('thinking-hidden')) return;
-          block.classList.toggle('collapsed');
-          const expanded = !block.classList.contains('collapsed');
-          thinkingHeader.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-        });
+        this.bindThinkingToggle(thinkingHeader);
       }
 
-      this.elements.chatMessages.appendChild(messageDiv);
+      fragment.appendChild(messageDiv);
     }
   });
-  this.restoreScrollPosition();
-  this.updateChatEmptyState();
+
+  // Defer DOM append to next animation frame so layout recalc does not block
+  // the main thread — important after compaction rebuilds with many messages.
+  requestAnimationFrame(() => {
+    this.elements.chatMessages.appendChild(fragment);
+    this.restoreScrollPosition();
+    this.updateChatEmptyState();
+  });
 };

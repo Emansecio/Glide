@@ -1,6 +1,59 @@
+import { PROVIDER_DEFAULT_MODELS, PROVIDER_PRESET_MODELS, normalizeProviderId } from '../../ai/providers.js';
 import { SidePanelUI } from './panel-ui.js';
 
-const MODEL_FETCH_TIMEOUT_MS = 8000;
+type OllamaModelDetail = {
+  name: string;
+  id?: string;
+  sizeLabel?: string;
+  modifiedLabel?: string;
+  isCloud?: boolean;
+  parameterSize?: string;
+  family?: string;
+};
+
+type ProviderModelsResponse = {
+  success?: boolean;
+  models?: string[];
+  modelDetails?: OllamaModelDetail[];
+  online?: boolean;
+  endpoint?: string;
+  summary?: string;
+  latencyMs?: number;
+  error?: string;
+};
+
+type DetectedModelsCache = {
+  provider: string;
+  models: string[];
+  modelDetails: OllamaModelDetail[];
+  endpoint?: string;
+  summary?: string;
+  online?: boolean;
+};
+
+async function requestProviderModelsFromBackground(
+  provider: string,
+  apiKey: string,
+  customEndpoint?: string,
+): Promise<ProviderModelsResponse> {
+  const response = (await chrome.runtime.sendMessage({
+    type: 'detect_provider_models',
+    provider,
+    apiKey,
+    customEndpoint: customEndpoint || '',
+  })) as ProviderModelsResponse | undefined;
+  if (!response?.success) {
+    throw new Error(response?.error || 'Falha ao detectar modelos via service worker.');
+  }
+  return response;
+}
+
+const PROVIDER_FAMILY_LABELS: Record<string, string> = {
+  anthropic: 'Claude Code',
+  codex: 'Codex',
+  opencode: 'OpenCode',
+  ollama: 'Ollama',
+};
 
 (SidePanelUI.prototype as any).updateStatus = function updateStatus(text: string, type = 'default') {
   if (this.elements.statusText) {
@@ -32,23 +85,10 @@ const MODEL_FETCH_TIMEOUT_MS = 8000;
 
 (SidePanelUI.prototype as any).getModelSourceContext = function getModelSourceContext() {
   const config = this.configs?.[this.currentConfig] || {};
-  const provider = String(this.elements.provider?.value || config.provider || 'anthropic').toLowerCase();
-  const apiKey = String(this.elements.apiKey?.value ?? config.apiKey ?? '');
-
-  const endpointInput = this.elements.customEndpoint?.value;
-  let customEndpoint = String(
-    endpointInput !== undefined && endpointInput !== null ? endpointInput : config.customEndpoint || '',
-  ).trim();
-
-  if (provider === 'ollama' && !customEndpoint) {
-    customEndpoint = 'http://localhost:11434';
-  } else if (provider === 'kimi' && !customEndpoint) {
-    customEndpoint = 'https://api.kimi.com/coding';
-  } else if (provider !== 'custom' && provider !== 'ollama' && provider !== 'kimi') {
-    customEndpoint = '';
-  }
-
-  const model = String(this.elements.model?.value || config.model || '').trim();
+  const provider = normalizeProviderId(config.provider);
+  const apiKey = config.apiKey || '';
+  const customEndpoint = String(config.customEndpoint || '').trim();
+  const model = String(this.elements.model?.value || config.model || PROVIDER_DEFAULT_MODELS[provider]).trim();
   return { provider, apiKey, customEndpoint, model };
 };
 
@@ -73,246 +113,201 @@ const MODEL_FETCH_TIMEOUT_MS = 8000;
 
 (SidePanelUI.prototype as any).resolveModelFamilyBySource = function resolveModelFamilyBySource(
   provider: string,
-  customEndpoint = '',
+  _customEndpoint = '',
 ) {
-  const normalizedProvider = String(provider || '').toLowerCase();
-  if (normalizedProvider === 'openai') {
-    return customEndpoint
-      ? this.resolveModelFamilyFromEndpoint(customEndpoint, 'OpenAI')
-      : 'OpenAI';
-  }
-  if (normalizedProvider === 'anthropic') return 'Anthropic';
-  if (normalizedProvider === 'google') return 'Google';
-  if (normalizedProvider === 'kimi') return 'Kimi';
-  if (normalizedProvider === 'ollama') return 'Ollama';
-  if (normalizedProvider === 'custom') {
-    return this.resolveModelFamilyFromEndpoint(customEndpoint, 'Custom');
-  }
-  return this.resolveModelFamilyFromEndpoint(customEndpoint, 'Modelo');
+  return PROVIDER_FAMILY_LABELS[normalizeProviderId(provider)] || 'Claude Code';
 };
 
 (SidePanelUI.prototype as any).isLikelyOllamaEndpoint = function isLikelyOllamaEndpoint(endpoint: string) {
   const value = String(endpoint || '').toLowerCase();
-  if (!value) return false;
-  return value.includes('localhost:11434') || value.includes(':11434') || value.includes('ollama');
+  return value.includes(':11434') || value.includes('ollama');
 };
 
-(SidePanelUI.prototype as any).fetchAvailableModels = async function fetchAvailableModels() {
-  const config = this.configs[this.currentConfig] || {};
-  const sourceContext = this.getModelSourceContext();
-  const provider = sourceContext.provider || 'anthropic';
-  const apiKey = sourceContext.apiKey || '';
-  const customEndpoint = sourceContext.customEndpoint || '';
-  const currentModel = sourceContext.model || config.model;
+// Model discovery runs in the background service worker to avoid browser CORS
+// limits from the side panel (OpenCode, Codex, Ollama, etc.).
+(SidePanelUI.prototype as any).detectOllamaModels = async function detectOllamaModels(customEndpoint?: string) {
+  const result = await requestProviderModelsFromBackground('ollama', '', customEndpoint);
+  return Array.isArray(result.models) ? result.models : [];
+};
 
-  if (this.modelsFetchController) {
-    this.modelsFetchController.abort();
-    this.modelsFetchController = null;
-  }
-  const requestId = (this.modelsFetchSeq || 0) + 1;
-  this.modelsFetchSeq = requestId;
+(SidePanelUI.prototype as any).detectOllamaDetailed = async function detectOllamaDetailed(customEndpoint?: string) {
+  return requestProviderModelsFromBackground('ollama', '', customEndpoint);
+};
 
-  const isCurrentRequest = (controller?: AbortController | null) => {
-    if (this.modelsFetchSeq !== requestId) return false;
-    if (!controller) return true;
-    return this.modelsFetchController === controller;
+(SidePanelUI.prototype as any).detectOpenAiCompatibleModels = async function detectOpenAiCompatibleModels(
+  provider: string,
+  apiKey: string,
+  customEndpoint?: string,
+) {
+  const result = await requestProviderModelsFromBackground(provider, apiKey, customEndpoint);
+  return Array.isArray(result.models) ? result.models : [];
+};
+
+(SidePanelUI.prototype as any).applyDetectedModels = function applyDetectedModels(
+  provider: string,
+  response: ProviderModelsResponse,
+  options: { selectFirstIfMissing?: boolean; toast?: boolean } = {},
+) {
+  const models = Array.isArray(response.models) ? response.models.filter(Boolean) : [];
+  const modelDetails = Array.isArray(response.modelDetails) ? response.modelDetails : [];
+  const cache: DetectedModelsCache = {
+    provider,
+    models,
+    modelDetails,
+    endpoint: response.endpoint,
+    summary: response.summary,
+    online: response.online !== false,
   };
-  const defaultSourceFamily = this.resolveModelFamilyBySource(provider, customEndpoint);
-  const applyModels = (models: string[], sourceFamily = defaultSourceFamily) => {
-    if (!isCurrentRequest()) return;
-    this.populateModelSelect(models, currentModel, sourceFamily);
-  };
-  const setModelFetchError = (code: string | null, message = '') => {
-    this.lastModelFetchError = code
-      ? {
-          code,
-          message,
-          timestamp: Date.now(),
-        }
-      : null;
-  };
-  const hasConnectionForSource = (() => {
-    if (provider === 'ollama') {
-      return Boolean(customEndpoint);
-    }
-    if (provider === 'custom') {
-      if (!customEndpoint) return false;
-      if (this.isLikelyOllamaEndpoint(customEndpoint)) return true;
-      return Boolean(apiKey);
-    }
-    if (provider === 'openai' || provider === 'anthropic' || provider === 'google' || provider === 'kimi') {
-      return Boolean(apiKey);
-    }
-    return Boolean(apiKey || customEndpoint);
-  })();
-  if (!hasConnectionForSource) {
-    setModelFetchError(null);
-    applyModels([]);
-    return;
-  }
-  const createController = () => {
-    const controller = new AbortController();
-    this.modelsFetchController = controller;
-    return controller;
-  };
-  const fetchOllamaModels = async (endpoint: string) => {
-    const controller = createController();
-    let timeoutReached = false;
-    const timeoutId = window.setTimeout(() => {
-      timeoutReached = true;
-      controller.abort();
-    }, MODEL_FETCH_TIMEOUT_MS);
-    try {
-      const baseUrl = endpoint.replace(/\/$/, '');
-      const response = await fetch(`${baseUrl}/api/tags`, { signal: controller.signal });
-      if (!isCurrentRequest(controller)) return;
-      if (!response.ok) {
-        setModelFetchError(null);
-        applyModels([], 'Ollama');
-        return;
-      }
-      const data = await response.json();
-      if (!isCurrentRequest(controller)) return;
-      const models = (data.models || [])
-        .map((m: any) => m.name)
-        .filter(Boolean)
-        .sort();
-      setModelFetchError(null);
-      applyModels(models, 'Ollama');
-    } catch (error) {
-      if ((error as { name?: string })?.name === 'AbortError') {
-        if (timeoutReached) {
-          setModelFetchError('MODEL_FETCH_TIMEOUT', `Timeout after ${MODEL_FETCH_TIMEOUT_MS}ms`);
-          applyModels(currentModel ? [currentModel] : [], 'Ollama');
-        }
-        return;
-      }
-      setModelFetchError(null);
-      applyModels([], 'Ollama');
-    } finally {
-      window.clearTimeout(timeoutId);
-      if (isCurrentRequest(controller)) {
-        this.modelsFetchController = null;
-      }
-    }
-  };
+  this._detectedModels = cache;
 
-  if (provider === 'anthropic') {
-    // Anthropic does not expose a stable public model-list endpoint for this flow.
-    // Keep only the user-configured model instead of guessing a static catalog.
-    setModelFetchError(null);
-    applyModels(currentModel ? [currentModel] : [], 'Anthropic');
-    return;
-  }
+  if (!models.length) return cache;
 
-  if (provider === 'google') {
-    // Same approach as Anthropic: no static guesses.
-    setModelFetchError(null);
-    applyModels(currentModel ? [currentModel] : [], 'Google');
-    return;
-  }
+  const family = PROVIDER_FAMILY_LABELS[provider] || provider;
+  const current = String(this.elements.model?.value || this.configs?.[this.currentConfig]?.model || '').trim();
+  const activeModel =
+    current && models.includes(current)
+      ? current
+      : options.selectFirstIfMissing !== false
+        ? models[0]
+        : current || models[0];
 
-  if (provider === 'ollama' || (provider === 'custom' && this.isLikelyOllamaEndpoint(customEndpoint))) {
-    void fetchOllamaModels(customEndpoint || 'http://localhost:11434');
-    return;
+  if (this.elements.model) this.elements.model.value = activeModel;
+  if (this.configs?.[this.currentConfig]) {
+    this.configs[this.currentConfig].model = activeModel;
   }
+  this.populateModelSelect(models, activeModel, family, modelDetails);
 
-  if (provider === 'kimi') {
-    // Kimi flow is anthropic-compatible; keep current configured model only.
-    setModelFetchError(null);
-    applyModels(currentModel ? [currentModel] : [], 'Kimi');
-    return;
+  if (options.toast) {
+    const cloudCount = modelDetails.filter((m) => m.isCloud).length;
+    const cloudNote = cloudCount ? ` · ${cloudCount} cloud` : '';
+    this.showSuccessToast?.(
+      response.summary ||
+        `${models.length} modelo${models.length === 1 ? '' : 's'} detectado${models.length === 1 ? '' : 's'} (${family})${cloudNote}`,
+    );
   }
+  return cache;
+};
 
-  let baseUrl = '';
-  if (provider === 'custom' && customEndpoint) {
-    baseUrl = customEndpoint
-      .replace(/\/chat\/completions\/?$/i, '')
-      .replace(/\/completions\/?$/i, '')
-      .replace(/\/v1\/models\/?$/i, '')
-      .replace(/\/v1\/?$/i, '')
-      .replace(/\/+$/, '');
-  } else if (provider === 'openai') {
-    baseUrl = 'https://api.openai.com';
+// Botão "Detectar modelos disponíveis" nas configurações.
+(SidePanelUI.prototype as any).detectProviderModels = async function detectProviderModels() {
+  const provider = this.getSelectedProvider?.() || 'ollama';
+  const apiKey = String(this.elements.apiKey?.value || '');
+  const customEndpoint = String(this.elements.customEndpoint?.value || '').trim();
+  const button = document.getElementById('detectModelsBtn') as HTMLButtonElement | null;
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'Detectando…';
   }
-
-  if (!baseUrl) {
-    setModelFetchError(null);
-    applyModels(currentModel ? [currentModel] : []);
-    return;
-  }
-
-  const sourceFamilyForEndpoint = this.resolveModelFamilyBySource(provider, baseUrl);
-  const modelsUrl = `${baseUrl}/v1/models`;
-  const controller = createController();
-  let timeoutReached = false;
-  const timeoutId = window.setTimeout(() => {
-    timeoutReached = true;
-    controller.abort();
-  }, MODEL_FETCH_TIMEOUT_MS);
 
   try {
-    const response = await fetch(modelsUrl, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      signal: controller.signal,
-    });
-
-    if (!isCurrentRequest(controller)) return;
-
-    if (!response.ok) {
-      setModelFetchError(null);
-      applyModels(currentModel ? [currentModel] : [], sourceFamilyForEndpoint);
+    const response = await requestProviderModelsFromBackground(provider, apiKey, customEndpoint);
+    const models = Array.isArray(response.models) ? response.models : [];
+    if (!models.length) {
+      this.showErrorBanner?.(
+        provider === 'ollama'
+          ? 'Ollama online, mas nenhum modelo listado. Rode: ollama pull <nome> (ou ollama list).'
+          : 'Nenhum modelo encontrado neste endpoint.',
+      );
       return;
     }
-
-    const data = await response.json();
-    if (!isCurrentRequest(controller)) return;
-    const allModels = (data.data || []) as Array<{ id: string; active?: boolean }>;
-    const activeModels = allModels
-      .filter((m) => m.id && m.active === true)
-      .map((m) => m.id)
-      .sort((a, b) => a.localeCompare(b));
-
-    const inactiveModels = allModels
-      .filter((m) => m.id && m.active !== true)
-      .map((m) => m.id)
-      .sort((a, b) => a.localeCompare(b));
-
-    const models = [...activeModels, ...inactiveModels].filter(Boolean);
-
-    if (models.length > 0) {
-      setModelFetchError(null);
-      applyModels(models, sourceFamilyForEndpoint);
-    } else {
-      setModelFetchError(null);
-      applyModels(currentModel ? [currentModel] : [], sourceFamilyForEndpoint);
-    }
-  } catch (_error) {
-    if ((_error as { name?: string })?.name === 'AbortError') {
-      if (timeoutReached) {
-        setModelFetchError('MODEL_FETCH_TIMEOUT', `Timeout after ${MODEL_FETCH_TIMEOUT_MS}ms`);
-        applyModels(currentModel ? [currentModel] : [], sourceFamilyForEndpoint);
-      }
-      return;
-    }
-    setModelFetchError(null);
-    applyModels(currentModel ? [currentModel] : [], sourceFamilyForEndpoint);
+    this.applyDetectedModels(provider, response, { toast: true });
+  } catch (error: any) {
+    console.warn('[Glide] Falha ao detectar modelos:', error);
+    const hint =
+      provider === 'ollama'
+        ? ' Confira se o Ollama está rodando (`ollama serve` / bandeja) e se `ollama list` mostra modelos.'
+        : ' Verifique a chave de API e o endpoint.';
+    this.showErrorBanner?.(`Falha ao detectar modelos.${hint}`);
   } finally {
-    window.clearTimeout(timeoutId);
-    if (isCurrentRequest(controller)) {
-      this.modelsFetchController = null;
+    if (button) {
+      button.disabled = false;
+      button.textContent = '🔍 Detectar modelos disponíveis';
     }
   }
+};
+
+/**
+ * Startup / refresh path: fill the model picker for the *currently selected* provider.
+ * Ollama is probed only when provider is Ollama — never force-switch away from
+ * anthropic/codex/opencode (that snapped the settings dropdown back to Ollama).
+ */
+(SidePanelUI.prototype as any).fetchAvailableModels = async function fetchAvailableModels() {
+  const config = this.configs[this.currentConfig] || {};
+  // Prefer the live <select> value so a just-changed provider is not overwritten
+  // by a stale configs.provider while an older probe is still in flight.
+  const provider = normalizeProviderId(
+    this.elements.provider?.value || config.provider || this.getSelectedProvider?.(),
+  );
+  const apiKey = String(this.elements.apiKey?.value || config.apiKey || '');
+  const customEndpoint = String(this.elements.customEndpoint?.value || config.customEndpoint || '').trim();
+
+  if (provider === 'ollama') {
+    let ollamaProbe: ProviderModelsResponse | null = null;
+    try {
+      ollamaProbe = await this.detectOllamaDetailed(customEndpoint);
+    } catch (error) {
+      ollamaProbe = null;
+      console.warn('[Glide] Ollama probe failed:', error);
+    }
+
+    const ollamaOnline = Boolean(ollamaProbe?.success && (ollamaProbe.models?.length || ollamaProbe.online));
+    // Re-check provider after await — user may have switched to Anthropic mid-probe.
+    const stillOllama =
+      normalizeProviderId(this.elements.provider?.value || this.configs?.[this.currentConfig]?.provider) === 'ollama';
+    if (!stillOllama) {
+      return;
+    }
+
+    if (ollamaOnline && ollamaProbe) {
+      this.applyDetectedModels('ollama', ollamaProbe, { toast: false });
+      const count = Array.isArray(ollamaProbe.models) ? ollamaProbe.models.length : 0;
+      this.updateStatus?.(ollamaProbe.summary || `Ollama · ${count} modelo(s)`, 'success');
+      return;
+    }
+
+    this._detectedModels = { provider: 'ollama', models: [], modelDetails: [], online: false };
+    this.populateModelSelect([], config.model || '', 'Ollama', []);
+    this.updateStatus?.('Ollama offline — inicie o Ollama e rode ollama list', 'warning');
+    return;
+  }
+
+  const family = PROVIDER_FAMILY_LABELS[provider] || provider;
+  let models: string[] = this._detectedModels?.provider === provider ? this._detectedModels.models : [];
+  if (!models.length) {
+    models = PROVIDER_PRESET_MODELS[provider] || [];
+  }
+
+  // Non-Ollama providers: optional live detect when we only have presets.
+  if ((!models.length || models === PROVIDER_PRESET_MODELS[provider]) && apiKey) {
+    try {
+      const live = await requestProviderModelsFromBackground(provider, apiKey, customEndpoint);
+      // Abort if user switched provider while the request was in flight.
+      const stillSame =
+        normalizeProviderId(this.elements.provider?.value || this.configs?.[this.currentConfig]?.provider) ===
+        provider;
+      if (!stillSame) return;
+      if (live.models?.length) {
+        this.applyDetectedModels(provider, live, { toast: false });
+        return;
+      }
+    } catch {
+      // keep presets
+    }
+  }
+
+  const stillSameProvider =
+    normalizeProviderId(this.elements.provider?.value || this.configs?.[this.currentConfig]?.provider) === provider;
+  if (!stillSameProvider) return;
+
+  const currentModel = config.model || models[0] || PROVIDER_DEFAULT_MODELS[provider];
+  this.populateModelSelect(models, currentModel, family, this._detectedModels?.modelDetails || []);
 };
 
 (SidePanelUI.prototype as any).populateModelSelect = function populateModelSelect(
   models: string[],
   currentModel?: string,
   sourceFamily?: string,
+  modelDetails: OllamaModelDetail[] = [],
 ) {
   let select = this.elements.modelSelect;
   if (!select) {
@@ -329,8 +324,18 @@ const MODEL_FETCH_TIMEOUT_MS = 8000;
   const config = this.configs[this.currentConfig] || {};
   const selectedModel = currentModel || config.model || '';
   const normalizedSourceFamily = String(sourceFamily || '').trim();
+  const detailsByName = new Map<string, OllamaModelDetail>();
+  for (const detail of modelDetails || []) {
+    if (detail?.name) detailsByName.set(detail.name, detail);
+  }
+  // Prefer cache if caller did not pass details.
+  if (!detailsByName.size && this._detectedModels?.modelDetails) {
+    for (const detail of this._detectedModels.modelDetails as OllamaModelDetail[]) {
+      if (detail?.name) detailsByName.set(detail.name, detail);
+    }
+  }
 
-  const normalizedModels = models.filter((model) => Boolean(model && model.trim?.())) as string[];
+  const normalizedModels = models.filter((model) => Boolean(model && String(model).trim())) as string[];
   let finalModels = normalizedModels.length > 0 ? normalizedModels : [];
   if (selectedModel && !finalModels.includes(selectedModel)) {
     finalModels = [selectedModel, ...finalModels];
@@ -338,7 +343,7 @@ const MODEL_FETCH_TIMEOUT_MS = 8000;
 
   select.innerHTML = '';
 
-  if (!selectedModel) {
+  if (!selectedModel && !finalModels.length) {
     const placeholder = document.createElement('option');
     placeholder.value = '';
     placeholder.textContent = 'Selecionar modelo';
@@ -350,10 +355,24 @@ const MODEL_FETCH_TIMEOUT_MS = 8000;
   for (const model of finalModels) {
     const option = document.createElement('option');
     option.value = model;
+    const detail = detailsByName.get(model);
+    // Primary label stays the tag name (what the API expects).
     option.textContent = model;
     if (normalizedSourceFamily) {
       option.dataset.modelFamily = normalizedSourceFamily;
     }
+    if (detail?.id) option.dataset.modelId = detail.id;
+    if (detail?.sizeLabel) option.dataset.sizeLabel = detail.sizeLabel;
+    if (detail?.modifiedLabel) option.dataset.modifiedLabel = detail.modifiedLabel;
+    if (detail?.isCloud) option.dataset.isCloud = '1';
+    if (detail?.parameterSize) option.dataset.parameterSize = detail.parameterSize;
+    // Secondary line for the custom menu: ID · SIZE · MODIFIED (ollama list columns).
+    const metaParts = [
+      detail?.id && detail.id !== '—' ? detail.id : '',
+      detail?.sizeLabel && detail.sizeLabel !== '—' ? detail.sizeLabel : detail?.isCloud ? 'cloud' : '',
+      detail?.modifiedLabel && detail.modifiedLabel !== '—' ? detail.modifiedLabel : '',
+    ].filter(Boolean);
+    if (metaParts.length) option.dataset.modelMeta = metaParts.join(' · ');
     if (model === selectedModel) {
       option.selected = true;
     }
@@ -371,8 +390,7 @@ const MODEL_FETCH_TIMEOUT_MS = 8000;
 
   const config = this.configs?.[this.currentConfig] || {};
   const selectedOption = select.selectedOptions?.[0];
-  const text =
-    selectedOption?.textContent?.trim() || select.value || config.model || 'Selecionar modelo';
+  const text = selectedOption?.textContent?.trim() || select.value || config.model || 'Selecionar modelo';
   valueEl.textContent = text;
 };
 
@@ -449,18 +467,10 @@ const MODEL_FETCH_TIMEOUT_MS = 8000;
     grouped.get(family)?.push(option);
   }
 
-  const preferredOrder = [
-    'OpenAI',
-    'Anthropic',
-    'Google',
-    'Kimi',
-    'Ollama',
-    'OpenRouter',
-    'Custom',
-    'Modelo',
-  ];
+  const preferredOrder = ['Ollama', 'Custom', 'Modelo'];
+  const preferredSet = new Set(preferredOrder);
   const dynamicFamilies = Array.from(grouped.keys())
-    .filter((family) => !preferredOrder.includes(family))
+    .filter((family) => !preferredSet.has(family))
     .sort((a, b) => a.localeCompare(b));
   const orderedFamilies = [...preferredOrder.filter((family) => grouped.has(family)), ...dynamicFamilies];
 
@@ -490,6 +500,18 @@ const MODEL_FETCH_TIMEOUT_MS = 8000;
       modelName.className = 'model-option-name';
       modelName.textContent = option.textContent || option.value;
       item.appendChild(modelName);
+
+      const metaText =
+        option.dataset.modelMeta ||
+        [option.dataset.modelId, option.dataset.sizeLabel, option.dataset.modifiedLabel]
+          .filter((part) => part && part !== '—')
+          .join(' · ');
+      if (metaText) {
+        const modelMeta = document.createElement('span');
+        modelMeta.className = 'model-option-meta';
+        modelMeta.textContent = metaText;
+        item.appendChild(modelMeta);
+      }
 
       if (option.value === select.value) {
         item.classList.add('selected');
@@ -573,5 +595,8 @@ const MODEL_FETCH_TIMEOUT_MS = 8000;
   }
 
   this.syncModelTrigger();
-  this.persistAllSettings({ silent: true });
+  this.persistAllSettings({ silent: true }).catch((error: unknown) => {
+    console.error('Falha ao salvar seleção de modelo:', error);
+    this.showErrorBanner?.('Falha ao salvar a seleção de modelo.');
+  });
 };

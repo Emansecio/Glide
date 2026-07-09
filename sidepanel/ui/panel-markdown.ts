@@ -31,28 +31,34 @@ import { SidePanelUI } from './panel-ui.js';
 
   const applyInline = (value = '') => {
     let html = escape(value);
-    html = html.replace(
-      /!\[([^\]]*)\]\(([^)]+)\)/g,
-      (_: string, alt: string, url: string) => {
-        const safeUrl = sanitizeUrl(url);
-        if (!safeUrl) return alt ? escape(alt) : '';
-        return `<img alt="${escapeAttr(alt)}" src="${escapeAttr(safeUrl)}">`;
-      },
-    );
-    html = html.replace(
-      /\[([^\]]+)\]\(([^)]+)\)/g,
-      (_: string, label: string, url: string) => {
-        const safeUrl = sanitizeUrl(url, { allowMailto: true });
-        if (!safeUrl) return label;
-        return `<a href="${escapeAttr(safeUrl)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
-      },
-    );
-    html = html.replace(/`([^`]+)`/g, (_: string, code: string) => `<code>${escape(code)}</code>`);
+    // Links, images and inline code are stashed as placeholders BEFORE the
+    // emphasis passes run, so `*`/`_` inside a URL (e.g. Foo_bar_baz) can no
+    // longer inject <em>/<strong> into an href and break the link.
+    const inlineStash: string[] = [];
+    const stash = (replacement: string) => {
+      const token = `@@ML${inlineStash.length}@@`;
+      inlineStash.push(replacement);
+      return token;
+    };
+    html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_: string, alt: string, url: string) => {
+      const safeUrl = sanitizeUrl(url);
+      if (!safeUrl) return alt ? escape(alt) : '';
+      return stash(`<img alt="${escapeAttr(alt)}" src="${escapeAttr(safeUrl)}">`);
+    });
+    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_: string, label: string, url: string) => {
+      const safeUrl = sanitizeUrl(url, { allowMailto: true });
+      if (!safeUrl) return label;
+      return stash(`<a href="${escapeAttr(safeUrl)}" target="_blank" rel="noopener noreferrer">${label}</a>`);
+    });
+    html = html.replace(/`([^`]+)`/g, (_: string, code: string) => stash(`<code>${escape(code)}</code>`));
     html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
     html = html.replace(/__(.+?)__/g, '<strong>$1</strong>');
     html = html.replace(/~~(.+?)~~/g, '<del>$1</del>');
     html = html.replace(/(?<!\*)\*(?!\s)(.+?)\*(?!\*)/g, '<em>$1</em>');
     html = html.replace(/(?<!_)_(?!\s)(.+?)_(?!_)/g, '<em>$1</em>');
+    inlineStash.forEach((replacement, index) => {
+      html = html.split(`@@ML${index}@@`).join(replacement);
+    });
     return html;
   };
 

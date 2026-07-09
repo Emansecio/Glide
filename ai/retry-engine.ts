@@ -28,6 +28,27 @@ export function createExponentialBackoff(options: BackoffOptions = {}) {
   };
 }
 
+export function isRetryableProviderError(status: unknown): boolean {
+  const code = typeof status === 'number' ? status : Number(status);
+  if (!Number.isFinite(code)) return false;
+  if (code === 400 || code === 401 || code === 403) return false;
+  if (code === 408 || code === 429) return true;
+  return code >= 500;
+}
+
+export function extractProviderErrorStatus(error: unknown): number | undefined {
+  if (!error || typeof error !== 'object') return undefined;
+  const candidate = error as Record<string, unknown>;
+  if (typeof candidate.statusCode === 'number') return candidate.statusCode;
+  if (typeof candidate.status === 'number') return candidate.status;
+  const response = candidate.response;
+  if (response && typeof response === 'object') {
+    const responseStatus = (response as Record<string, unknown>).status;
+    if (typeof responseStatus === 'number') return responseStatus;
+  }
+  return undefined;
+}
+
 export function isValidFinalResponse(
   text: unknown,
   options: { quitPhrases?: string[]; allowEmpty?: boolean } = {},

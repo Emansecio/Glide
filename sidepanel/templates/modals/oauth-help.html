@@ -1,0 +1,50 @@
+<div id="oauthHelpModal" class="modal hidden">
+    <div class="modal-backdrop" id="oauthHelpModalBackdrop"></div>
+    <div class="modal-content">
+        <div class="modal-header">
+            <div class="modal-title-row">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="16" x2="12" y2="12" />
+                    <line x1="12" y1="8" x2="12.01" y2="8" />
+                </svg>
+                <span class="modal-title">Como Obter o Token OAuth?</span>
+            </div>
+            <button id="closeOauthHelpBtn" class="btn btn-secondary btn-sm modal-close-btn" type="button" title="Fechar">
+                <svg class="icon-close" width="14" height="14" aria-hidden="true"><use href="#icon-close" /></svg>
+            </button>
+        </div>
+        <div class="modal-subtitle">
+            O Glide usa o faturamento do Claude Code (OAuth) para que você não gaste seus créditos da API Anthropic padrão. Veja como obter o seu token em segundos:
+        </div>
+        <div class="settings-body oauth-help-body">
+            <p><strong>Opção 1: Importar arquivo credentials.json (Mais Fácil)</strong></p>
+            <ol class="oauth-help-list">
+                <li>Clique no botão <strong>📂 Importar credentials.json</strong>.</li>
+                <li>Navegue até a pasta:
+                    <ul class="oauth-help-nested-list">
+                        <li><strong>Windows:</strong> <code>C:\Usuários\SeuNome\.claude\.credentials.json</code></li>
+                        <li><strong>Linux/Mac:</strong> <code>~/.claude/.credentials.json</code></li>
+                    </ul>
+                </li>
+                <li>Selecione o arquivo e o Glide vai extrair e configurar seu token na hora!</li>
+            </ol>
+
+            <div class="divider">OU</div>
+
+            <p><strong>Opção 2: Pelo Terminal</strong></p>
+            <ol class="oauth-help-list">
+                <li>Certifique-se de que já fez login no Claude Code rodando:
+                    <pre class="oauth-help-code">claude login</pre>
+                </li>
+                <li>Abra o arquivo <code>.credentials.json</code> na pasta citada acima ou obtenha o token de longa duração gerando:
+                    <pre class="oauth-help-code">claude setup-token</pre>
+                </li>
+                <li>Copie o token gerado (começa com <code>sk-ant-oat01-</code>) e cole no campo "Token OAuth do Claude Code".</li>
+            </ol>
+        </div>
+        <div class="settings-actions oauth-help-actions">
+            <button id="closeOauthHelpBtnOk" class="btn btn-primary modal-confirm-btn" type="button">Entendido, paizão!</button>
+        </div>
+    </div>
+</div>

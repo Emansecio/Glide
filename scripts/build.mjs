@@ -38,32 +38,41 @@ const copyDirFiltered = (src, dest, filter) => {
 };
 
 const runTypeCheck = () => {
-  execSync('tsc -p tsconfig.json --noEmit', { stdio: 'inherit' });
+  const tscPath = path.join(rootDir, 'node_modules', '.bin', 'tsc');
+  const cmd = fs.existsSync(tscPath) ? `"${tscPath}"` : 'tsc';
+  execSync(`${cmd} -p tsconfig.json --noEmit`, { stdio: 'inherit', shell: true });
 };
 
+// Production can be requested cross-platform via `--prod` (no cross-env needed)
+// or the conventional NODE_ENV. Production drops console, minifies and omits
+// sourcemaps so the packaged extension does not ship TS source.
+const isProduction = process.env.NODE_ENV === 'production' || process.argv.includes('--prod');
+
 const buildExtensionBundles = async () => {
-  await esbuild.build({
-    entryPoints: [path.join(rootDir, 'background.ts'), path.join(rootDir, 'sidepanel', 'panel.ts')],
+  const commonExtConfig = {
     outdir: distDir,
     outbase: rootDir,
     bundle: true,
-    format: 'esm',
     platform: 'browser',
     target: 'es2022',
-    sourcemap: true,
+    sourcemap: !isProduction,
     logLevel: 'info',
+    minify: isProduction,
+    drop: isProduction ? ['console'] : undefined,
+    define: isProduction ? { 'process.env.NODE_ENV': '"production"' } : undefined,
+    metafile: true,
+  };
+
+  await esbuild.build({
+    ...commonExtConfig,
+    entryPoints: [path.join(rootDir, 'background.ts'), path.join(rootDir, 'sidepanel', 'panel.ts')],
+    format: 'esm',
   });
 
   await esbuild.build({
+    ...commonExtConfig,
     entryPoints: [path.join(rootDir, 'content.ts')],
-    outdir: distDir,
-    outbase: rootDir,
-    bundle: true,
     format: 'iife',
-    platform: 'browser',
-    target: 'es2022',
-    sourcemap: true,
-    logLevel: 'info',
   });
 
   const manifestPath = path.join(rootDir, 'manifest.json');
@@ -85,6 +94,10 @@ const buildTestBundles = async () => {
       path.join(rootDir, 'tests', 'validate-extension.ts'),
       path.join(rootDir, 'tests', 'unit', 'run-unit-tests.ts'),
       path.join(rootDir, 'tests', 'e2e', 'run-e2e.ts'),
+      path.join(rootDir, 'tests', 'e2e', 'test-model-communication.ts'),
+      path.join(rootDir, 'tests', 'e2e', 'test-live-model-e2e.ts'),
+      path.join(rootDir, 'tests', 'integration', 'test-ollama-sdk.ts'),
+      path.join(rootDir, 'tests', 'integration', 'test-model-correctness.ts'),
     ],
     outdir: distDir,
     outbase: rootDir,
@@ -94,7 +107,7 @@ const buildTestBundles = async () => {
     target: 'es2022',
     sourcemap: true,
     logLevel: 'info',
-    external: ['chromium-bidi/lib/cjs/bidiMapper/BidiMapper', 'chromium-bidi/lib/cjs/cdp/CdpConnection'],
+    external: ['playwright', 'chromium-bidi/lib/cjs/bidiMapper/BidiMapper', 'chromium-bidi/lib/cjs/cdp/CdpConnection'],
   });
 };
 

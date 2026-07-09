@@ -1,6 +1,8 @@
 // Content Script - Runs in the context of web pages
 // This script can access the DOM and communicate with the background script
 
+import { installGlideBridge } from './content/glide-bridge.js';
+
 type HighlightEntry = {
   element: HTMLElement;
   originalOutline: string;
@@ -79,8 +81,9 @@ class ContentScriptHandler {
         type: 'content_script_ready',
         url: window.location.href,
       })
-      .catch(() => {
-        // Extension context may not be ready yet
+      .catch((err) => {
+        if (err?.message?.includes('Could not establish connection')) return;
+        console.warn('content_script_ready failed:', err);
       });
   }
 
@@ -213,7 +216,7 @@ class ContentScriptHandler {
   findLabelForInput(input: HTMLElement & { id?: string }) {
     // Try to find associated label
     if (input.id) {
-      const label = document.querySelector(`label[for="${input.id}"]`);
+      const label = document.querySelector(`label[for="${CSS.escape(input.id)}"]`);
       if (label) return label;
     }
 
@@ -242,8 +245,9 @@ class ContentScriptHandler {
     }
 
     // Try data attributes
-    for (let i = 0; i < element.attributes.length; i++) {
-      const attr = element.attributes[i];
+    const attrs = element.attributes;
+    for (let i = 0, len = attrs.length; i < len; i++) {
+      const attr = attrs[i];
       if (attr.name.startsWith('data-') && attr.value) {
         return `[${attr.name}="${attr.value}"]`;
       }
@@ -302,5 +306,6 @@ class ContentScriptHandler {
 const GLIDE_INIT_FLAG = '__glide_content_init__';
 if (!(window as unknown as Record<string, boolean>)[GLIDE_INIT_FLAG]) {
   (window as unknown as Record<string, boolean>)[GLIDE_INIT_FLAG] = true;
+  installGlideBridge();
   new ContentScriptHandler();
 }

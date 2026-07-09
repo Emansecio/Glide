@@ -71,8 +71,8 @@ export function estimateTokensFromContent(content: MessageContent): number {
   if (Array.isArray(content)) {
     return content.reduce((acc, part) => {
       if (typeof part === 'string') return acc + Math.ceil(part.length / 4);
+      if (isTextPart(part)) return acc + Math.ceil(part.text.length / 4);
       if (part && typeof part === 'object') {
-        if ('text' in part && typeof part.text === 'string') return acc + Math.ceil(part.text.length / 4);
         try {
           return acc + Math.ceil(JSON.stringify(part).length / 4);
         } catch {
@@ -87,6 +87,10 @@ export function estimateTokensFromContent(content: MessageContent): number {
   } catch {
     return Math.ceil(String(content).length / 4);
   }
+}
+
+export function isTextPart(part: unknown): part is { text: string } {
+  return part != null && typeof part === 'object' && 'text' in part && typeof (part as any).text === 'string';
 }
 
 export function safeJsonStringify(value: unknown): string {

@@ -1,6 +1,7 @@
 import { createMessage } from '../../ai/message-schema.js';
 import type { Message } from '../../ai/message-schema.js';
 import { dedupeThinking, extractThinking } from '../../ai/message-utils.js';
+import { resolvePanelTabId } from './panel-tab-id.js';
 import type { UsagePayload } from './panel-types.js';
 import { SidePanelUI } from './panel-ui.js';
 
@@ -53,12 +54,14 @@ import { SidePanelUI } from './panel-ui.js';
   this.elements.sendBtn?.classList.add('loading');
 
   try {
+    const panelTabId = await resolvePanelTabId();
     await chrome.runtime.sendMessage({
       type: 'user_message',
       message: fullMessage,
       conversationHistory: this.contextHistory,
       selectedTabs: Array.from(this.selectedTabs.values()),
       sessionId: this.sessionId,
+      panelTabId,
     });
   } catch (error: any) {
     const errorMessage = error?.message || 'Failed to send message to the background service.';
@@ -93,13 +96,25 @@ import { SidePanelUI } from './panel-ui.js';
   }
 };
 
+(SidePanelUI.prototype as any).buildAssistantHeaderHtml = function buildAssistantHeaderHtml(meta?: string | null) {
+  const metaHtml = meta ? `<span class="message-meta-inline">${this.escapeHtml(meta)}</span>` : '';
+  return `
+    <span class="assistant-glyph">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275Z"/>
+      </svg>
+    </span>
+    <span class="assistant-name">Glide</span>
+    ${metaHtml}
+  `;
+};
+
 (SidePanelUI.prototype as any).displayUserMessage = function displayUserMessage(content: string) {
   const turn = document.createElement('div');
   turn.className = 'chat-turn';
   const messageDiv = document.createElement('div');
   messageDiv.className = 'message user';
   messageDiv.innerHTML = `
-      <div class="message-header">You</div>
       <div class="message-content">${this.escapeHtml(content)}</div>
     `;
   turn.appendChild(messageDiv);
@@ -127,7 +142,8 @@ import { SidePanelUI } from './panel-ui.js';
 (SidePanelUI.prototype as any).updateChatEmptyState = function updateChatEmptyState() {
   const emptyState = this.elements.chatEmptyState;
   if (!emptyState) return;
-  const hasMessages = (this.displayHistory && this.displayHistory.length > 0) ||
+  const hasMessages =
+    (this.displayHistory && this.displayHistory.length > 0) ||
     (this.elements.chatMessages && this.elements.chatMessages.children.length > 0);
   emptyState.classList.toggle('hidden', hasMessages);
 };
@@ -186,27 +202,13 @@ import { SidePanelUI } from './panel-ui.js';
   }
 
   if (streamedContainer) {
-    if (!streamedContainer.querySelector('.message-header')) {
-      const header = document.createElement('div');
-      header.className = 'message-header';
-      header.textContent = 'Assistant';
+    let header = streamedContainer.querySelector('.message-header') as HTMLElement | null;
+    if (!header) {
+      header = document.createElement('div');
+      header.className = 'message-header assistant-header';
       streamedContainer.prepend(header);
     }
-
-    if (messageMeta) {
-      let metaEl = streamedContainer.querySelector('.message-meta') as HTMLElement | null;
-      if (!metaEl) {
-        metaEl = document.createElement('div');
-        metaEl.className = 'message-meta';
-        const header = streamedContainer.querySelector('.message-header');
-        if (header) {
-          header.insertAdjacentElement('afterend', metaEl);
-        } else {
-          streamedContainer.prepend(metaEl);
-        }
-      }
-      metaEl.textContent = messageMeta;
-    }
+    header.innerHTML = this.buildAssistantHeaderHtml(messageMeta);
 
     if (content && content.trim() !== '' && streamMainTextEl) {
       streamMainTextEl.innerHTML = this.renderMarkdown(content);
@@ -229,36 +231,18 @@ import { SidePanelUI } from './panel-ui.js';
   const messageDiv = document.createElement('div');
   messageDiv.className = 'message assistant';
 
-  let html = `<div class="message-header">Assistant</div>`;
-  if (messageMeta) {
-    html += `<div class="message-meta">${this.escapeHtml(messageMeta)}</div>`;
-  }
+  let html = `<div class="message-header assistant-header">${this.buildAssistantHeaderHtml(messageMeta)}</div>`;
 
   const semanticRows = this.buildExecutionSemanticRows?.(executionSummary) || [];
   if (semanticRows.length > 0) {
-    const summaryItems = semanticRows
-      .map((row: any, index: number) => {
-        const statusLabel = row.status === 'error' ? 'Erro' : row.status === 'ok' ? 'OK' : 'Pendente';
-        return `
-          <li class="execution-human-item ${row.status}">
-            <span class="execution-human-index">${index + 1}.</span>
-            <span class="execution-human-text">
-              <strong>${this.escapeHtml(row.label)}:</strong> ${this.escapeHtml(row.description)}
-              <span class="execution-human-meta">(${row.count}x, ${statusLabel})</span>
-            </span>
-          </li>
-        `;
-      })
-      .join('');
     html += `
       <div class="execution-human-summary">
-        <div class="execution-human-title">Plano de Execucao</div>
-        <ol class="execution-human-list">${summaryItems}</ol>
+        ${this.buildExecutionChipsHtml(semanticRows)}
       </div>
     `;
   }
 
-  const showThinking = this.elements.showThinking.value === 'true';
+  const showThinking = this.elements.showThinking?.value !== 'false';
   if (thinking && showThinking) {
     const cleanedThinking = dedupeThinking(thinking);
     html += `
@@ -283,13 +267,7 @@ import { SidePanelUI } from './panel-ui.js';
 
   const thinkingHeader = messageDiv.querySelector('.thinking-header');
   if (thinkingHeader) {
-    thinkingHeader.addEventListener('click', () => {
-      const block = thinkingHeader.closest('.thinking-block');
-      if (!block || block.classList.contains('thinking-hidden')) return;
-      block.classList.toggle('collapsed');
-      const expanded = !block.classList.contains('collapsed');
-      thinkingHeader.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-    });
+    this.bindThinkingToggle(thinkingHeader);
   }
 
   if (this.lastChatTurn) {

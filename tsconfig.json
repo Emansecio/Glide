@@ -12,7 +12,11 @@
     "useUnknownInCatchVariables": false,
     "types": ["chrome", "node"],
     "lib": ["ES2022", "DOM"],
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "incremental": true,
+    "tsBuildInfoFile": ".tsbuildinfo",
+    "noUnusedLocals": true,
+    "noUnusedParameters": true
   },
   "include": [
     "background.ts",
@@ -23,5 +27,5 @@
     "tests/**/*.ts",
     "types/**/*.d.ts"
   ],
-  "exclude": ["server/**", "dist/**", "node_modules/**"]
+  "exclude": ["dist/**", "node_modules/**"]
 }

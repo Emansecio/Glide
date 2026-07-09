@@ -8,9 +8,16 @@
         </div>
 
         <div id="chatEmptyState" class="chat-empty-state">
-            <div class="chat-empty-orb-wrapper"><div class="chat-empty-orb"></div></div>
-            <div class="chat-empty-title">Pronto quando você estiver</div>
-            <div class="chat-empty-subtitle">Pergunte algo, adicione abas ou arquivos para começar a conversa.</div>
+            <div class="chat-empty-orb-wrapper">
+                <div class="chat-empty-orb" aria-hidden="true">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="3"/>
+                        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+                    </svg>
+                </div>
+            </div>
+            <div class="chat-empty-title">Pronto para operar</div>
+            <div class="chat-empty-subtitle">Navegue, clique, extraia dados ou pergunte. Uma instrução por vez funciona melhor.</div>
         </div>
 
         <div id="chatMessages" class="chat-messages"></div>
@@ -25,10 +32,7 @@
                         Exportar log
                     </button>
                     <button id="activityCloseBtn" class="icon-btn" title="Fechar atividade">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <line x1="18" y1="6" x2="6" y2="18"></line>
-                            <line x1="6" y1="6" x2="18" y2="18"></line>
-                        </svg>
+                        <svg class="icon-close" width="14" height="14" aria-hidden="true"><use href="#icon-close" /></svg>
                     </button>
                 </div>
             </div>

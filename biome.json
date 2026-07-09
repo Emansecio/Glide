@@ -31,6 +31,9 @@
       },
       "correctness": {
         "noSwitchDeclarations": "off"
+      },
+      "security": {
+        "noGlobalEval": "off"
       }
     }
   },
@@ -47,6 +50,6 @@
     }
   },
   "files": {
-    "ignore": ["dist/**", "node_modules/**", "server/node_modules/**", "*.json", "*.md"]
+    "ignore": ["dist/**", "node_modules/**", "*.json", "*.md"]
   }
 }

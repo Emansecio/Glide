@@ -60,15 +60,13 @@ import { SidePanelUI } from './panel-ui.js';
   }
 
   const steps = plan.steps;
-  const completedCount = steps.filter((s) => s.status === 'done').length;
+  const completedCount = steps.reduce((c, s) => c + (s.status === 'done' ? 1 : 0), 0);
   const totalCount = steps.length;
 
   // Update step count
   if (this.elements.planStepCount) {
     this.elements.planStepCount.textContent =
-      completedCount === totalCount
-        ? `${totalCount} etapas - concluido`
-        : `${completedCount}/${totalCount} etapas`;
+      completedCount === totalCount ? `${totalCount} etapas - concluido` : `${completedCount}/${totalCount} etapas`;
   }
 
   // Render checklist
@@ -101,7 +99,7 @@ import { SidePanelUI } from './panel-ui.js';
         const notes = step.notes ? `<div class="plan-checklist-notes">${this.escapeHtml(step.notes)}</div>` : '';
 
         return `
-          <li class="${itemClass}" data-step-index="${index}" data-step-id="${step.id}">
+          <li class="${itemClass}" data-step-index="${index}" data-step-id="${this.escapeAttribute(step.id)}">
             <button 
               class="${checkboxClass}" 
               ${!canCheck && !isDone ? 'disabled' : ''}
@@ -120,14 +118,16 @@ import { SidePanelUI } from './panel-ui.js';
       })
       .join('');
 
-    // Add click handlers for checkboxes
-    this.elements.planChecklist.querySelectorAll('[data-action="toggle-step"]').forEach((btn: Element) => {
-      btn.addEventListener('click', (e: Event) => {
+    if (!this._planChecklistClickBound) {
+      this.elements.planChecklist.addEventListener('click', (e: Event) => {
+        const target = (e.target as HTMLElement | null)?.closest('[data-action="toggle-step"]');
+        if (!target) return;
         e.stopPropagation();
-        const index = parseInt((btn as HTMLElement).dataset.stepIndex || '0', 10);
+        const index = Number.parseInt((target as HTMLElement).dataset.stepIndex || '0', 10);
         this.togglePlanStep(index);
       });
-    });
+      this._planChecklistClickBound = true;
+    }
   }
 
   this.showPlanDrawer();
@@ -140,7 +140,9 @@ import { SidePanelUI } from './panel-ui.js';
   if (!this.currentPlan || !this.currentPlan.steps[index]) return;
 
   const step = this.currentPlan.steps[index];
-  const previousStepsDone = this.currentPlan.steps.slice(0, index).every((s: { status: string }) => s.status === 'done');
+  const previousStepsDone = this.currentPlan.steps
+    .slice(0, index)
+    .every((s: { status: string }) => s.status === 'done');
 
   // Can only toggle if previous steps are done
   if (!previousStepsDone && step.status !== 'done') {
@@ -163,5 +165,3 @@ import { SidePanelUI } from './panel-ui.js';
   this.currentPlan.updatedAt = Date.now();
   this.renderPlanDrawer(this.currentPlan);
 };
-
-

@@ -44,8 +44,10 @@ async function main() {
 
   let allPassed = true;
 
+  allPassed = (await runCommand('npm run lint', 'Lint')) && allPassed;
   allPassed = (await runCommand('node dist/tests/validate-extension.js', 'Extension Validation')) && allPassed;
   allPassed = (await runCommand('node dist/tests/unit/run-unit-tests.js', 'Unit Tests')) && allPassed;
+  allPassed = (await runCommand('node dist/tests/e2e/run-e2e.js', 'E2E Tests')) && allPassed;
 
   log(`\n${'='.repeat(40)}`, 'info');
   if (allPassed) {

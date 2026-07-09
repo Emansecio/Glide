@@ -43,54 +43,22 @@ export const getSidePanelElements = (): SidePanelElements => ({
   closeTabSelector: byId<HTMLButtonElement>('closeTabSelector'),
   selectedTabsBar: byId<HTMLElement>('selectedTabsBar'),
   scrollToLatestBtn: byId<HTMLButtonElement>('scrollToLatestBtn'),
-  viewChatBtn: byId<HTMLButtonElement>('viewChatBtn'),
-  viewHistoryBtn: byId<HTMLButtonElement>('viewHistoryBtn'),
   historyPanel: byId<HTMLElement>('historyPanel'),
   historyItems: byId<HTMLElement>('historyItems'),
   clearHistoryBtn: byId<HTMLButtonElement>('clearHistoryBtn'),
   startNewSessionBtn: byId<HTMLButtonElement>('startNewSessionBtn'),
-  settingsTabGeneralBtn: byId<HTMLButtonElement>('settingsTabGeneralBtn'),
   settingsTabGeneral: byId<HTMLElement>('settingsTabGeneral'),
-  permissionRead: byId<HTMLInputElement>('permissionRead'),
-  permissionInteract: byId<HTMLInputElement>('permissionInteract'),
-  permissionNavigate: byId<HTMLInputElement>('permissionNavigate'),
-  permissionTabs: byId<HTMLInputElement>('permissionTabs'),
-  permissionScreenshots: byId<HTMLInputElement>('permissionScreenshots'),
-  allowedDomains: byId<HTMLTextAreaElement>('allowedDomains'),
-  exportSettingsBtn: byId<HTMLButtonElement>('exportSettingsBtn'),
-  importSettingsBtn: byId<HTMLButtonElement>('importSettingsBtn'),
-  importSettingsInput: byId<HTMLInputElement>('importSettingsInput'),
+
+  detectModelsBtn: byId<HTMLButtonElement>('detectModelsBtn'),
+  codexOauthBtn: byId<HTMLButtonElement>('codexOauthBtn'),
 
   // Form elements - Provider & model
   provider: byId<HTMLSelectElement>('provider'),
   apiKey: byId<HTMLInputElement>('apiKey'),
+  apiKeyGroup: byId<HTMLElement>('apiKeyGroup'),
   model: byId<HTMLInputElement>('model'),
   customEndpoint: byId<HTMLInputElement>('customEndpoint'),
   customEndpointGroup: byId<HTMLElement>('customEndpointGroup'),
-
-  // Form elements - Model parameters
-  maxTokens: byId<HTMLInputElement>('maxTokens'),
-  contextLimit: byId<HTMLInputElement>('contextLimit'),
-  timeout: byId<HTMLInputElement>('timeout'),
-  qualityMode: byId<HTMLSelectElement>('qualityMode'),
-  autoTuneSafety: byId<HTMLSelectElement>('autoTuneSafety'),
-  minimumReportSections: byId<HTMLInputElement>('minimumReportSections'),
-
-  // Form elements - Screenshots & vision
-  enableScreenshots: byId<HTMLInputElement>('enableScreenshots'),
-  sendScreenshotsAsImages: byId<HTMLInputElement>('sendScreenshotsAsImages'),
-  screenshotQuality: byId<HTMLSelectElement>('screenshotQuality'),
-  visionBridge: byId<HTMLInputElement>('visionBridge'),
-
-  // Form elements - Behavior
-  showThinking: byId<HTMLInputElement>('showThinking'),
-  streamResponses: byId<HTMLInputElement>('streamResponses'),
-  autoScroll: byId<HTMLSelectElement>('autoScroll'),
-  confirmActions: byId<HTMLInputElement>('confirmActions'),
-  saveHistory: byId<HTMLInputElement>('saveHistory'),
-
-  // Form elements - Orchestrator
-  orchestratorToggle: byId<HTMLInputElement>('orchestratorToggle') ?? byId<HTMLInputElement>('useOrchestrator'),
 
   // Form elements - System prompt
   systemPrompt: byId<HTMLTextAreaElement>('systemPrompt'),
@@ -98,6 +66,13 @@ export const getSidePanelElements = (): SidePanelElements => ({
   // Settings actions
   saveSettingsBtn: byId<HTMLButtonElement>('saveSettingsBtn'),
   cancelSettingsBtn: byId<HTMLButtonElement>('cancelSettingsBtn'),
+  importCredentialsBtn: byId<HTMLButtonElement>('importCredentialsBtn'),
+  oauthHelpBtn: byId<HTMLButtonElement>('oauthHelpBtn'),
+  credentialsFileInput: byId<HTMLInputElement>('credentialsFileInput'),
+  oauthHelpModal: byId<HTMLElement>('oauthHelpModal'),
+  closeOauthHelpBtn: byId<HTMLButtonElement>('closeOauthHelpBtn'),
+  closeOauthHelpBtnOk: byId<HTMLButtonElement>('closeOauthHelpBtnOk'),
+  oauthHelpModalBackdrop: byId<HTMLElement>('oauthHelpModalBackdrop'),
 
   // Chat interface
   chatMessages: byId<HTMLElement>('chatMessages'),

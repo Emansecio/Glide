@@ -1,4 +1,4 @@
-﻿<div id="tabSelector" class="modal hidden">
+﻿<div id="tabSelector" class="modal modal--bottom-sheet hidden">
     <div class="modal-backdrop"></div>
     <div class="modal-content tab-selector-modal">
         <div class="modal-header">
@@ -10,10 +10,7 @@
                 <div class="modal-subtitle">As abas selecionadas adicionam títulos e URLs ao prompt para melhorar o contexto.</div>
             </div>
             <button id="closeTabSelector" class="icon-btn" title="Fechar">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <line x1="18" y1="6" x2="6" y2="18" />
-                    <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
+                <svg class="icon-close" width="14" height="14" aria-hidden="true"><use href="#icon-close" /></svg>
             </button>
         </div>
         <div class="tab-selector-actions">

@@ -1,6 +1,8 @@
 import type { Message } from '../../ai/message-schema.js';
 import type { RunPlan } from '../../types/plan.js';
+import type { ModalController } from './modal-controller.js';
 import { getSidePanelElements } from './panel-elements.js';
+import { setSidebarOpen, showRightPanel, updateNavActive } from './panel-navigation-helpers.js';
 import type { UsageStats } from './panel-types.js';
 
 export class SidePanelUI {
@@ -8,6 +10,10 @@ export class SidePanelUI {
   displayHistory: Message[];
   contextHistory: Message[];
   sessionId: string;
+  activeRunId: string | null;
+  completedRunIds: Set<string>;
+  acceptedSessionIds: Set<string>;
+  pendingSessionId: string | null;
   sessionStartedAt: number;
   firstUserMessage: string;
   currentConfig: string;
@@ -65,12 +71,108 @@ export class SidePanelUI {
   activeToolName: string | null;
   streamingReasoning: string;
   currentPlan: RunPlan | null;
+  executionTurnSummaries: Map<string, unknown>;
+  activeExecutionTurnKey: string | null;
   // Document-level event handlers for cleanup
   _documentClickHandler: ((event: Event) => void) | null;
   _documentKeydownHandler: ((event: KeyboardEvent) => void) | null;
+  tabSelectorController: ModalController | null;
+  oauthHelpModalController: ModalController | null;
 
   // Methods attached via prototype in panel-modules
   declare init: () => Promise<void>;
+  declare recordScrollPosition: () => void;
+  declare restoreScrollPosition: () => void;
+  declare loadHistoryList: () => void | Promise<void>;
+  declare switchSettingsTab: (tab: string) => void;
+  declare abortActiveStreaming: () => void;
+  declare invalidateContextUsageCache: () => void;
+  declare hidePlanDrawer: () => void;
+  declare stopThinkingTimer: () => void;
+  declare updateChatEmptyState: () => void;
+  declare resetActivityPanel: () => void;
+  declare hideAgentNav: () => void;
+  declare updateStatus: (message: string, tone?: string) => void;
+  declare scheduleContextUsageRecompute: (options?: { force?: boolean }) => void;
+  declare scrollToBottom: (options?: { force?: boolean }) => void;
+
+  switchView(view: 'chat' | 'history') {
+    this.currentView = view;
+    if (!this.elements.chatInterface || !this.elements.historyPanel) return;
+    if (view === 'history') {
+      this.recordScrollPosition();
+      this.elements.chatInterface.classList.add('hidden');
+      this.elements.historyPanel.classList.remove('hidden');
+    } else {
+      this.elements.chatInterface.classList.remove('hidden');
+      this.elements.historyPanel.classList.add('hidden');
+      this.restoreScrollPosition();
+    }
+  }
+
+  openChatView() {
+    this.settingsOpen = false;
+    showRightPanel(this.elements, null);
+    this.switchView('chat');
+    updateNavActive(this.elements, 'chat');
+    setSidebarOpen(this.elements, false);
+  }
+
+  openHistoryPanel() {
+    this.settingsOpen = false;
+    setSidebarOpen(this.elements, true);
+    showRightPanel(this.elements, 'history');
+    updateNavActive(this.elements, 'history');
+    if (this.historyListDirty) {
+      void this.loadHistoryList();
+    }
+  }
+
+  openSettingsPanel() {
+    this.settingsOpen = true;
+    setSidebarOpen(this.elements, true);
+    showRightPanel(this.elements, 'settings');
+    this.switchSettingsTab(this.currentSettingsTab || 'general');
+    updateNavActive(this.elements, 'settings');
+  }
+
+  startNewSession() {
+    this.abortActiveStreaming?.();
+    this.displayHistory = [];
+    this.contextHistory = [];
+    this.sessionId = `session-${Date.now()}`;
+    this.activeRunId = null;
+    this.completedRunIds = new Set();
+    this.acceptedSessionIds = new Set([this.sessionId]);
+    this.pendingSessionId = null;
+    this.sessionStartedAt = Date.now();
+    this.firstUserMessage = '';
+    this.sessionTokensUsed = 0;
+    this.lastUsage = null;
+    this.sessionTokenTotals = {
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+    };
+    this.currentPlan = null;
+    this.executionTurnSummaries = new Map();
+    this.activeExecutionTurnKey = null;
+    this.invalidateContextUsageCache?.();
+    this.hidePlanDrawer();
+    this.stopThinkingTimer?.();
+    this.subagents.clear();
+    this.activeAgent = 'main';
+    this.elements.chatMessages.innerHTML = '';
+    this.toolCallViews.clear();
+    this.updateChatEmptyState?.();
+    this.resetActivityPanel();
+    this.hideAgentNav();
+    this.updateStatus('Ready for a new session', 'success');
+    this.switchView('chat');
+    this.scheduleContextUsageRecompute?.({ force: true });
+    this.scrollToBottom({ force: true });
+    setSidebarOpen(this.elements, false);
+  }
 
   constructor() {
     this.elements = getSidePanelElements();
@@ -78,6 +180,10 @@ export class SidePanelUI {
     this.displayHistory = [];
     this.contextHistory = [];
     this.sessionId = `session-${Date.now()}`;
+    this.activeRunId = null;
+    this.completedRunIds = new Set();
+    this.acceptedSessionIds = new Set([this.sessionId]);
+    this.pendingSessionId = null;
     this.sessionStartedAt = Date.now();
     this.firstUserMessage = '';
     this.currentConfig = 'default';
@@ -126,8 +232,12 @@ export class SidePanelUI {
     this.activeToolName = null;
     this.streamingReasoning = '';
     this.currentPlan = null;
+    this.executionTurnSummaries = new Map();
+    this.activeExecutionTurnKey = null;
     this._documentClickHandler = null;
     this._documentKeydownHandler = null;
+    this.tabSelectorController = null;
+    this.oauthHelpModalController = null;
     void this.init();
   }
 }

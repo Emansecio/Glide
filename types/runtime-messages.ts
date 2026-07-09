@@ -162,6 +162,14 @@ export type SubagentComplete = RuntimeMessageBase & {
   parentRunId?: string;
 };
 
+export type VisionContextReady = RuntimeMessageBase & {
+  type: 'vision_context_ready';
+  tool: string;
+  id?: string;
+  description: string;
+  source?: 'recovery' | 'screenshot';
+};
+
 export type RuntimeMessage =
   | UserRunStart
   | AssistantStreamStart
@@ -179,7 +187,8 @@ export type RuntimeMessage =
   | RunWarning
   | ContextCompacted
   | SubagentStart
-  | SubagentComplete;
+  | SubagentComplete
+  | VisionContextReady;
 
 export const runtimeMessageTypes = [
   'user_run_start',
@@ -199,13 +208,12 @@ export const runtimeMessageTypes = [
   'context_compacted',
   'subagent_start',
   'subagent_complete',
+  'vision_context_ready',
 ] as const;
 
 export type RuntimeMessageType = (typeof runtimeMessageTypes)[number];
 
-type RuntimeMessageValidationResult =
-  | { ok: true; message: RuntimeMessage }
-  | { ok: false; reason: string };
+type RuntimeMessageValidationResult = { ok: true; message: RuntimeMessage } | { ok: false; reason: string };
 
 type GenericRecord = Record<string, unknown>;
 
@@ -273,24 +281,23 @@ const validateRuntimeMessageShape = (message: GenericRecord): RuntimeMessageVali
       if (!isString(message.content)) {
         return { ok: false, reason: 'assistant_stream_delta.content must be a string.' };
       }
-      if (
-        message.channel !== undefined &&
-        message.channel !== 'text' &&
-        message.channel !== 'reasoning'
-      ) {
+      if (message.channel !== undefined && message.channel !== 'text' && message.channel !== 'reasoning') {
         return { ok: false, reason: 'assistant_stream_delta.channel must be text or reasoning.' };
       }
       return { ok: true, message: message as RuntimeMessage };
     case 'tool_execution_start':
       if (!isNonEmptyString(message.tool)) return { ok: false, reason: 'tool_execution_start.tool is required.' };
       if (!isRecord(message.args)) return { ok: false, reason: 'tool_execution_start.args must be an object.' };
-      if (message.id !== undefined && !isString(message.id)) return { ok: false, reason: 'tool_execution_start.id must be a string.' };
+      if (message.id !== undefined && !isString(message.id))
+        return { ok: false, reason: 'tool_execution_start.id must be a string.' };
       return { ok: true, message: message as RuntimeMessage };
     case 'tool_execution_result':
       if (!isNonEmptyString(message.tool)) return { ok: false, reason: 'tool_execution_result.tool is required.' };
       if (!hasOwn(message, 'result')) return { ok: false, reason: 'tool_execution_result.result is required.' };
-      if (message.id !== undefined && !isString(message.id)) return { ok: false, reason: 'tool_execution_result.id must be a string.' };
-      if (message.args !== undefined && !isRecord(message.args)) return { ok: false, reason: 'tool_execution_result.args must be an object.' };
+      if (message.id !== undefined && !isString(message.id))
+        return { ok: false, reason: 'tool_execution_result.id must be a string.' };
+      if (message.args !== undefined && !isRecord(message.args))
+        return { ok: false, reason: 'tool_execution_result.args must be an object.' };
       if (
         message.recoveryStage !== undefined &&
         !toolRecoveryStages.includes(message.recoveryStage as ToolRecoveryStage)
@@ -334,14 +341,19 @@ const validateRuntimeMessageShape = (message: GenericRecord): RuntimeMessageVali
       return { ok: true, message: message as RuntimeMessage };
     case 'assistant_response':
       if (!isString(message.content)) return { ok: false, reason: 'assistant_response.content must be a string.' };
-      if (!isOptionalString(message.thinking)) return { ok: false, reason: 'assistant_response.thinking must be string|null.' };
-      if (message.model !== undefined && !isString(message.model)) return { ok: false, reason: 'assistant_response.model must be a string.' };
+      if (!isOptionalString(message.thinking))
+        return { ok: false, reason: 'assistant_response.thinking must be string|null.' };
+      if (message.model !== undefined && !isString(message.model))
+        return { ok: false, reason: 'assistant_response.model must be a string.' };
       return { ok: true, message: message as RuntimeMessage };
     case 'assistant_final':
       if (!isString(message.content)) return { ok: false, reason: 'assistant_final.content must be a string.' };
-      if (!isOptionalString(message.thinking)) return { ok: false, reason: 'assistant_final.thinking must be string|null.' };
-      if (message.model !== undefined && !isString(message.model)) return { ok: false, reason: 'assistant_final.model must be a string.' };
-      if (message.usage !== undefined && !isUsageLike(message.usage)) return { ok: false, reason: 'assistant_final.usage is invalid.' };
+      if (!isOptionalString(message.thinking))
+        return { ok: false, reason: 'assistant_final.thinking must be string|null.' };
+      if (message.model !== undefined && !isString(message.model))
+        return { ok: false, reason: 'assistant_final.model must be a string.' };
+      if (message.usage !== undefined && !isUsageLike(message.usage))
+        return { ok: false, reason: 'assistant_final.usage is invalid.' };
       if (message.contextUsage !== undefined && !isContextUsageLike(message.contextUsage)) {
         return { ok: false, reason: 'assistant_final.contextUsage is invalid.' };
       }
@@ -353,11 +365,7 @@ const validateRuntimeMessageShape = (message: GenericRecord): RuntimeMessageVali
       }
       return { ok: true, message: message as RuntimeMessage };
     case 'run_quality_gate':
-      if (
-        message.state !== 'passed' &&
-        message.state !== 'blocked' &&
-        message.state !== 'forced_retry'
-      ) {
+      if (message.state !== 'passed' && message.state !== 'blocked' && message.state !== 'forced_retry') {
         return { ok: false, reason: 'run_quality_gate.state is invalid.' };
       }
       if (!isString(message.reason)) return { ok: false, reason: 'run_quality_gate.reason must be a string.' };
@@ -408,6 +416,17 @@ const validateRuntimeMessageShape = (message: GenericRecord): RuntimeMessageVali
       }
       if (message.parentRunId !== undefined && !isString(message.parentRunId)) {
         return { ok: false, reason: 'subagent_complete.parentRunId must be a string.' };
+      }
+      return { ok: true, message: message as RuntimeMessage };
+    case 'vision_context_ready':
+      if (!isNonEmptyString(message.tool) || !isNonEmptyString(message.description)) {
+        return { ok: false, reason: 'vision_context_ready.tool and vision_context_ready.description are required.' };
+      }
+      if (message.id !== undefined && !isString(message.id)) {
+        return { ok: false, reason: 'vision_context_ready.id must be a string.' };
+      }
+      if (message.source !== undefined && message.source !== 'recovery' && message.source !== 'screenshot') {
+        return { ok: false, reason: 'vision_context_ready.source must be recovery or screenshot.' };
       }
       return { ok: true, message: message as RuntimeMessage };
     default:

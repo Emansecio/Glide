@@ -29,6 +29,13 @@ import { SidePanelUI } from './panel-ui.js';
 (SidePanelUI.prototype as any).recordScrollPosition = function recordScrollPosition() {
   if (!this.elements.chatMessages) return;
   this.scrollPositions.set(this.sessionId, this.elements.chatMessages.scrollTop);
+  // Prune old entries to prevent unbounded growth
+  if (this.scrollPositions.size > 50) {
+    const keys = Array.from(this.scrollPositions.keys());
+    for (let i = 0; i < keys.length - 50; i++) {
+      this.scrollPositions.delete(keys[i]);
+    }
+  }
 };
 
 (SidePanelUI.prototype as any).restoreScrollPosition = function restoreScrollPosition() {

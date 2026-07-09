@@ -19,15 +19,18 @@ const formatElapsed = (elapsedMs: number) => {
     this.clearErrorBanner();
     this.startStreamingMessage();
     this.startThinkingTimer();
+    this.updateActivityState();
   } else if (event.status === 'delta') {
     this.isStreaming = true;
     this.updateStreamingMessage(event.content || '');
+    // Skip per-delta activity/meta refresh — statusMeta + clientWidth force layout.
+    // Text flush + stop already keep the UI honest.
   } else if (event.status === 'stop') {
     this.isStreaming = false;
     this.completeStreamingMessage();
     this.stopThinkingTimer();
+    this.updateActivityState();
   }
-  this.updateActivityState();
 };
 
 (SidePanelUI.prototype as any).clearStreamingRenderTimers = function clearStreamingRenderTimers() {
@@ -119,10 +122,13 @@ const formatElapsed = (elapsedMs: number) => {
       <div class="message-content streaming-content markdown-body">
         <div class="typing-indicator"><span></span><span></span><span></span></div>
         <div class="execution-human-summary hidden"></div>
-        <details class="execution-details hidden">
+        <details class="execution-details working hidden">
           <summary class="execution-details-summary">
-            <span class="execution-details-title">Ver detalhes tecnicos da execucao</span>
-            <span class="execution-details-meta">Em execucao</span>
+            <svg class="execution-details-chevron" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="9 18 15 12 9 6"></polyline>
+            </svg>
+            <span class="execution-details-title shimmer">Trabalhando…</span>
+            <span class="execution-details-meta"></span>
           </summary>
           <div class="stream-events"></div>
         </details>
@@ -142,6 +148,7 @@ const formatElapsed = (elapsedMs: number) => {
     reasoningEventEl: null,
     textBuffer: '',
     textPendingBuffer: '',
+    _lastMdPos: 0,
     reasoningBuffer: '',
     reasoningRawBuffer: '',
     planEl: null,
@@ -166,6 +173,7 @@ const formatElapsed = (elapsedMs: number) => {
 
   this.streamingState.textBuffer = `${this.streamingState.textBuffer || ''}${content || ''}`;
   this.streamingState.textPendingBuffer = `${this.streamingState.textPendingBuffer || ''}${content || ''}`;
+  this.streamingState.accumulated = true;
   this.scheduleStreamingTextRender();
 };
 
@@ -180,7 +188,25 @@ const formatElapsed = (elapsedMs: number) => {
   if (indicator) indicator.remove();
   this.streamingState.container.classList.remove('streaming');
   if (this.streamingState.textEventEl) {
-    this.streamingState.textEventEl.innerHTML = this.renderMarkdown(this.streamingState.textBuffer || '');
+    const buf = this.streamingState.textBuffer || '';
+    const offset = this.streamingState._lastMdPos || 0;
+    if (offset < buf.length) {
+      const newPortion = buf.slice(offset);
+      const existing = this.streamingState.textEventEl.innerHTML;
+      // If existing is still plain textContent (no HTML), clear it so we don't double-render
+      if (!existing || !existing.includes('<') || this.streamingState._lastMdPos === 0) {
+        this.streamingState.textEventEl.innerHTML = this.renderMarkdown(buf);
+      } else {
+        // Append only the new portion rendered as markdown
+        const renderedNew = this.renderMarkdown(newPortion);
+        // Strip <p> wrapper if the renderer wraps single paragraphs
+        const stripped = renderedNew.replace(/^<p>|<\/p>$/g, '').trim();
+        if (stripped) {
+          this.streamingState.textEventEl.innerHTML += stripped;
+        }
+      }
+      this.streamingState._lastMdPos = buf.length;
+    }
   }
 
   const finalReasoning = this.streamingState.reasoningBuffer || '';
@@ -276,6 +302,21 @@ const formatElapsed = (elapsedMs: number) => {
   this.streamingState.planListEl = container.querySelector('.plan-steps') as HTMLOListElement | null;
   this.streamingState.planMetaEl = container.querySelector('.plan-meta') as HTMLElement | null;
   return container;
+};
+
+// Discards any in-flight streaming state without persisting it. Used when the
+// user switches sessions mid-stream, so the old run cannot write into the new
+// session's DOM/history and the next stream is not blocked by a stale state.
+(SidePanelUI.prototype as any).abortActiveStreaming = function abortActiveStreaming() {
+  if (!this.streamingState && !this.isStreaming) return;
+  this.clearStreamingRenderTimers();
+  this.stopThinkingTimer?.();
+  this.streamingState = null;
+  this.isStreaming = false;
+  this.pendingToolCount = 0;
+  this.activeToolName = null;
+  this.elements.composer?.classList.remove('running');
+  this.updateActivityState?.();
 };
 
 (SidePanelUI.prototype as any).finishStreamingMessage = function finishStreamingMessage() {

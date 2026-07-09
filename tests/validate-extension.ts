@@ -127,11 +127,38 @@ class ExtensionValidator {
     });
 
     this.test('required permissions are declared', () => {
-      const required = ['sidePanel', 'activeTab', 'scripting', 'tabs', 'storage'];
+      const required = [
+        'sidePanel',
+        'activeTab',
+        'scripting',
+        'tabs',
+        'tabGroups',
+        'storage',
+        'declarativeNetRequestWithHostAccess',
+      ];
       const permissions = Array.isArray(this.manifest?.permissions) ? this.manifest.permissions : [];
       const missing = required.filter((p) => !permissions.includes(p));
       if (missing.length > 0) {
         throw new Error(`Missing permissions: ${missing.join(', ')}`);
+      }
+    });
+
+    this.test('content_scripts registers content.js', () => {
+      const contentScripts = (this.manifest as Manifest & { content_scripts?: Array<{ js?: string[] }> })
+        ?.content_scripts;
+      if (!Array.isArray(contentScripts) || contentScripts.length === 0) {
+        throw new Error('Must declare content_scripts');
+      }
+      const hasContentJs = contentScripts.some((entry) => Array.isArray(entry.js) && entry.js.includes('content.js'));
+      if (!hasContentJs) {
+        throw new Error('content_scripts must include content.js');
+      }
+    });
+
+    this.test('manifest version matches package.json', () => {
+      const pkg = this.validateJSON('package.json', PROJECT_DIR) as { version?: string };
+      if (pkg.version && this.manifest?.version && pkg.version !== this.manifest.version) {
+        throw new Error(`Version mismatch: manifest=${this.manifest.version}, package=${pkg.version}`);
       }
     });
 

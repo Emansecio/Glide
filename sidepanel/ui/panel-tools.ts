@@ -1,5 +1,8 @@
 ﻿import { dedupeThinking } from '../../ai/message-utils.js';
+import { clearErrorBanner, showErrorBanner, showSuccessToast } from './notifications.js';
+import { getComposerDensity } from './panel-helpers.js';
 import { SidePanelUI } from './panel-ui.js';
+import { buildToolIconSvg, getToolPresentation } from './tool-presentations.js';
 
 const EXECUTION_STEP_ORDER = ['navigation', 'fill', 'action', 'validation'] as const;
 
@@ -60,10 +63,10 @@ type ExecutionTurnSummary = {
     technicalStepCount: 0,
     hasErrors: false,
     steps: {
-      navigation: makeStep('navigation', 'Navegacao'),
+      navigation: makeStep('navigation', 'Navegação'),
       fill: makeStep('fill', 'Preenchimento'),
-      action: makeStep('action', 'Acao'),
-      validation: makeStep('validation', 'Validacao'),
+      action: makeStep('action', 'Ação'),
+      validation: makeStep('validation', 'Validação'),
     },
   } as ExecutionTurnSummary;
 };
@@ -154,11 +157,12 @@ type ExecutionTurnSummary = {
   return `${Math.round(seconds)}s`;
 };
 
-(SidePanelUI.prototype as any).ensureStreamingExecutionDetailsVisible = function ensureStreamingExecutionDetailsVisible() {
-  const details = this.streamingState?.executionDetailsEl as HTMLDetailsElement | null;
-  if (!details) return;
-  details.classList.remove('hidden');
-};
+(SidePanelUI.prototype as any).ensureStreamingExecutionDetailsVisible =
+  function ensureStreamingExecutionDetailsVisible() {
+    const details = this.streamingState?.executionDetailsEl as HTMLDetailsElement | null;
+    if (!details) return;
+    details.classList.remove('hidden');
+  };
 
 (SidePanelUI.prototype as any).updateExecutionDetailsHeader = function updateExecutionDetailsHeader(
   summary?: ExecutionTurnSummary | null,
@@ -176,13 +180,24 @@ type ExecutionTurnSummary = {
   if (!hasSteps) return;
 
   const total = summary?.technicalStepCount || 0;
-  titleEl.textContent = `Ver detalhes tecnicos da execucao (${total} passo${total === 1 ? '' : 's'})`;
-
   const completed = options.completed === true;
   const endedAt = completed ? summary?.completedAt || Date.now() : Date.now();
   const duration = this.formatExecutionDuration(Math.max(0, endedAt - (summary?.startedAt || endedAt)));
-  const statusLabel = summary?.hasErrors ? 'Com erro' : completed ? 'Concluido' : 'Em execucao';
-  metaEl.textContent = `${statusLabel} em ${duration}`;
+  const actionsLabel = `${total} ${total === 1 ? 'ação' : 'ações'}`;
+
+  titleEl.textContent = completed ? 'Ações do agente' : 'Trabalhando…';
+  titleEl.classList.toggle('shimmer', !completed);
+  details.classList.toggle('working', !completed);
+
+  if (completed) {
+    metaEl.textContent = summary?.hasErrors
+      ? `${actionsLabel} · com erro · ${duration}`
+      : `${actionsLabel} · ${duration}`;
+    metaEl.classList.toggle('has-error', Boolean(summary?.hasErrors));
+  } else {
+    metaEl.textContent = actionsLabel;
+    metaEl.classList.remove('has-error');
+  }
 };
 
 (SidePanelUI.prototype as any).finalizeExecutionDetails = function finalizeExecutionDetails(
@@ -207,10 +222,10 @@ type ExecutionTurnSummary = {
 ) {
   if (!summary) return [] as Array<{ label: string; count: number; status: string; description: string }>;
   const descriptions: Record<ExecutionStepKey, string> = {
-    navigation: 'Acessou a pagina alvo',
+    navigation: 'Acessou a página alvo',
     fill: 'Preencheu os campos solicitados',
-    action: 'Executou a acao principal',
-    validation: 'Leu e validou o retorno da pagina',
+    action: 'Executou a ação principal',
+    validation: 'Leu e validou o retorno da página',
   };
   const rows: Array<{ label: string; count: number; status: string; description: string }> = [];
   for (const key of EXECUTION_STEP_ORDER) {
@@ -224,6 +239,26 @@ type ExecutionTurnSummary = {
     });
   }
   return rows;
+};
+
+(SidePanelUI.prototype as any).buildExecutionChipsHtml = function buildExecutionChipsHtml(
+  rows: Array<{ label: string; count: number; status: string; description: string }>,
+) {
+  if (!rows.length) return '';
+  const chips = rows
+    .map((row) => {
+      const countLabel = row.count > 1 ? ` ×${row.count}` : '';
+      return `
+        <span class="execution-chip ${row.status}" title="${this.escapeHtml(row.description)}">
+          <span class="chip-dot"></span>${this.escapeHtml(row.label)}${countLabel}
+        </span>
+      `;
+    })
+    .join('');
+  return `
+    <div class="execution-human-title">Resumo da execução</div>
+    <div class="execution-chip-row">${chips}</div>
+  `;
 };
 
 (SidePanelUI.prototype as any).renderExecutionSemanticSummary = function renderExecutionSemanticSummary(
@@ -241,32 +276,11 @@ type ExecutionTurnSummary = {
     return;
   }
 
-  const items = rows
-    .map((row, index) => {
-      const statusLabel = row.status === 'error' ? 'Erro' : row.status === 'ok' ? 'OK' : 'Pendente';
-      return `
-        <li class="execution-human-item ${row.status}">
-          <span class="execution-human-index">${index + 1}.</span>
-          <span class="execution-human-text">
-            <strong>${this.escapeHtml(row.label)}:</strong> ${this.escapeHtml(row.description)}
-            <span class="execution-human-meta">(${row.count}x, ${statusLabel})</span>
-          </span>
-        </li>
-      `;
-    })
-    .join('');
-
-  target.innerHTML = `
-    <div class="execution-human-title">Plano de Execucao</div>
-    <ol class="execution-human-list">${items}</ol>
-  `;
+  target.innerHTML = this.buildExecutionChipsHtml(rows);
   target.classList.remove('hidden');
 };
 
-(SidePanelUI.prototype as any).formatToolErrorMessage = function formatToolErrorMessage(
-  toolName: string,
-  result: any,
-) {
+(SidePanelUI.prototype as any).formatToolErrorMessage = function formatToolErrorMessage(toolName: string, result: any) {
   const code = String(result?.code || '');
   if (code === 'NO_EXECUTABLE_TAB') {
     return `${toolName}: Nenhuma aba web acessivel (http/https) foi encontrada. Abra o site alvo e tente novamente.`;
@@ -441,85 +455,15 @@ type ExecutionTurnSummary = {
   }
 };
 
-(SidePanelUI.prototype as any).showErrorBanner = function showErrorBanner(message: string) {
-  document.querySelectorAll('.error-banner').forEach((el) => el.remove());
-
-  const banner = document.createElement('div');
-  banner.className = 'error-banner';
-  banner.innerHTML = `
-    <svg class="error-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <circle cx="12" cy="12" r="10"></circle>
-      <line x1="12" y1="8" x2="12" y2="12"></line>
-      <line x1="12" y1="16" x2="12.01" y2="16"></line>
-    </svg>
-    <span class="error-text">${this.escapeHtml(message)}</span>
-    <button class="error-dismiss" title="Fechar">
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <line x1="18" y1="6" x2="6" y2="18"></line>
-        <line x1="6" y1="6" x2="18" y2="18"></line>
-      </svg>
-    </button>
-  `;
-
-  const dismissButton = banner.querySelector('.error-dismiss');
-  dismissButton?.addEventListener('click', () => banner.remove());
-  document.body.appendChild(banner);
-
-  setTimeout(() => banner.remove(), 8000);
-};
+(SidePanelUI.prototype as any).showErrorBanner = showErrorBanner;
 
 (SidePanelUI.prototype as any).clearRunIncompleteBanner = function clearRunIncompleteBanner() {
   document.querySelectorAll('.run-incomplete-banner').forEach((el) => el.remove());
 };
 
-(SidePanelUI.prototype as any).clearErrorBanner = function clearErrorBanner() {
-  document.querySelectorAll('.error-banner').forEach((el) => el.remove());
-};
+(SidePanelUI.prototype as any).clearErrorBanner = clearErrorBanner;
 
-(SidePanelUI.prototype as any).showSuccessToast = function showSuccessToast(message: string, duration = 3000) {
-  // Remover toasts existentes
-  document.querySelectorAll('.success-toast').forEach((el) => {
-    el.classList.add('hiding');
-    setTimeout(() => el.remove(), 150);
-  });
-
-  const toast = document.createElement('div');
-  toast.className = 'success-toast';
-  toast.innerHTML = `
-    <svg class="toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-      <polyline points="20 6 9 17 4 12"></polyline>
-    </svg>
-    <span class="toast-text">${this.escapeHtml(message)}</span>
-    <button class="toast-dismiss" title="Fechar">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <line x1="18" y1="6" x2="6" y2="18"></line>
-        <line x1="6" y1="6" x2="18" y2="18"></line>
-      </svg>
-    </button>
-  `;
-
-  let autoRemoveTimeout: ReturnType<typeof setTimeout> | null = null;
-  const dismissBtn = toast.querySelector('.toast-dismiss');
-  const closeToast = () => {
-    if (autoRemoveTimeout !== null) {
-      clearTimeout(autoRemoveTimeout);
-      autoRemoveTimeout = null;
-    }
-    toast.classList.add('hiding');
-    setTimeout(() => toast.remove(), 150);
-  };
-  dismissBtn?.addEventListener('click', closeToast);
-
-  document.body.appendChild(toast);
-
-  // Auto-remove
-  autoRemoveTimeout = setTimeout(() => {
-    if (toast.parentElement) {
-      toast.classList.add('hiding');
-      setTimeout(() => toast.remove(), 150);
-    }
-  }, duration);
-};
+(SidePanelUI.prototype as any).showSuccessToast = showSuccessToast;
 
 (SidePanelUI.prototype as any).fetchExecutionEvents = async function fetchExecutionEvents() {
   const response = await chrome.runtime.sendMessage({ type: 'get_execution_events' });
@@ -545,15 +489,10 @@ type ExecutionTurnSummary = {
       events,
     };
 
-    const blob = new Blob([JSON.stringify(payload, null, 2)], {
-      type: 'application/json',
-    });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `Glide-execution-log-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`;
-    anchor.click();
-    URL.revokeObjectURL(url);
+    this.downloadJsonFile(
+      payload,
+      `Glide-execution-log-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`,
+    );
     this.showSuccessToast(`Log exportado (${events.length} eventos)`);
   } catch (error) {
     const errorMessage = error?.message || 'Falha ao exportar log de execucao.';
@@ -569,9 +508,17 @@ type ExecutionTurnSummary = {
 
 (SidePanelUI.prototype as any).getArgsPreview = function getArgsPreview(args: any) {
   if (!args) return '';
-  if (args.url) return args.url.substring(0, 30) + (args.url.length > 30 ? '...' : '');
-  if (args.text) return `"${args.text.substring(0, 20)}${args.text.length > 20 ? '...' : ''}"`;
-  if (args.selector) return args.selector.substring(0, 25);
+  if (args.url) {
+    try {
+      const parsed = new URL(String(args.url));
+      const compact = `${parsed.host}${parsed.pathname === '/' ? '' : parsed.pathname}`;
+      return compact.substring(0, 42) + (compact.length > 42 ? '…' : '');
+    } catch {
+      return String(args.url).substring(0, 42);
+    }
+  }
+  if (args.text) return `"${args.text.substring(0, 26)}${args.text.length > 26 ? '…' : ''}"`;
+  if (args.selector) return args.selector.substring(0, 32);
   if (args.key) return args.key;
   if (args.direction) return args.direction;
   if (args.type) return args.type;
@@ -584,26 +531,27 @@ type ExecutionTurnSummary = {
   args: any,
 ) {
   const container = document.createElement('div');
-  container.className = 'tool-tree-item running';
+  container.className = 'tool-tree-item tool-step running';
   container.dataset.id = entryId;
   container.dataset.start = String(Date.now());
+  container.dataset.tool = String(toolName || '');
 
+  const presentation = getToolPresentation(toolName);
   const argsPreview = this.getArgsPreview(args);
 
   container.innerHTML = `
-    <span class="tool-tree-status"></span>
-    <div class="tool-tree-content">
-      <div class="tool-tree-header">
-        <span class="tool-tree-name">${this.escapeHtml(toolName || 'ferramenta')}</span>
-        <span class="tool-tree-args">${this.escapeHtml(argsPreview || '')}</span>
-      </div>
-      <span class="tool-tree-meta">Executando</span>
+    <span class="tool-step-icon">${buildToolIconSvg(presentation.icon)}</span>
+    <div class="tool-step-body">
+      <span class="tool-step-label">${this.escapeHtml(presentation.running)}</span>
+      ${argsPreview ? `<span class="tool-step-target">${this.escapeHtml(argsPreview)}</span>` : ''}
     </div>
+    <span class="tool-tree-meta tool-step-meta"></span>
   `;
 
   return {
     container,
     statusEl: container.querySelector('.tool-tree-meta'),
+    labelEl: container.querySelector('.tool-step-label'),
   };
 };
 
@@ -616,11 +564,16 @@ type ExecutionTurnSummary = {
   const start = Number.parseInt(entry.container.dataset.start || '0', 10);
   const dur = start ? Date.now() - start : 0;
 
+  if (entry.labelEl && !isError) {
+    const presentation = getToolPresentation(entry.container.dataset.tool || '');
+    entry.labelEl.textContent = presentation.done;
+  }
+
   if (entry.statusEl) {
     if (isError) {
       entry.statusEl.textContent = 'Erro';
     } else {
-      entry.statusEl.textContent = dur > 0 ? `${dur}ms` : 'Concluido';
+      entry.statusEl.textContent = dur > 0 ? this.formatExecutionDuration(dur) : 'Concluído';
     }
   }
 };
@@ -628,7 +581,7 @@ type ExecutionTurnSummary = {
 (SidePanelUI.prototype as any).updateActivityState = function updateActivityState() {
   if (!this.elements.statusMeta) return;
   const composerWidth = this.elements.composer?.clientWidth || window.innerWidth || 0;
-  const density = composerWidth <= 420 ? 'tight' : composerWidth <= 560 ? 'compact' : 'normal';
+  const density = getComposerDensity(composerWidth);
   if (this.elements.composer) {
     this.elements.composer.dataset.density = density;
   }
@@ -676,7 +629,7 @@ type ExecutionTurnSummary = {
   const toggle = this.elements.activityToggleBtn;
   if (!toggle) return;
   const composerWidth = this.elements.composer?.clientWidth || window.innerWidth || 0;
-  const density = composerWidth <= 420 ? 'tight' : composerWidth <= 560 ? 'compact' : 'normal';
+  const density = getComposerDensity(composerWidth);
   const toolCount = this.toolCallViews.size;
   const hasThinking = Boolean(this.latestThinking);
   const segments: string[] = [];
@@ -760,5 +713,7 @@ type ExecutionTurnSummary = {
 
 (SidePanelUI.prototype as any).scrollToolLogToBottom = function scrollToolLogToBottom() {
   if (!this.elements.toolLog) return;
-  this.elements.toolLog.scrollTop = this.elements.toolLog.scrollHeight;
+  requestAnimationFrame(() => {
+    this.elements.toolLog.scrollTop = this.elements.toolLog.scrollHeight;
+  });
 };

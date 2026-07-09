@@ -1,3 +1,4 @@
+import { getPanelOwnerTab } from './panel-tab-id.js';
 import { SidePanelUI } from './panel-ui.js';
 
 (SidePanelUI.prototype as any).handleFileSelection = async function handleFileSelection(event: Event) {
@@ -7,21 +8,30 @@ import { SidePanelUI } from './panel-ui.js';
   if (!files.length) return;
 
   const maxPerFile = 4000;
-  for (const file of files) {
-    try {
-      const text = await file.text();
-      const trimmed = text.length > maxPerFile ? `${text.slice(0, maxPerFile)}\n... (truncado)` : text;
-      const prefix = `\n\n[File: ${file.name}]\n`;
-      this.elements.userInput.value += prefix + trimmed;
-    } catch (e) {
-      console.warn('Falha ao ler arquivo', file.name, e);
-    }
+  const fileTexts = await Promise.all(
+    files.map(async (file) => {
+      try {
+        const text = await file.text();
+        const trimmed = text.length > maxPerFile ? `${text.slice(0, maxPerFile)}\n... (truncado)` : text;
+        return `\n\n[File: ${file.name}]\n` + trimmed;
+      } catch (e) {
+        console.warn('Falha ao ler arquivo', file.name, e);
+        return '';
+      }
+    }),
+  );
+  for (const text of fileTexts) {
+    if (text) this.elements.userInput.value += text;
   }
   input.value = '';
   this.elements.userInput.focus();
 };
 
 (SidePanelUI.prototype as any).toggleTabSelector = async function toggleTabSelector() {
+  if (this.tabSelectorController) {
+    await this.tabSelectorController.toggle();
+    return;
+  }
   const isHidden = this.elements.tabSelector.classList.contains('hidden');
   if (isHidden) {
     await this.loadTabs();
@@ -33,11 +43,15 @@ import { SidePanelUI } from './panel-ui.js';
 };
 
 (SidePanelUI.prototype as any).closeTabSelector = function closeTabSelector() {
+  if (this.tabSelectorController) {
+    this.tabSelectorController.close();
+    return;
+  }
   this.elements.tabSelector.classList.add('hidden');
 };
 
 (SidePanelUI.prototype as any).addActiveTabToSelection = async function addActiveTabToSelection() {
-  const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const activeTab = await getPanelOwnerTab();
   if (!activeTab || typeof activeTab.id !== 'number') return;
   this.selectedTabs.set(activeTab.id, this.buildSelectedTab(activeTab));
   this.updateSelectedTabsBar();
@@ -105,6 +119,7 @@ import { SidePanelUI } from './panel-ui.js';
       this.toggleGroupSelection(groupTabs, shouldSelect);
     });
 
+    const fragment = document.createDocumentFragment();
     groupTabs.forEach((tab) => {
       const tabId = tab.id;
       const isSelected = typeof tabId === 'number' && this.selectedTabs.has(tabId);
@@ -115,13 +130,17 @@ import { SidePanelUI } from './panel-ui.js';
       }
       item.dataset.groupId = String(groupId);
       const urlLabel = this.formatTabLabel(tab.url || '');
-      const safeFaviconUrl = this.escapeAttribute(tab.favIconUrl || fallbackFavicon);
+      // Only http(s) or data-image favicons are allowed as an <img> source, per
+      // the project image-protocol policy; anything else uses the local fallback.
+      const rawFavicon = String(tab.favIconUrl || '').trim();
+      const faviconUrl = /^(https?:|data:image\/)/i.test(rawFavicon) ? rawFavicon : fallbackFavicon;
+      const safeFaviconUrl = this.escapeAttribute(faviconUrl);
       item.innerHTML = `
         <div class="tab-item-checkbox"></div>
         <img class="tab-item-favicon" src="${safeFaviconUrl}">
         <div class="tab-item-text">
           <span class="tab-item-title">${this.escapeHtml(tab.title || 'Sem titulo')}</span>
-          ${urlLabel ? `<span class=\"tab-item-url\">${this.escapeHtml(urlLabel)}</span>` : ''}
+          ${urlLabel ? `<span class="tab-item-url">${this.escapeHtml(urlLabel)}</span>` : ''}
         </div>
       `;
       const favicon = item.querySelector('.tab-item-favicon') as HTMLImageElement | null;
@@ -131,8 +150,9 @@ import { SidePanelUI } from './panel-ui.js';
         });
       }
       item.addEventListener('click', () => this.toggleTabSelection(tab, item));
-      section.appendChild(item);
+      fragment.appendChild(item);
     });
+    section.appendChild(fragment);
 
     this.elements.tabList.appendChild(section);
   };
@@ -342,12 +362,11 @@ import { SidePanelUI } from './panel-ui.js';
 (SidePanelUI.prototype as any).getSelectedTabsContext = function getSelectedTabsContext() {
   if (this.selectedTabs.size === 0) return '';
 
-  let context = '\n\n[Contexto das abas selecionadas:]\n';
-  this.selectedTabs.forEach((tab: any) => {
+  const lines = Array.from(this.selectedTabs.values()).map((tab: any) => {
     const tabTitle = tab.title || 'Sem titulo';
     const groupLabel = tab.groupTitle ? `${tab.groupTitle} - ` : '';
     const urlLabel = tab.url || '';
-    context += `- ${groupLabel}"${tabTitle}": ${urlLabel}\n`;
+    return `- ${groupLabel}"${tabTitle}": ${urlLabel}`;
   });
-  return context;
+  return '\n\n[Contexto das abas selecionadas:]\n' + lines.join('\n') + '\n';
 };

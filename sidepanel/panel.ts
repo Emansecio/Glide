@@ -9,4 +9,20 @@ const init = async () => {
   (window as any).sidePanelUI = ui;
 };
 
-void init();
+const renderInitError = (error: unknown) => {
+  // A failed/aborted template fetch must not leave a silently blank panel.
+  const message = error instanceof Error ? error.message : String(error);
+  const body = document.body;
+  if (!body) return;
+  const banner = document.createElement('div');
+  banner.setAttribute('role', 'alert');
+  banner.style.cssText =
+    'padding:16px;margin:12px;border-radius:8px;background:#fdecea;color:#611a15;font:14px system-ui;';
+  banner.textContent = `Falha ao carregar o painel: ${message}. Recarregue a extensão.`;
+  body.prepend(banner);
+};
+
+void init().catch((error) => {
+  console.error('Panel initialization failed:', error);
+  renderInitError(error);
+});

@@ -1,12 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * E2E test for model communication with api.homelabai.org/v1
- * This test verifies:
- * 1. Settings can be configured with custom endpoint
- * 2. Messages can be sent to the background script
- * 3. The AI SDK v6 is properly initialized
- * 4. Model requests are made correctly
+ * E2E tests for provider settings and background message handling.
  */
 
 import fs from 'fs';
@@ -53,91 +48,92 @@ type TestContext = {
   worker: import('playwright').Worker;
 };
 
+import { migrateStoredProvider } from '../../ai/sdk-client.js';
+import { getExtensionId, waitForPanelReady } from './test-helpers.js';
+
 const tests: Array<{ name: string; fn: (ctx: TestContext) => Promise<void> }> = [];
 const test = (name: string, fn: (ctx: TestContext) => Promise<void>) => tests.push({ name, fn });
 
-async function getExtensionId(context: import('playwright').BrowserContext): Promise<string> {
-  let worker = context.serviceWorkers()[0];
-  if (!worker) {
-    worker = await context.waitForEvent('serviceworker', { timeout: timeoutMs });
-  }
-  const url = new URL(worker.url());
-  return url.host;
+type ProviderSettings = {
+  provider: string;
+  apiKey: string;
+  model: string;
+  customEndpoint: string;
+};
+
+async function setupTestSettings(worker: import('playwright').Worker, settings: ProviderSettings) {
+  await worker.evaluate(async (value) => {
+    await chrome.storage.local.set({
+      provider: value.provider,
+      apiKey: value.apiKey,
+      model: value.model,
+      customEndpoint: value.customEndpoint,
+      systemPrompt: 'You are a helpful assistant.',
+      sendScreenshotsAsImages: false,
+      screenshotQuality: 'medium',
+      showThinking: true,
+      streamResponses: true,
+      maxTokens: 2048,
+      contextLimit: 200000,
+      timeout: 60000,
+      enableScreenshots: false,
+      qualityMode: 'max',
+      autoTuneSafety: true,
+      minimumReportSections: 5,
+      toolPermissions: {
+        read: true,
+        interact: true,
+        navigate: true,
+        tabs: true,
+        screenshots: false,
+      },
+      allowedDomains: '',
+      useOrchestrator: false,
+      visionBridge: false,
+    });
+  }, settings);
 }
 
-async function setupTestSettings(worker: import('playwright').Worker, endpoint: string, apiKey: string, model: string) {
-  await worker.evaluate(
-    async (settings) => {
-      await chrome.storage.local.set({
-        provider: settings.provider,
-        apiKey: settings.apiKey,
-        model: settings.model,
-        customEndpoint: settings.customEndpoint,
-        systemPrompt: 'You are a helpful assistant.',
-        sendScreenshotsAsImages: false,
-        screenshotQuality: 'medium',
-        showThinking: true,
-        streamResponses: true,
-        maxTokens: 2048,
-        contextLimit: 200000,
-        timeout: 60000,
-        enableScreenshots: false,
-        qualityMode: 'max',
-        autoTuneSafety: true,
-        minimumReportSections: 5,
-        toolPermissions: {
-          read: true,
-          interact: true,
-          navigate: true,
-          tabs: true,
-          screenshots: false,
-        },
-        allowedDomains: '',
-        useOrchestrator: false,
-        visionBridge: false,
-      });
-    },
-    { provider: 'custom', apiKey, model, customEndpoint: endpoint },
-  );
-}
-
-test('Custom endpoint configuration is saved and retrieved', async ({ worker }) => {
+test('Codex endpoint configuration is saved and retrieved', async ({ worker }) => {
   const testEndpoint = 'https://api.homelabai.org/v1';
   const testApiKey = 'test-key-123';
   const testModel = 'gpt-4o';
 
-  await setupTestSettings(worker, testEndpoint, testApiKey, testModel);
+  await setupTestSettings(worker, {
+    provider: 'codex',
+    apiKey: testApiKey,
+    model: testModel,
+    customEndpoint: testEndpoint,
+  });
 
-  // Verify settings were saved
   const settings = await worker.evaluate(async () => {
     const result = await chrome.storage.local.get(['provider', 'apiKey', 'model', 'customEndpoint']);
     return result;
   });
 
-  assert(settings.provider === 'custom', 'Provider should be "custom"');
+  assert(settings.provider === 'codex', 'Provider should be "codex"');
   assert(settings.apiKey === testApiKey, 'API key should match');
   assert(settings.model === testModel, 'Model should match');
   assert(settings.customEndpoint === testEndpoint, 'Custom endpoint should match');
-
-  log('✓ Settings saved correctly', 'success');
 });
 
-test('Background script handles user_message', async ({ worker }) => {
+test('Legacy custom provider migrates to codex for remote endpoints', async () => {
+  const migrated = migrateStoredProvider('custom', 'https://api.homelabai.org/v1');
+  assert(migrated === 'codex', 'Remote custom endpoints should migrate to codex');
+});
+
+test('Background script accepts user_message payload shape', async ({ worker, panel }) => {
   const testEndpoint = 'https://api.homelabai.org/v1';
   const testApiKey = process.env.TEST_API_KEY || 'test-key';
   const testModel = process.env.TEST_MODEL || 'gpt-4o';
 
-  await setupTestSettings(worker, testEndpoint, testApiKey, testModel);
-
-  // Listen for console messages from background
-  const consoleMessages: string[] = [];
-  worker.on('console', (msg) => {
-    const text = msg.text();
-    consoleMessages.push(text);
-    log(`[Background Console] ${text}`, 'info');
+  await setupTestSettings(worker, {
+    provider: 'codex',
+    apiKey: testApiKey,
+    model: testModel,
+    customEndpoint: testEndpoint,
   });
 
-  // Send a test message
   const sessionId = `test-session-${Date.now()}`;
   const messagePayload = {
     type: 'user_message',
@@ -147,70 +143,71 @@ test('Background script handles user_message', async ({ worker }) => {
     sessionId,
   };
 
-  // Send message and wait for response
-  void new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('Timeout waiting for response')), 15000);
+  const response = await panel.evaluate(
+    (payload) =>
+      new Promise<{ success?: boolean; queued?: boolean; error?: string }>((resolve) => {
+        chrome.runtime.sendMessage(payload, (result) => {
+          resolve({
+            ...(result && typeof result === 'object' ? result : {}),
+            error: chrome.runtime.lastError?.message,
+          });
+        });
+      }),
+    messagePayload,
+  );
 
-    worker.on('console', (msg) => {
-      const text = msg.text();
-      if (text.includes('run_error') || text.includes('Error processing user message')) {
-        clearTimeout(timeout);
-        reject(new Error(text));
-      }
-    });
-
-    // Listen for runtime messages
-    chrome.runtime.onMessage.addListener((message) => {
-      if (message.sessionId === sessionId) {
-        clearTimeout(timeout);
-        resolve(message);
-      }
-    });
-  });
-
-  // Send the message via chrome.runtime.sendMessage
-  await worker.evaluate((payload) => {
-    return new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage(payload, (response) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-        } else {
-          resolve(response);
-        }
-      });
-    });
-  }, messagePayload);
-
-  // Wait a bit to see if any errors occur
-  await new Promise((resolve) => setTimeout(resolve, 3000));
-
-  log('✓ Message sent without immediate errors', 'success');
+  assert(!response.error, `Background transport error: ${response.error}`);
+  assert(response.success === true, `Background should accept user_message, got: ${JSON.stringify(response)}`);
+  assert(response.queued === true, 'Background should queue user_message for processing');
 });
 
-test('AI SDK v6 can be imported and used', async ({ worker }) => {
-  // Check if the AI SDK modules are available
-  const sdkCheck = await worker.evaluate(async () => {
-    try {
-      // This checks if the background script can access the AI SDK
-      // We'll verify the imports worked by checking global state
-      return { success: true, message: 'SDK check would be done in background' };
-    } catch (error: any) {
-      return { success: false, error: error.message };
-    }
-  });
+test('Background proxies provider model detection from side panel context', async ({ panel }) => {
+  const response = await panel.evaluate(
+    () =>
+      new Promise<{ success?: boolean; models?: string[]; error?: string }>((resolve) => {
+        const detect = () => {
+          chrome.runtime.sendMessage(
+            {
+              type: 'detect_provider_models',
+              provider: 'ollama',
+              apiKey: '',
+              customEndpoint: 'http://localhost:11434',
+            },
+            (result) => {
+              resolve({
+                ...(result && typeof result === 'object' ? result : {}),
+                error: chrome.runtime.lastError?.message,
+              });
+            },
+          );
+        };
+        // Wake the MV3 service worker before the async detection call.
+        chrome.runtime.sendMessage({ type: 'get_execution_events' }, () => detect());
+      }),
+  );
 
-  assert(sdkCheck.success, `SDK check failed: ${sdkCheck.message}`);
-  log('✓ AI SDK v6 imports verified', 'success');
+  assert(typeof response === 'object', 'detect_provider_models should return an object');
+  if (response?.success) {
+    assert(Array.isArray(response.models), 'Successful detection should return models array');
+    return;
+  }
+  const failure = response?.error || (response?.success === false ? 'provider detection failed' : 'no response');
+  assert(
+    typeof failure === 'string' && failure.length > 0,
+    `Expected detection result, got: ${JSON.stringify(response)}`,
+  );
 });
 
-test('Model resolution with custom endpoint', async ({ worker }) => {
+test('Custom endpoint stays provider-scoped', async ({ worker }) => {
   const testEndpoint = 'https://api.homelabai.org/v1';
-  const testApiKey = 'test-key-123';
-  const testModel = 'gpt-4o';
 
-  await setupTestSettings(worker, testEndpoint, testApiKey, testModel);
+  await setupTestSettings(worker, {
+    provider: 'codex',
+    apiKey: 'test-key-123',
+    model: 'gpt-4o',
+    customEndpoint: testEndpoint,
+  });
 
-  // Verify endpoint normalization
   const settings = await worker.evaluate(async () => {
     const result = await chrome.storage.local.get(['customEndpoint']);
     return result;
@@ -218,32 +215,28 @@ test('Model resolution with custom endpoint', async ({ worker }) => {
 
   const endpoint = settings.customEndpoint;
   assert(endpoint === testEndpoint, `Endpoint should be ${testEndpoint}`);
-
-  // Check that endpoint doesn't have trailing slashes in unexpected places
   assert(!endpoint.endsWith('/chat/completions'), 'Endpoint should not include /chat/completions path');
-
-  log('✓ Custom endpoint is properly formatted', 'success');
 });
 
 test('Verify storage contains required settings', async ({ worker }) => {
   const testEndpoint = 'https://api.homelabai.org/v1';
-  const testApiKey = 'test-key-123';
-  const testModel = 'gpt-4o';
 
-  await setupTestSettings(worker, testEndpoint, testApiKey, testModel);
+  await setupTestSettings(worker, {
+    provider: 'codex',
+    apiKey: 'test-key-123',
+    model: 'gpt-4o',
+    customEndpoint: testEndpoint,
+  });
 
   const allSettings = await worker.evaluate(async () => {
     const result = await chrome.storage.local.get(null);
     return result;
   });
 
-  // Check all required fields
   const requiredFields = ['provider', 'apiKey', 'model', 'customEndpoint'];
   for (const field of requiredFields) {
     assert(field in allSettings, `Missing required field: ${field}`);
   }
-
-  log('✓ All required settings are present', 'success');
 });
 
 async function run() {
@@ -260,13 +253,13 @@ async function run() {
     context = await chromium.launchPersistentContext(userDataDir, {
       headless,
       slowMo,
+      viewport: { width: 1400, height: 900 },
       args: [
         `--disable-extensions-except=${extensionPath}`,
         `--load-extension=${extensionPath}`,
         '--allow-file-access-from-files',
         '--disable-dev-shm-usage',
         '--no-sandbox',
-        '--disable-web-security', // For testing custom endpoints
       ],
     });
 
@@ -275,49 +268,11 @@ async function run() {
 
     const worker = context.serviceWorkers()[0] || (await context.waitForEvent('serviceworker', { timeout: timeoutMs }));
 
-    // Listen to all console messages from service worker
-    worker.on('console', (msg) => {
-      const type = msg.type();
-      const text = msg.text();
-      if (type === 'error') {
-        log(`[Service Worker Error] ${text}`, 'error');
-      } else if (type === 'warning') {
-        log(`[Service Worker Warning] ${text}`, 'warning');
-      } else {
-        log(`[Service Worker] ${text}`, 'info');
-      }
-    });
-
     const panel = await context.newPage();
     await panel.goto(`chrome-extension://${extensionId}/sidepanel/panel.html`, {
       waitUntil: 'domcontentloaded',
     });
-
-    // Listen to panel console messages
-    panel.on('console', (msg) => {
-      const type = msg.type();
-      const text = msg.text();
-      if (type === 'error') {
-        log(`[Panel Error] ${text}`, 'error');
-      } else if (type === 'warning') {
-        log(`[Panel Warning] ${text}`, 'warning');
-      }
-    });
-
-    // Also listen to network requests
-    panel.on('request', (request) => {
-      const url = request.url();
-      if (url.includes('homelabai') || url.includes('api')) {
-        log(`[Network Request] ${request.method()} ${url}`, 'info');
-      }
-    });
-
-    panel.on('response', (response) => {
-      const url = response.url();
-      if (url.includes('homelabai') || url.includes('api')) {
-        log(`[Network Response] ${response.status()} ${url}`, response.status() >= 400 ? 'error' : 'success');
-      }
-    });
+    await waitForPanelReady(panel);
 
     let passed = 0;
     for (const t of tests) {

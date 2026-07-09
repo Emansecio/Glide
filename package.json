@@ -4,19 +4,29 @@
   "description": "Warm-paper browser automation extension with configurable LLM providers",
   "type": "module",
   "scripts": {
-    "build": "node scripts/build.mjs --target=ext",
-    "build:ext": "node scripts/build.mjs --target=ext",
+    "build": "node scripts/build.mjs --target=ext --prod",
+    "build:dev": "node scripts/build.mjs --target=ext",
+    "build:all": "node scripts/build.mjs --target=ext --prod && node scripts/build.mjs --target=test",
+    "build:ext": "node scripts/build.mjs --target=ext --prod",
+    "build:prod": "node scripts/build.mjs --target=ext --prod",
     "build:test": "node scripts/build.mjs --target=test",
-    "validate": "npm run build:ext && npm run build:test && node dist/tests/validate-extension.js",
-    "test": "npm run build:ext && npm run build:test && node dist/tests/run-tests.js",
-    "test:unit": "npm run build:ext && npm run build:test && node dist/tests/unit/run-unit-tests.js",
+    "validate": "npm run build:all && node dist/tests/validate-extension.js",
+    "test": "npm run build:all && node dist/tests/run-tests.js",
+    "test:run": "node dist/tests/run-tests.js",
+    "test:unit": "npm run build:all && node dist/tests/unit/run-unit-tests.js",
+    "test:unit:run": "node dist/tests/unit/run-unit-tests.js",
     "test:integration": "echo 'Load tests/integration/test-page.html in browser and run tests'",
-    "test:e2e": "npm run build:ext && npm run build:test && node dist/tests/e2e/run-e2e.js",
+    "test:e2e": "npm run build:all && node dist/tests/e2e/run-e2e.js",
+    "test:e2e:run": "node dist/tests/e2e/run-e2e.js",
+    "test:live": "npm run build:all && node scripts/run-live-tests.mjs",
+    "test:live:ollama": "npm run build:all && node -e \"process.env.GLIDE_LIVE_TESTS='1';require('child_process').spawnSync(process.execPath,['dist/tests/integration/test-ollama-sdk.js'],{stdio:'inherit',env:process.env})\"",
+    "test:live:correctness": "npm run build:all && node -e \"process.env.GLIDE_LIVE_TESTS='1';require('child_process').spawnSync(process.execPath,['dist/tests/integration/test-model-correctness.js'],{stdio:'inherit',env:process.env})\"",
+    "test:live:e2e": "npm run build:all && node -e \"process.env.GLIDE_LIVE_TESTS='1';process.env.E2E_TIMEOUT='120000';require('child_process').spawnSync(process.execPath,['dist/tests/e2e/test-live-model-e2e.js'],{stdio:'inherit',env:process.env})\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
-    "dev": "echo 'Run npm run build, then load the dist/ folder in Chrome://extensions'"
+    "dev": "echo 'Run npm run build (prod) or build:dev (sourcemaps), then load dist/ in chrome://extensions'"
   },
   "keywords": [
     "chrome-extension",
@@ -30,8 +40,6 @@
   "license": "MIT",
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.17",
-    "@ai-sdk/google": "^3.0.30",
-    "@ai-sdk/openai": "^3.0.13",
     "@ai-sdk/openai-compatible": "^2.0.16",
     "ai": "^6.0.42"
   },
@@ -40,7 +48,6 @@
     "@types/chrome": "^0.0.268",
     "@types/node": "^22.10.5",
     "esbuild": "^0.27.2",
-    "marked": "^17.0.1",
     "playwright": "^1.57.0",
     "typescript": "^5.6.3"
   }

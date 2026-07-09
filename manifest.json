@@ -5,12 +5,11 @@
   "description": "Warm-paper browser automation assistant with configurable LLM/vision profiles and enterprise-ready controls",
   "permissions": [
     "sidePanel",
-    "activeTab",
     "scripting",
     "tabs",
     "tabGroups",
     "storage",
-    "declarativeNetRequest"
+    "declarativeNetRequestWithHostAccess"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -30,7 +29,11 @@
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
-  "Glide": {
-    "requireAccount": false
-  }
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
 }

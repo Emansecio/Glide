@@ -1,0 +1,66 @@
+<div id="sidebarBackdrop" class="sidebar-backdrop"></div>
+<aside id="sidebar" class="sidebar" aria-hidden="true">
+    <div class="sidebar-header">
+        <div class="brand">
+            <span class="mascot" aria-hidden="true">
+                <!-- Mark: esfera com clique. Fonte: icons/glide-mark.svg -->
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
+                    <path d="M18.88 16.82A8.4 8.4 0 1 1 18.69 6.92" stroke="currentColor" stroke-width="2.9" stroke-linecap="round"/>
+                    <circle cx="12" cy="12" r="2.9" fill="currentColor"/>
+                </svg>
+            </span>
+            <span class="brand-name">Glide</span>
+            <span class="brand-tag">v2</span>
+        </div>
+        <div class="sidebar-header-actions">
+            <button id="themeToggleBtn" class="icon-btn theme-toggle" type="button" title="Tema" aria-label="Alternar tema">
+                <!-- Um ícone por modo; o theme.ts mostra só o que corresponde ao
+                     estado atual (sistema / claro / escuro). -->
+                <svg class="theme-icon theme-icon-system" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="2" y="3" width="20" height="14" rx="2" />
+                    <line x1="8" y1="21" x2="16" y2="21" />
+                    <line x1="12" y1="17" x2="12" y2="21" />
+                </svg>
+                <svg class="theme-icon theme-icon-light hidden" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="4" />
+                    <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+                </svg>
+                <svg class="theme-icon theme-icon-dark hidden" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+                </svg>
+            </button>
+            <button id="closeSidebarBtn" class="icon-btn" title="Fechar menu" aria-label="Fechar menu">
+                <svg class="icon-close" width="14" height="14" aria-hidden="true"><use href="#icon-close" /></svg>
+            </button>
+        </div>
+    </div>
+
+    <div class="sidebar-content">
+        <nav class="sidebar-nav" aria-label="Navegação principal">
+            <button id="navChatBtn" class="nav-item active" data-view="chat" aria-current="page">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                </svg>
+                Conversa
+            </button>
+            <button id="navHistoryBtn" class="nav-item" data-view="history">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10" />
+                    <polyline points="12 6 12 12 16 14" />
+                </svg>
+                Histórico
+            </button>
+            <button id="navSettingsBtn" class="nav-item" data-view="settings">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+                    <circle cx="12" cy="12" r="3" />
+                </svg>
+                Configurações
+            </button>
+        </nav>
+
+        <div id="rightPanel" class="right-panel">
+            <div id="rightPanelPanels" class="right-panel-panels"></div>
+        </div>
+    </div>
+</aside>

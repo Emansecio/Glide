@@ -1,0 +1,146 @@
+<main class="main-content">
+    <div id="chatInterface" class="chat-area">
+        <div class="chat-scroll-region">
+            <div id="chatEmptyState" class="chat-empty-state">
+                <div class="chat-empty-mark" aria-hidden="true">
+                    <!-- Mark: esfera com clique. Fonte: icons/glide-mark.svg -->
+                    <svg viewBox="0 0 24 24" width="19" height="19" fill="none" aria-hidden="true">
+                        <path d="M18.88 16.82A8.4 8.4 0 1 1 18.69 6.92" stroke="currentColor" stroke-width="2.9" stroke-linecap="round"/>
+                        <circle cx="12" cy="12" r="2.9" fill="currentColor"/>
+                    </svg>
+                </div>
+                <div class="chat-empty-title">Por onde começamos?</div>
+                <div class="chat-empty-subtitle">Peça para navegar, clicar, preencher, extrair dados ou resumir a página aberta. Uma instrução por vez funciona melhor.</div>
+                <div class="chat-empty-hint">
+                    <span class="kbd">Ctrl</span><span class="kbd">V</span>
+                    <span>cola prints direto no campo</span>
+                </div>
+            </div>
+
+            <div id="chatMessages" class="chat-messages"></div>
+        </div>
+
+        <aside id="activityPanel" class="activity-panel" aria-hidden="true" aria-labelledby="activityPanelTitle">
+            <div class="activity-panel-header">
+                <span id="activityPanelTitle" class="activity-panel-title">Atividade</span>
+                <div class="activity-panel-actions">
+                    <button id="exportExecutionLogBtn" class="activity-export-btn" title="Exportar log de execução">
+                        Exportar log
+                    </button>
+                    <button id="activityCloseBtn" class="icon-btn" title="Fechar atividade" aria-label="Fechar atividade">
+                        <svg class="icon-close" width="14" height="14" aria-hidden="true"><use href="#icon-close" /></svg>
+                    </button>
+                </div>
+            </div>
+            <div class="activity-panel-block">
+                <div class="activity-panel-label">Raciocínio</div>
+                <pre id="thinkingPanel" class="thinking-panel empty">Sem raciocínio capturado ainda.</pre>
+            </div>
+            <div class="activity-panel-block">
+                <div class="activity-panel-label">Ferramentas</div>
+                <div id="toolLog" class="tool-log"></div>
+            </div>
+            <div id="sessionUsage" class="session-usage hidden" aria-live="polite"></div>
+        </aside>
+
+        <div id="planDrawer" class="plan-drawer hidden">
+            <div class="plan-drawer-header">
+                <button type="button" class="plan-drawer-toggle" id="planDrawerToggle" aria-expanded="true" aria-controls="planDrawerContent">
+                  <span class="plan-drawer-title">
+                    <svg class="plan-drawer-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                    <span>Plano</span>
+                    <span class="plan-drawer-count" id="planStepCount">0 etapas</span>
+                  </span>
+                </button>
+                <div class="plan-drawer-actions">
+                    <button type="button" class="plan-drawer-btn" id="planClearBtn" title="Limpar plano" aria-label="Limpar plano">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            <div class="plan-drawer-content" id="planDrawerContent">
+                <ol class="plan-checklist" id="planChecklist"></ol>
+            </div>
+        </div>
+
+        <div class="composer-wrapper">
+            <button id="scrollToLatestBtn" class="jump-to-latest hidden">Ir para o fim</button>
+            <div id="bannerStack" class="banner-stack"></div>
+
+            <!-- Estado fora do composer: aqui tem a largura inteira do painel e
+                 nunca disputa espaço com o seletor de modelo. -->
+            <div class="composer-status">
+                <div id="statusBar" class="status-bar" role="status" aria-live="polite">
+                    <span id="statusDot" class="status-dot" aria-hidden="true"></span>
+                    <span id="statusText" class="status-text">Pronto</span>
+                    <span id="statusMeta" class="status-meta"></span>
+                    <span id="statusTarget" class="status-target hidden"></span>
+                </div>
+            </div>
+
+            <div id="attachmentsBar" class="attachments-bar hidden" aria-live="polite"></div>
+
+            <div id="composer" class="composer">
+                <textarea id="userInput" placeholder="Mensagem…" aria-label="Mensagem" rows="1"></textarea>
+                <input id="fileInput" type="file" multiple accept=".md,.txt,.csv,.json,.log,.ts,.js,.css,.html,image/png,image/jpeg,image/webp,image/gif,.png,.jpg,.jpeg,.webp,.gif" class="hidden" />
+
+                <!-- Uma linha, dois grupos: contexto à esquerda, decisão e envio
+                     à direita. -->
+                <div class="composer-toolbar">
+                    <div class="composer-actions-left">
+                        <button id="openSidebarBtn" class="icon-btn action-item" title="Menu" aria-label="Abrir menu">
+                            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                                <line x1="3" y1="12" x2="21" y2="12" />
+                                <line x1="3" y1="6" x2="21" y2="6" />
+                                <line x1="3" y1="18" x2="21" y2="18" />
+                            </svg>
+                        </button>
+                        <button id="fileBtn" class="icon-btn action-item tool-item" title="Anexar arquivo ou imagem" aria-label="Anexar arquivo ou imagem">
+                            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                                <line x1="12" y1="5" x2="12" y2="19" />
+                                <line x1="5" y1="12" x2="19" y2="12" />
+                            </svg>
+                        </button>
+                        <button id="activityToggleBtn" class="icon-btn action-item activity-toggle" type="button" title="Painel de Atividade" aria-label="Abrir painel de atividade" aria-expanded="false" aria-controls="activityPanel">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="4 17 10 11 4 5" />
+                                <line x1="12" y1="19" x2="20" y2="19" />
+                            </svg>
+                        </button>
+                    </div>
+
+                    <div class="composer-actions-right">
+                        <div class="model-picker">
+                            <button id="modelSelectTrigger" class="model-trigger" type="button" aria-haspopup="listbox" aria-expanded="false">
+                                <span id="modelSelectValue">Selecionar modelo</span>
+                                <svg class="chevron-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                                    <polyline points="6 9 12 15 18 9" />
+                                </svg>
+                            </button>
+                            <select id="modelSelect" class="hidden" tabindex="-1" aria-hidden="true"></select>
+                            <div id="modelSelectMenu" class="model-dropdown hidden" role="listbox"></div>
+                        </div>
+
+                        <button id="sendBtn" type="button" class="send-action" title="Enviar mensagem" aria-label="Enviar mensagem">
+                            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <line x1="12" y1="19" x2="12" y2="6" />
+                                <polyline points="6 12 12 6 18 12" />
+                            </svg>
+                        </button>
+
+                        <button id="stopBtn" type="button" class="stop-action hidden" title="Parar execução (Esc)" aria-label="Parar execução (interrompe a automação atual)">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                                <rect x="6" y="6" width="12" height="12" rx="2" />
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</main>

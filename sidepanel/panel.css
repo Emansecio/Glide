@@ -1,0 +1,13 @@
+/* Ordem importa: @font-face antes de tudo (precisa estar registrado quando o
+   primeiro texto for medido), tokens em seguida, movimento por último (as
+   animações de entrada sobrescrevem o estado estático dos componentes). */
+@import url("./styles/fonts.css");
+@import url("./styles/base.css");
+@import url("./styles/layout.css");
+@import url("./styles/chat.css");
+@import url("./styles/composer.css");
+@import url("./styles/tools.css");
+@import url("./styles/settings.css");
+@import url("./styles/modals.css");
+@import url("./styles/utilities.css");
+@import url("./styles/motion.css");

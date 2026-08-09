@@ -1,0 +1,412 @@
+/* Configurações, botões e histórico. */
+
+.settings-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.settings-quick-setup {
+  border-radius: var(--radius-lg);
+  border: var(--hairline);
+  background: var(--surface);
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.setup-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-base);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+  color: var(--foreground);
+}
+
+.setup-title svg {
+  flex-shrink: 0;
+  width: 15px;
+  height: 15px;
+  color: var(--accent);
+}
+
+/* --- Segmentado de tema ---------------------------------------------------
+   Três opções curtas e mutuamente exclusivas: segmentado ganha de um <select>,
+   porque mostra as alternativas sem exigir um clique para descobri-las. */
+.theme-segmented {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-1);
+  padding: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  border: var(--hairline);
+}
+
+.theme-segment {
+  padding: var(--segment-padding-y) var(--space-3);
+  border-radius: var(--radius-xs);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.theme-segment:hover:not(.active) {
+  color: var(--foreground);
+  background: var(--overlay-hover);
+}
+
+/* O selecionado é a única superfície elevada do grupo — a sombra faz o papel
+   do "pastilha que desliza" sem precisar animar posição. */
+.theme-segment.active {
+  color: var(--foreground);
+  background: var(--background-elevated);
+  border-color: var(--border);
+  box-shadow: var(--shadow-xs);
+}
+
+.theme-segment:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+/* --- Seções colapsáveis --------------------------------------------------- */
+.settings-section {
+  border-radius: var(--radius-lg);
+  border: var(--hairline);
+  background: var(--background);
+  overflow: hidden;
+  transition: border-color var(--dur-3) var(--ease-out), background-color var(--dur-3) var(--ease-out);
+}
+
+.settings-section[open] {
+  background: var(--surface);
+}
+
+.settings-section > summary {
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
+  padding: var(--input-padding-y) var(--space-5);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--foreground);
+  cursor: pointer;
+  border-bottom: 1px solid transparent;
+  transition: background-color var(--dur-2) var(--ease-out);
+}
+
+.settings-section > summary:hover {
+  background: var(--overlay-hover);
+}
+
+.settings-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-section > summary svg {
+  flex-shrink: 0;
+  width: 15px;
+  height: 15px;
+  color: var(--muted-dim);
+  transition: color var(--dur-2) var(--ease-out);
+}
+
+.settings-section > summary:hover svg {
+  color: var(--muted);
+}
+
+.settings-section[open] > summary {
+  border-bottom-color: var(--border);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .settings-section[open] .settings-body {
+    animation: rise-in-sm var(--dur-3) var(--ease-out) both;
+  }
+}
+
+.settings-body {
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* --- Formulários ---------------------------------------------------------- */
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* Rótulo em caixa normal. Um formulário inteiro em CAIXA ALTA mono lê como
+   arquivo de configuração, não como interface. */
+.form-group label {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--foreground);
+}
+
+.form-group input,
+.form-group select,
+.form-group textarea {
+  width: 100%;
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--background);
+  color: var(--foreground);
+  padding: var(--input-padding-y) var(--input-padding-x);
+  font-size: var(--text-sm);
+  transition: border-color var(--dur-2) var(--ease-out);
+}
+
+.form-group input::placeholder,
+.form-group textarea::placeholder {
+  color: var(--muted-dim);
+}
+
+.form-group input:hover,
+.form-group textarea:hover {
+  border-color: var(--border-strong);
+}
+
+/* Mesmo anel do composer: um único idioma de foco na interface inteira. */
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus {
+  border-color: var(--accent-border);
+  box-shadow: var(--focus-ring);
+  outline: none;
+}
+
+.form-group .checkbox-row {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.form-group .checkbox-row input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.form-group small {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+/* --- Botões ---------------------------------------------------------------
+   Dois níveis, sem terceiro: tinta sólida para a ação principal, contorno para
+   todo o resto. */
+.btn,
+.btn-primary,
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: 9px var(--space-5);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  border: 1px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+/* Secundário primeiro: os botões primários vêm marcados como `btn btn-primary`,
+   então a regra sólida precisa ser a última a falar — mesma especificidade,
+   quem ganha é quem vem depois. */
+/* Fundo transparente e não `--background`: assim o botão de contorno funciona
+   tanto sobre o painel quanto dentro de um cartão. Com cor fixa, no escuro ele
+   virava um buraco mais escuro que a superfície em volta. */
+.btn-secondary,
+.btn {
+  background: transparent;
+  color: var(--foreground);
+  border-color: var(--border);
+}
+
+.btn-secondary:hover,
+.btn:hover {
+  border-color: var(--border-strong);
+  background: var(--overlay-hover);
+}
+
+.btn-primary {
+  background: var(--ink);
+  color: var(--ink-foreground);
+  border-color: transparent;
+  box-shadow: var(--shadow-xs);
+}
+
+.btn-primary:hover {
+  background: var(--ink-hover);
+  border-color: transparent;
+}
+
+.btn:disabled,
+.btn-primary:disabled,
+.btn-secondary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-sm {
+  padding: 7px 11px;
+  font-size: var(--text-xs);
+}
+
+.btn-leading-icon {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  display: block;
+  stroke: currentColor;
+  color: var(--muted);
+  transition: color var(--dur-2) var(--ease-out);
+}
+
+.oauth-helper-btn:hover .btn-leading-icon,
+.btn:hover .btn-leading-icon {
+  color: var(--foreground);
+}
+
+/* Num botão sólido o ícone acompanha o texto, não a escala de cinza. */
+.btn-primary .btn-leading-icon,
+.btn-primary:hover .btn-leading-icon {
+  color: currentColor;
+}
+
+.btn-label {
+  line-height: 1.2;
+}
+
+.oauth-helper-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.oauth-helper-btn--full {
+  width: 100%;
+  justify-content: center;
+}
+
+.settings-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-top: var(--space-2);
+}
+
+/* --- Histórico ------------------------------------------------------------ */
+.history-items {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.history-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  padding: 10px var(--space-4) 10px 11px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--dur-2) var(--ease-out);
+}
+
+.history-item:hover {
+  background: var(--overlay-hover);
+}
+
+.history-item-main {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+}
+
+.history-title {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--foreground);
+  margin-bottom: var(--space-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  color: var(--muted-dim);
+}
+
+.history-meta-dot {
+  color: var(--border-strong);
+}
+
+/* Excluir aparece no hover da linha: fica fora do caminho na leitura e à mão
+   quando é preciso. Em toque, sempre visível (não há hover). */
+.history-delete {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-xs);
+  color: var(--muted-dim);
+  opacity: 0;
+  transition: opacity var(--dur-2) var(--ease-out), color var(--dur-2) var(--ease-out), background-color var(--dur-2)
+    var(--ease-out);
+}
+
+.history-item:hover .history-delete,
+.history-delete:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .history-delete {
+    opacity: 1;
+  }
+}
+
+.history-delete:hover {
+  color: var(--error);
+  background: var(--error-muted);
+}
+
+.history-empty {
+  padding: var(--space-8) var(--space-5);
+  text-align: center;
+  font-size: var(--text-sm);
+  color: var(--muted-dim);
+  line-height: 1.55;
+}

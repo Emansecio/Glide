@@ -1,0 +1,271 @@
+/* Camada de movimento — Glide V2.
+   Regra: nada aparece do nada e nada some do nada. Todo elemento que entra na
+   tela vem de algum lugar (de baixo, do gatilho, da esquerda) e volta para lá.
+
+   O que dá a sensação de fluidez do vídeo de referência não é uma animação
+   longa — é *toda* mudança de estado ter uma, e todas usarem a mesma curva.
+
+   Elementos criados por JS animam sozinhos: uma `animation` declarada na classe
+   dispara no momento em que o nó entra no documento. Por isso quase nada aqui
+   precisa de código. */
+
+/* --- Vocabulário --------------------------------------------------------- */
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes rise-in-sm {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes slide-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Pop com mola: a escala passa de 1 e volta. Usado no que "salta" para a tela. */
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Recompensa curta ao concluir uma etapa. O estado final volta a 1 para que
+   itens concluídos não fiquem permanentemente maiores que os demais. */
+@keyframes check-pop {
+  0% {
+    transform: scale(0.88);
+  }
+  55% {
+    transform: scale(1.08);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* --- Entrada de mensagens -------------------------------------------------
+   O turno inteiro sobe junto; o corpo entra 40ms depois do cabeçalho. Esse
+   atraso mínimo é o que faz parecer coreografado em vez de simultâneo. */
+@media (prefers-reduced-motion: no-preference) {
+  .chat-turn {
+    animation: rise-in var(--dur-4) var(--ease-out) both;
+  }
+
+  .message.user .message-content {
+    animation: pop-in var(--dur-3) var(--ease-spring) both;
+  }
+
+  .message.assistant .message-header {
+    animation: fade-in var(--dur-3) var(--ease-out) both;
+  }
+
+  .message.assistant .message-content {
+    animation: rise-in-sm var(--dur-4) var(--ease-out) 40ms both;
+  }
+
+  /* Passos de ferramenta entram pela esquerda, na direção em que a linha do
+     tempo cresce. */
+  .tool-step {
+    animation: slide-in-left var(--dur-3) var(--ease-out) both;
+  }
+
+  .stream-events .tool-step {
+    animation-duration: var(--dur-2);
+  }
+
+  .attachment-chip,
+  .execution-chip {
+    animation: pop-in var(--dur-3) var(--ease-spring) both;
+  }
+
+  .send-action:not(.hidden),
+  .stop-action:not(.hidden) {
+    animation: pop-in var(--dur-3) var(--ease-spring) both;
+  }
+
+  .plan-checklist-checkbox.checked {
+    animation: check-pop var(--dur-4) var(--ease-spring) both;
+  }
+
+  .plan-checklist-item {
+    animation: rise-in-sm var(--dur-3) var(--ease-out) both;
+  }
+
+  .plan-checklist > .plan-checklist-item:nth-child(2),
+  .stream-events > .tool-step:nth-child(2) {
+    animation-delay: 30ms;
+  }
+
+  .plan-checklist > .plan-checklist-item:nth-child(3),
+  .stream-events > .tool-step:nth-child(3) {
+    animation-delay: 60ms;
+  }
+
+  .plan-checklist > .plan-checklist-item:nth-child(4),
+  .stream-events > .tool-step:nth-child(4) {
+    animation-delay: 90ms;
+  }
+
+  /* Estado vazio: marca, título e subtítulo em cascata de 50ms. */
+  .chat-empty-state > * {
+    animation: rise-in var(--dur-5) var(--ease-out) both;
+  }
+
+  .chat-empty-mark {
+    animation-name: pop-in;
+    animation-duration: var(--dur-4);
+    animation-timing-function: var(--ease-spring);
+  }
+
+  .chat-empty-title {
+    animation-delay: 60ms;
+  }
+
+  .chat-empty-subtitle {
+    animation-delay: 120ms;
+  }
+
+  .chat-empty-hint {
+    animation-delay: 180ms;
+  }
+}
+
+/* --- Sinais de "está acontecendo algo" ------------------------------------ */
+
+/* Shimmer no rótulo em execução: faixa de realce atravessa o texto. O sweep
+   roda em transform (compositor) — background-position repintava a cada frame
+   durante passes longos de ferramenta. */
+.shimmer {
+  position: relative;
+  color: var(--muted);
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .shimmer::after {
+    content: "";
+    position: absolute;
+    inset: 0 -40%;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      transparent 35%,
+      color-mix(in srgb, var(--foreground) 55%, transparent) 50%,
+      transparent 65%,
+      transparent 100%
+    );
+    transform: translateX(-100%);
+    animation: shimmer-sweep 2.2s linear infinite;
+    pointer-events: none;
+  }
+}
+
+@keyframes shimmer-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+/* Respiro de opacidade: alternativa discreta ao shimmer para blocos inteiros. */
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* Pulso do ponto de status: um halo cresce e some, o ponto fica parado.
+   O halo é um pseudo-elemento animado em transform + opacity — as duas únicas
+   propriedades que o compositor resolve sozinho, sem repintar. A versão por
+   box-shadow (0 0 0 Npx) obriga o navegador a repintar o ponto e a vizinhança a
+   cada frame, e ela roda o run inteiro, em loop. */
+@keyframes dot-halo {
+  0% {
+    opacity: 0.45;
+    transform: scale(1);
+  }
+  70%,
+  100% {
+    opacity: 0;
+    transform: scale(2.8);
+  }
+}
+
+@keyframes type-dot {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+/* Cursor de streaming: um bloco fino que pisca no fim do texto que chega. */
+@keyframes caret-blink {
+  0%,
+  45% {
+    opacity: 1;
+  }
+  55%,
+  100% {
+    opacity: 0.15;
+  }
+}
+
+/* --- Transições de tema ---------------------------------------------------
+   Ao trocar claro/escuro, cor e fundo cruzam em 200ms; o resto (transform,
+   sombra) fica de fora para não arrastar a interface inteira. A classe é posta
+   e removida pelo theme.ts, então isso não custa nada no uso normal. */
+:root.theme-transition,
+:root.theme-transition *,
+:root.theme-transition *::before,
+:root.theme-transition *::after {
+  transition: background-color var(--dur-3) var(--ease-in-out), border-color var(--dur-3) var(--ease-in-out), color
+    var(--dur-3) var(--ease-in-out), fill var(--dur-3) var(--ease-in-out) !important;
+  transition-delay: 0s !important;
+}

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none" role="img" aria-label="Glide">
+  <!--
+    Fonte dos PNGs da barra do Chrome (scripts/render-icons.mjs).
+
+    Diferente do glide-mark.svg, aqui a marca vem sobre uma PLACA sólida. O PNG
+    anterior era transparente com a marca escura e sumia na barra de ferramentas
+    escura do Chrome — a placa garante contraste nos dois temas, e o azul destaca
+    no meio dos ícones cinza.
+
+    A geometria é a mesma do glide-mark.svg, num grid de 24 escalado por 13.333
+    (24 → 320px) e centrado com 96px de respiro de cada lado.
+  -->
+  <rect width="512" height="512" rx="114" fill="#0068d6"/>
+  <g transform="translate(96 96) scale(13.3333)" fill="none">
+    <path d="M18.88 16.82A8.4 8.4 0 1 1 18.69 6.92" stroke="#ffffff" stroke-width="2.9" stroke-linecap="round"/>
+    <circle cx="12" cy="12" r="2.9" fill="#ffffff"/>
+  </g>
+</svg>

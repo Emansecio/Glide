@@ -1,0 +1,74 @@
+# Dependencies
+node_modules/
+
+# TS incremental build cache
+.tsbuildinfo
+
+# Agent/harness working state (not part of the extension)
+.agents/
+.codex/
+.code-review-graph/
+.pit/
+mcps/
+tasks/
+terminals/
+work/
+hermes-claude-code-max-oauth-routing.md
+
+# Build artifacts
+dist/
+build/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+
+# Extension packaging
+*.zip
+*.crx
+*.pem
+
+# Environment files
+.env
+.env.local
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Images in root directory (screenshots, references)
+/*.png
+/*.jpg
+/*.jpeg
+/*.gif
+/*.svg
+/*.webp
+
+# Documentation files (personal/AI context)
+AGENTS.md
+CLAUDE.md
+.osgrep
+
+# Claude Code specific
+.claude/
+
+# Project planning files (internal)
+CODE_REVIEW_REPORT.md
+
+# Keep example images in assets
+!assets/**/*.png
+!assets/**/*.jpg
+!assets/**/*.svg
+!icons/**/*.png

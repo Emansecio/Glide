@@ -1,0 +1,596 @@
+/* Composer — a peça central da V2.
+
+   A V1 empilhava seis coisas numa grade de três colunas dentro de ~300px:
+   anexo, menu, atividade, estado, modelo e enviar. Tudo truncava.
+   Aqui o estado sai da barra e vira uma linha própria acima do composer, e a
+   barra fica com uma coisa de cada lado — como na referência:
+
+       ┌───────────────────────────────┐
+       │  Mensagem…                    │
+       │                               │
+       │  ⊕  ☰  ⌗        modelo ⌄  ⬆  │
+       └───────────────────────────────┘
+*/
+
+.composer-wrapper {
+  position: relative;
+  padding: var(--space-4) var(--space-6) var(--space-5);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-4);
+  width: 100%;
+  background: var(--background);
+}
+
+/* --- Linha de estado -----------------------------------------------------
+   Fora do composer: aqui tem a largura inteira do painel e nunca trunca. */
+.composer-status {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding: 0 var(--space-3);
+}
+
+.status-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  max-width: 100%;
+  min-width: 0;
+}
+
+.status-dot {
+  position: relative;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  flex-shrink: 0;
+  background: var(--muted-dim);
+  transition: background-color var(--dur-3) var(--ease-out);
+}
+
+.status-dot.success {
+  background: var(--success);
+}
+
+.status-dot.warning {
+  background: var(--warning);
+}
+
+.status-dot.error {
+  background: var(--error);
+}
+
+/* Em execução é o único estado que se move: ponto azul com halo pulsante. */
+.status-dot.active {
+  background: var(--accent);
+}
+
+/* O halo é uma camada própria (transform + opacity), promovida ao compositor.
+   Fica fora do fluxo, então crescer 2.8× não mexe em layout nenhum. */
+@media (prefers-reduced-motion: no-preference) {
+  .status-dot.active::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: var(--accent);
+    pointer-events: none;
+    will-change: transform, opacity;
+    animation: dot-halo 1.8s var(--ease-out) infinite;
+  }
+}
+
+.status-text,
+.status-meta,
+#statusTarget {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* O rótulo cede espaço; o número não. Se os dois encolhem juntos, o resultado
+   é "Pr… Ctx 0/19…" — duas informações, nenhuma legível. */
+.status-text {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.status-meta {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding-left: var(--space-4);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  color: var(--muted-dim);
+}
+
+#statusTarget {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 42%;
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  color: var(--muted);
+}
+
+#statusTarget:empty {
+  display: none;
+}
+
+/* --- Anexos pendentes ----------------------------------------------------- */
+.attachments-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding: 0 var(--space-1);
+}
+
+.attachments-bar.hidden {
+  display: none;
+}
+
+.attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  max-width: 220px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  border: var(--hairline);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: var(--text-xs);
+  transition: border-color var(--dur-2) var(--ease-out), background-color var(--dur-2) var(--ease-out);
+}
+
+.attachment-chip:hover {
+  border-color: var(--border-strong);
+}
+
+.attachment-chip--image {
+  padding-left: var(--space-2);
+}
+
+.attachment-thumb {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-xs);
+  object-fit: cover;
+  background: var(--background);
+  flex-shrink: 0;
+}
+
+.attachment-file-icon {
+  flex-shrink: 0;
+  margin-left: var(--space-1);
+  color: var(--muted-dim);
+}
+
+.attachment-chip-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+
+.attachment-chip-name {
+  color: var(--foreground);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 140px;
+}
+
+.attachment-chip-size {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  color: var(--muted-dim);
+}
+
+.attachment-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--muted-dim);
+  flex-shrink: 0;
+}
+
+.attachment-chip-remove:hover {
+  color: var(--foreground);
+  background: var(--overlay-hover);
+}
+
+/* --- Bandeja de entrada ---------------------------------------------------
+   Borda + sombra baixa. No tema claro, a sombra é o que separa o composer do
+   fundo branco; a borda sozinha ficaria chapada. */
+.composer {
+  width: 100%;
+  border: var(--hairline);
+  border-radius: var(--radius-xl);
+  background: var(--background-elevated);
+  box-shadow: var(--shadow-xs);
+  overflow: visible;
+  transition: border-color var(--dur-3) var(--ease-out), transform var(--dur-3) var(--ease-out);
+  container-type: inline-size;
+}
+
+/* Foco: a borda vira azul e um anel de 3px cresce por fora. Sem deslocamento
+   de layout — é só sombra.
+
+   `:has(textarea:focus)` e não `:focus-within`: este último acende com QUALQUER
+   descendente focado, então tabular até o botão de anexo ou o seletor de modelo
+   pintava a moldura inteira ao mesmo tempo que o próprio botão mostrava o anel
+   dele — dois indicadores para um foco só. A moldura pertence à caixa de texto. */
+.composer:has(textarea:focus) {
+  border-color: var(--accent-border);
+  box-shadow: var(--focus-ring), var(--shadow-sm);
+}
+
+/* Em execução, a moldura permanece azul mesmo sem foco: o composer é o lugar
+   onde o estado do run é visível o tempo todo. */
+.composer.running {
+  border-color: var(--accent-border);
+}
+
+.composer textarea {
+  width: 100%;
+  min-height: var(--composer-min-height);
+  max-height: 180px;
+  resize: none;
+  border: none;
+  background: transparent;
+  color: var(--foreground);
+  padding: var(--space-5) var(--space-6) var(--space-1);
+  font-size: var(--text-base);
+  line-height: 1.55;
+  font-family: var(--font-sans);
+}
+
+/* Sem anel próprio: quem indica o foco desta caixa é a moldura do composer,
+   na regra acima. Campos de texto casam com :focus-visible inclusive no clique
+   do mouse (o navegador sempre mostra o anel em entrada de texto), então a
+   regra global de foco desenhava um segundo retângulo azul, reto e menor,
+   encostado por dentro do arredondado. Suprimir aqui não tira indicação de
+   foco — troca duas por uma. */
+.composer textarea:focus,
+.composer textarea:focus-visible {
+  outline: none;
+}
+
+.composer textarea::placeholder {
+  color: var(--muted-dim);
+}
+
+/* --- Barra de ações: uma linha, dois grupos ------------------------------- */
+.composer-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4) var(--space-4) 10px;
+}
+
+.composer-actions-left,
+.composer-actions-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.composer-actions-right {
+  gap: var(--space-3);
+  flex-shrink: 0;
+}
+
+.action-item {
+  color: var(--muted-dim);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.icon-btn.action-item {
+  width: 32px;
+  height: 32px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .action-item:hover {
+    color: var(--foreground);
+    background: var(--overlay-hover);
+  }
+}
+
+.activity-toggle {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+}
+
+/* Painel de atividade aberto: azul, porque é um alternador — reflete um estado
+   que o usuário ligou. */
+.activity-toggle.active {
+  color: var(--accent);
+  background: var(--accent-muted);
+  border-color: var(--accent-border);
+}
+
+/* --- Seletor de modelo ----------------------------------------------------
+   Texto simples, como no vídeo de referência: "modelo ⌄", sem caixa até o
+   hover. Uma caixa permanente aqui pesa mais que a informação que carrega. */
+.model-picker {
+  position: relative;
+  min-width: 0;
+}
+
+.model-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  max-width: 160px;
+  padding: 5px var(--space-4);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.model-trigger span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-trigger:hover,
+.model-trigger[aria-expanded="true"] {
+  color: var(--foreground);
+  background: var(--overlay-hover);
+}
+
+.model-trigger[aria-expanded="true"] .chevron-icon {
+  transform: rotate(180deg);
+}
+
+.chevron-icon {
+  flex-shrink: 0;
+  opacity: 0.6;
+  transition: transform var(--dur-3) var(--ease-out);
+}
+
+/* Abre a partir do gatilho (canto inferior direito), não do centro: o menu
+   parece ter saído do botão. */
+.model-dropdown {
+  position: absolute;
+  bottom: calc(100% + var(--space-4));
+  right: 0;
+  min-width: var(--dropdown-min-width);
+  max-height: 320px;
+  overflow-y: auto;
+  border: var(--hairline);
+  border-radius: var(--radius-lg);
+  background: var(--background-elevated);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-2);
+  z-index: 50;
+  transform-origin: bottom right;
+  opacity: 1;
+  transform: scale(1);
+  transition: opacity var(--dur-3) var(--ease-out), transform var(--dur-4) var(--ease-spring), display var(--dur-3)
+    allow-discrete;
+}
+
+.model-dropdown.hidden {
+  display: none;
+  opacity: 0;
+  /* Nunca scale(0): nada no mundo real aparece do nada. */
+  transform: scale(0.95);
+}
+
+@starting-style {
+  .model-dropdown:not(.hidden) {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+}
+
+.model-group + .model-group {
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: var(--hairline);
+}
+
+.model-group-label {
+  padding: var(--space-3) var(--space-4) var(--space-2);
+  font-size: var(--text-mono);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--muted-dim);
+}
+
+.model-group-items {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.model-option {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: var(--space-4) var(--space-4);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid transparent;
+}
+
+.model-option:hover {
+  background: var(--overlay-hover);
+}
+
+/* Selecionado: fundo azul lavado + marca. É o único item de lista que recebe
+   cor, porque é o único que representa uma escolha corrente. */
+.model-option.selected {
+  background: var(--accent-muted);
+  border-color: var(--accent-border);
+}
+
+.model-option-name {
+  width: 100%;
+  text-align: left;
+  overflow-wrap: anywhere;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--foreground);
+}
+
+.model-option.selected .model-option-name {
+  color: var(--accent);
+}
+
+.model-option-meta {
+  width: 100%;
+  text-align: left;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  color: var(--muted-dim);
+  margin-top: var(--space-1);
+}
+
+/* --- Enviar / parar -------------------------------------------------------
+   Círculo de tinta sólida, como no print. É o elemento de maior contraste da
+   tela inteira — e o único que precisa ser. */
+.send-action {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-full);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: var(--send-bg);
+  color: var(--send-fg);
+  border: none;
+  box-shadow: var(--shadow-xs);
+}
+
+.send-action:hover:not(:disabled) {
+  background: var(--send-bg-hover);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .send-action:hover:not(:disabled) {
+    transform: scale(1.06);
+  }
+}
+
+.send-action:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.send-action[hidden] {
+  display: none !important;
+}
+
+.send-action:disabled,
+.send-action.loading {
+  background: var(--control-disabled-bg);
+  color: var(--control-disabled-fg);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.send-action.loading svg {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .send-action.loading::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    margin: auto;
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--control-disabled-fg);
+    border-top-color: transparent;
+    border-radius: var(--radius-full);
+    animation: send-spin var(--dur-4) linear infinite;
+  }
+}
+
+@keyframes send-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .send-action.loading::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    margin: auto;
+    width: 6px;
+    height: 6px;
+    border-radius: var(--radius-full);
+    background: var(--control-disabled-fg);
+    animation: breathe 1.4s var(--ease-in-out) infinite !important;
+    animation-duration: 1.4s !important;
+    animation-iteration-count: infinite !important;
+  }
+}
+
+/* Parar não precisa gritar em vermelho o tempo todo: fica neutro e assume a cor
+   de alerta quando a mão chega nele. */
+.stop-action {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-full);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: var(--card-hover);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+.stop-action:hover {
+  color: var(--error);
+  border-color: var(--error);
+  background: var(--error-muted);
+}
+
+#modelSelect {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+  width: 0;
+  height: 0;
+}
+
+/* --- Painel muito estreito ------------------------------------------------
+   Abaixo de 300px o nome do modelo é a primeira coisa a ceder espaço. */
+@container (max-width: 300px) {
+  .model-trigger {
+    max-width: 96px;
+  }
+}

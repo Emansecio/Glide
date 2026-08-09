@@ -1,0 +1,162 @@
+<div id="settingsTabGeneral" class="tab-panel" data-tab="general">
+    <div class="settings-quick-setup">
+        <h3 class="setup-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="4" />
+                <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+            </svg>
+            Aparência
+        </h3>
+
+        <div class="form-group">
+            <label id="themeLabel">Tema</label>
+            <!-- Aplica na hora; não depende do botão Salvar abaixo, que é do
+                 provedor. -->
+            <div class="theme-segmented" id="themeSegmented" role="radiogroup" aria-labelledby="themeLabel">
+                <button type="button" class="theme-segment" role="radio" aria-checked="true" tabindex="0" data-theme-mode="light">Claro</button>
+                <button type="button" class="theme-segment" role="radio" aria-checked="false" tabindex="-1" data-theme-mode="dark">Escuro</button>
+                <button type="button" class="theme-segment" role="radio" aria-checked="false" tabindex="-1" data-theme-mode="system">Sistema</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="settings-quick-setup">
+        <h3 class="setup-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" aria-hidden="true">
+                <line x1="4" y1="8" x2="20" y2="8" />
+                <line x1="4" y1="16" x2="20" y2="16" />
+                <circle cx="10" cy="8" r="2.4" fill="var(--background)" />
+                <circle cx="16" cy="16" r="2.4" fill="var(--background)" />
+            </svg>
+            Configuração
+        </h3>
+
+        <div class="form-group">
+            <label for="provider">Provedor</label>
+            <select id="provider">
+                <option value="anthropic" selected>Claude Code (OAuth / Anthropic)</option>
+                <option value="codex">Codex (OpenAI)</option>
+                <option value="opencode">OpenCode Zen</option>
+                <option value="qwen">Qwen Cloud (ModelStudio)</option>
+                <option value="xai">Grok (xAI)</option>
+                <option value="ollama">Ollama (local)</option>
+            </select>
+        </div>
+
+        <div class="form-group" id="apiKeyGroup">
+            <label for="apiKey" id="apiKeyLabel">Token OAuth do Claude Code</label>
+            <input type="password" id="apiKey" placeholder="Cole seu token OAuth do Claude Code..." />
+            <small id="apiKeyHint">Seu token OAuth obtido em ~/.claude/.credentials.json ou Keychain.</small>
+            <div class="oauth-helper-actions">
+                <button type="button" id="anthropicOauthBtn" class="btn btn-secondary btn-sm oauth-helper-btn hidden">
+                    <svg class="btn-leading-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                    </svg>
+                    <span class="btn-label">Conectar com Claude</span>
+                </button>
+                <button type="button" id="codexOauthBtn" class="btn btn-secondary btn-sm oauth-helper-btn hidden">
+                    <svg class="btn-leading-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                    </svg>
+                    <span class="btn-label">Conectar via navegador (ChatGPT)</span>
+                </button>
+                <button type="button" id="importCredentialsBtn" class="btn btn-secondary btn-sm oauth-helper-btn">
+                    <svg class="btn-leading-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="7 10 12 15 17 10" />
+                        <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                    <span class="btn-label">Importar credenciais</span>
+                </button>
+                <button type="button" id="oauthHelpBtn" class="btn btn-secondary btn-sm oauth-helper-btn">
+                    <svg class="btn-leading-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <circle cx="12" cy="12" r="10" />
+                        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+                        <line x1="12" y1="17" x2="12.01" y2="17" />
+                    </svg>
+                    <span class="btn-label">Como obter?</span>
+                </button>
+                <input type="file" id="credentialsFileInput" accept=".json" class="hidden" />
+            </div>
+        </div>
+
+        <div class="form-group hidden" id="customEndpointGroup">
+            <label for="customEndpoint" id="customEndpointLabel">Endpoint da API</label>
+            <input type="text" id="customEndpoint" placeholder="http://localhost:11434" />
+            <small id="endpointHint">Deixe vazio para usar o endpoint padrão do provedor.</small>
+        </div>
+
+        <div class="form-group">
+            <label for="model">Modelo</label>
+            <select id="model" aria-label="Modelo">
+                <option value="claude-sonnet-5">Claude Sonnet 5</option>
+                <option value="claude-opus-5">Claude Opus 5</option>
+            </select>
+            <small id="modelHint">Escolha Claude Sonnet 5 ou Claude Opus 5 (Claude Code).</small>
+            <div class="oauth-helper-actions hidden" id="detectModelsGroup">
+                <button type="button" id="detectModelsBtn" class="btn btn-secondary btn-sm oauth-helper-btn oauth-helper-btn--full">
+                    <svg class="btn-leading-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <circle cx="11" cy="11" r="8" />
+                        <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                    </svg>
+                    <span class="btn-label">Detectar modelos disponíveis</span>
+                </button>
+            </div>
+        </div>
+
+        <div class="settings-actions">
+            <button id="saveSettingsBtn" class="btn btn-primary">Salvar</button>
+            <button id="cancelSettingsBtn" class="btn btn-secondary">Cancelar</button>
+        </div>
+    </div>
+
+    <details class="settings-section">
+        <summary>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                aria-hidden="true">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+            </svg>
+            Prompt do sistema
+        </summary>
+        <div class="settings-body">
+            <div class="form-group">
+                <label for="systemPrompt">Prompt customizado</label>
+                <textarea id="systemPrompt" rows="8" placeholder="Deixe vazio para usar o padrao..."></textarea>
+            </div>
+        </div>
+    </details>
+
+    <details class="settings-section">
+        <summary>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                aria-hidden="true">
+                <polyline points="16 18 22 12 16 6" />
+                <polyline points="8 6 2 12 8 18" />
+            </svg>
+            Avançado
+        </summary>
+        <div class="settings-body">
+            <div class="form-group">
+                <label class="checkbox-row" for="notifyOnComplete">
+                    <input type="checkbox" id="notifyOnComplete" />
+                    <span>Notificar ao concluir</span>
+                </label>
+                <small>Envia uma notificação do sistema quando a resposta terminar e o painel estiver em segundo plano.</small>
+            </div>
+            <div class="form-group">
+                <label class="checkbox-row" for="enableDebugger">
+                    <input type="checkbox" id="enableDebugger" />
+                    <span>CDP / debugger (opt-in)</span>
+                </label>
+                <small>Expõe a ferramenta <code>cdp</code> (Chrome DevTools Protocol). Mostra o banner amarelo do Chrome na aba. Prefira as tools de página; use só quando rede/script não bastarem.</small>
+            </div>
+        </div>
+    </details>
+</div>

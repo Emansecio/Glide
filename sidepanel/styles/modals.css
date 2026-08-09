@@ -1,0 +1,164 @@
+/* Modais. */
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+}
+
+/* Sem backdrop-filter: o desfoque de tela cheia é recalculado a cada frame do
+   fade e é o suficiente para derrubar a entrada do modal abaixo de 60fps num
+   painel estreito. O véu sólido entrega a mesma separação. */
+.modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: var(--overlay-scrim);
+}
+
+.modal-content {
+  position: relative;
+  width: min(480px, 100%);
+  max-height: 84vh;
+  border: var(--hairline);
+  border-radius: var(--radius-xl);
+  background: var(--background-elevated);
+  transform-origin: center;
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  overflow: hidden;
+}
+
+.modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-5);
+}
+
+.modal-title-row {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.modal-title {
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: 400;
+  letter-spacing: var(--tracking-snug);
+  line-height: 1.2;
+  color: var(--foreground);
+}
+
+.modal-subtitle {
+  font-size: var(--text-sm);
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+/* Corpo da ajuda de OAuth — mesmo idioma do markdown do chat. */
+.oauth-help-body {
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.oauth-help-body p {
+  color: var(--foreground);
+}
+
+.oauth-help-list {
+  margin: 0 0 var(--space-2) 1.2em;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.oauth-help-nested-list {
+  margin: var(--space-2) 0 0 1.1em;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.oauth-help-body code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  background: var(--surface-sunken);
+  border-radius: var(--radius-xs);
+  padding: 0.14em 0.38em;
+  word-break: break-all;
+}
+
+.oauth-help-code {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-4) 10px;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--foreground);
+  background: var(--surface-sunken);
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+}
+
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: var(--space-1) 0;
+  font-size: var(--text-xs);
+  color: var(--muted-dim);
+}
+
+.divider::before,
+.divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.oauth-help-actions {
+  justify-content: flex-end;
+  padding-top: var(--space-5);
+  border-top: var(--hairline);
+  margin-top: 0;
+}
+
+/* Entrada: o modal não está ancorado a um gatilho, então vem do centro — véu
+   em fade, cartão em escala + subida curta. */
+.modal {
+  opacity: 1;
+  transition: opacity var(--dur-3) var(--ease-out), display var(--dur-3) allow-discrete;
+}
+
+.modal.hidden {
+  display: none;
+  opacity: 0;
+}
+
+.modal .modal-content {
+  transition: transform var(--dur-4) var(--ease-spring);
+}
+
+.modal.hidden .modal-content {
+  transform: scale(0.96) translateY(8px);
+}
+
+@starting-style {
+  .modal:not(.hidden) {
+    opacity: 0;
+  }
+  .modal:not(.hidden) .modal-content {
+    transform: scale(0.96) translateY(8px);
+  }
+}

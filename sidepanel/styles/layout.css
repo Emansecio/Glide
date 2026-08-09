@@ -1,0 +1,313 @@
+/* Casca: contêiner, gaveta lateral, navegação, cabeçalhos de painel. */
+
+.app-container {
+  position: relative;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: var(--background);
+}
+
+/* --- Gaveta lateral ------------------------------------------------------- */
+.sidebar-backdrop {
+  position: absolute;
+  inset: 0;
+  background: var(--overlay-scrim);
+  opacity: 0;
+  pointer-events: none;
+  /* O véu entra mais devagar que a gaveta: some por trás dela, não junto. */
+  transition: opacity var(--dur-4) var(--ease-out);
+  z-index: 30;
+  /* Sem backdrop-filter aqui de propósito: um blur que cobre o painel inteiro
+     obriga o compositor a reler e desfocar tudo o que está atrás A CADA FRAME
+     da transição — e esta transição roda toda vez que o menu abre. O véu sólido
+     separa as camadas igual e é de graça. */
+}
+
+.sidebar-backdrop.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.sidebar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: min(var(--sidebar-width), 100%);
+  background: var(--background-elevated);
+  border-right: var(--hairline);
+  display: flex;
+  flex-direction: column;
+  transform: translateX(0);
+  /* Curva de gaveta do iOS: arranca rápido e assenta longo. */
+  transition: transform var(--dur-5) var(--ease-drawer);
+  box-shadow: var(--shadow-lg);
+  z-index: 40;
+  /* Camada própria: a gaveta desliza sem obrigar o resto do painel a repintar.
+     São dois elementos no documento inteiro com will-change — custo de memória
+     desprezível, e é exatamente o caso para que a dica existe. */
+  will-change: transform;
+}
+
+.sidebar.closed {
+  transform: translateX(-100%);
+  pointer-events: none;
+  box-shadow: none;
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-5) var(--space-5) var(--space-6);
+  border-bottom: var(--hairline);
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+/* A marca é tinta sólida, não a cor de acento: o azul fica reservado para o que
+   responde ao clique. */
+.mascot {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--ink-foreground);
+  background: var(--ink);
+  transition: transform var(--dur-4) var(--ease-spring);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .brand:hover .mascot {
+    transform: rotate(45deg);
+  }
+}
+
+/* Assinatura: a serifada em 21px e peso normal. Não é um rótulo de interface,
+   é a marca — e é o único lugar da gaveta onde a tipografia fala mais alto. */
+.brand-name {
+  font-family: var(--font-display);
+  font-size: var(--text-brand);
+  font-weight: 400;
+  letter-spacing: var(--tracking-snug);
+  line-height: 1.1;
+  color: var(--foreground);
+}
+
+.brand-tag {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  color: var(--muted-dim);
+  padding: var(--space-1) 5px;
+  border-radius: var(--radius-xs);
+  background: var(--surface);
+}
+
+.sidebar-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+
+.sidebar-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* --- Navegação ------------------------------------------------------------ */
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-4);
+  border-bottom: var(--hairline);
+}
+
+.nav-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
+  padding: 9px 11px;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  text-align: left;
+  background: transparent;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .nav-item:hover {
+    color: var(--foreground);
+    background: var(--overlay-hover);
+  }
+}
+
+/* Item ativo: cinza sólido + tinta cheia. Sem cor — a posição já diz onde você
+   está, e três acentos azuis na mesma coluna competiriam entre si. */
+.nav-item.active {
+  color: var(--foreground);
+  background: var(--card-hover);
+}
+
+/* A barra do item ativo cresce a partir do centro em vez de aparecer seca. */
+.nav-item::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: var(--space-4);
+  bottom: var(--space-4);
+  width: 2.5px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  opacity: 0;
+  transform: scaleY(0.3);
+  transition: opacity var(--dur-3) var(--ease-out), transform var(--dur-4) var(--ease-spring);
+}
+
+.nav-item.active::before {
+  opacity: 1;
+  transform: scaleY(1);
+}
+
+.nav-item svg {
+  flex-shrink: 0;
+  opacity: 0.65;
+  transition: opacity var(--dur-2) var(--ease-out), transform var(--dur-3) var(--ease-out);
+}
+
+.nav-item.active svg,
+.nav-item:hover svg {
+  opacity: 1;
+}
+
+/* --- Painéis da gaveta ---------------------------------------------------- */
+.right-panel {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.right-panel-panels {
+  height: 100%;
+  overflow-y: auto;
+  padding: var(--space-6) var(--space-5) var(--space-7);
+}
+
+.right-panel-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.right-panel-content.hidden {
+  display: none;
+}
+
+/* Trocar de painel não é um corte seco: o novo sobe 4px enquanto aparece. */
+@media (prefers-reduced-motion: no-preference) {
+  .right-panel-content:not(.hidden) {
+    animation: rise-in-sm var(--dur-3) var(--ease-out) both;
+  }
+}
+
+.tab-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.main-content {
+  height: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  background: var(--background);
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  border-bottom: var(--hairline);
+  padding-bottom: var(--space-5);
+  margin-bottom: var(--space-1);
+}
+
+/* Título de painel em caixa normal: a navegação já diz onde você está, e três
+   rótulos em CAIXA ALTA na mesma tela é ruído, não hierarquia. */
+/* Rótulo de interface, não título editorial: Geist em 600. A serifada num
+   texto de 14px só pareceria um erro de fonte. */
+.panel-title {
+  font-size: var(--text-base);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+  color: var(--foreground);
+}
+
+.panel-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* --- Botão de ícone: a peça mais repetida da interface -------------------- */
+.icon-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .icon-btn:hover {
+    color: var(--foreground);
+    background: var(--overlay-hover);
+  }
+}
+
+.icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* O ícone de tema gira ao trocar — o movimento explica que houve uma troca. */
+.theme-toggle svg {
+  transition: transform var(--dur-5) var(--ease-spring), opacity var(--dur-2) var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .theme-toggle:hover svg {
+    transform: rotate(30deg);
+  }
+}
+
+.hidden {
+  display: none !important;
+}
+
+@media (max-width: 420px) {
+  .sidebar {
+    width: 100%;
+  }
+}

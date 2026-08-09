@@ -1,0 +1,11 @@
+# Normaliza fim de linha: o repo usa LF, o Windows checa CRLF sem sujar o diff.
+* text=auto eol=lf
+
+# Binários
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.zip binary
+*.crx binary

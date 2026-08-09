@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+  <!--
+    Glide mark — uma esfera com um clique dentro.
+
+    Arco espesso de 288° com abertura a leste (a esfera, e também a inicial do
+    produto) + ponto sólido no centro (o clique). Duas primitivas, um peso de
+    traço, nenhum gradiente.
+
+    O arco é um path explícito e não um stroke-dasharray: dash escala junto com
+    transform e é fácil de quebrar ao reaproveitar a geometria em outro tamanho.
+    Aqui os pontos são fixos e o desenho é o mesmo em qualquer escala.
+
+    Herda currentColor — na interface ele vive dentro da placa de tinta.
+  -->
+  <path d="M18.88 16.82A8.4 8.4 0 1 1 18.69 6.92" stroke="currentColor" stroke-width="2.9" stroke-linecap="round"/>
+  <circle cx="12" cy="12" r="2.9" fill="currentColor"/>
+</svg>

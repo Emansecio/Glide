@@ -1,0 +1,404 @@
+/* Glide V2 — branco, azul, preto/cinza.
+   Uma escala neutra faz todo o trabalho de hierarquia; o azul só aparece onde
+   existe interação (foco, ativo, em execução). O botão primário é tinta sólida,
+   não cor de marca — é o que faz a interface parecer calma mesmo cheia.
+
+   Claro e escuro no mesmo token via light-dark(): o par vive numa linha só, e
+   trocar de tema é trocar `color-scheme` no :root. Sem bloco duplicado. */
+
+:root {
+  /* `light dark` = segue o sistema. O toggle sobrescreve nos seletores abaixo. */
+  color-scheme: light dark;
+
+  /* --- Superfícies ------------------------------------------------------
+     Claro: branco puro no fundo, cinza levíssimo nas superfícies. Escuro: não
+     é preto puro — #0c0c0d evita o "buraco" que preto absoluto abre no OLED. */
+  --background: light-dark(#ffffff, #0c0c0d);
+  --surface: light-dark(#f7f7f8, #161618);
+  --surface-sunken: light-dark(#f1f1f3, #101012);
+  --background-elevated: light-dark(#ffffff, #1a1a1d);
+  --card: light-dark(#fafafa, #161618);
+  --card-hover: light-dark(#f1f1f3, #202024);
+
+  /* Overlays tingidos: acompanham a superfície de baixo em vez de trocá-la por
+     uma cor fixa. É o que faz o hover parecer suave em vez de piscar. */
+  --overlay-hover: light-dark(rgba(9, 9, 11, 0.045), rgba(250, 250, 250, 0.06));
+  --overlay-press: light-dark(rgba(9, 9, 11, 0.075), rgba(250, 250, 250, 0.1));
+  --overlay-scrim: light-dark(rgba(9, 9, 11, 0.28), rgba(0, 0, 0, 0.6));
+
+  /* --- Tinta ------------------------------------------------------------- */
+  --foreground: light-dark(#09090b, #f4f4f5);
+  --muted: light-dark(#71717a, #a1a1aa);
+  --muted-dim: light-dark(#a1a1aa, #71717a);
+  --border: light-dark(#e8e8ec, #26262a);
+  --border-strong: light-dark(#d4d4d9, #35353b);
+
+  /* Tinta sólida = ação primária (o botão preto do print). No escuro inverte
+     para branco: continua sendo "o elemento de maior contraste na tela". */
+  --ink: light-dark(#09090b, #fafafa);
+  --ink-hover: light-dark(#27272a, #e4e4e7);
+  --ink-foreground: light-dark(#ffffff, #09090b);
+
+  /* --- Azul: a única cor da interface -----------------------------------
+     Escolhido para passar 4.5:1 sobre o fundo dos dois temas — dá para usar em
+     texto de link, não só em ícone. */
+  --accent: light-dark(#0068d6, #4a9eff);
+  --accent-hover: light-dark(#0057b8, #6bb0ff);
+  --accent-foreground: #ffffff;
+  --accent-muted: light-dark(rgba(0, 104, 214, 0.08), rgba(74, 158, 255, 0.12));
+  --accent-border: light-dark(rgba(0, 104, 214, 0.4), rgba(74, 158, 255, 0.42));
+  --accent-ring: light-dark(rgba(0, 104, 214, 0.18), rgba(74, 158, 255, 0.22));
+  --accent-selection: light-dark(rgba(0, 104, 214, 0.18), rgba(74, 158, 255, 0.28));
+
+  /* Botão de enviar. Tinta sólida como no print; trocar por `var(--accent)`
+     aqui é a única linha necessária para deixá-lo azul. */
+  --send-bg: var(--ink);
+  --send-bg-hover: var(--ink-hover);
+  --send-fg: var(--ink-foreground);
+
+  /* Controles desabilitados / em carregamento: contraste legível nos dois temas. */
+  --control-disabled-bg: light-dark(#ececee, #2a2a2f);
+  --control-disabled-fg: light-dark(#71717a, #a1a1aa);
+
+  /* Anel de foco compartilhado (composer, formulários). Geometria fora de
+     light-dark(); só a cor do accent-ring varia com o tema. */
+  --focus-ring: 0 0 0 3px var(--accent-ring);
+
+  /* --- Semânticas: existem, mas quase nunca aparecem --------------------- */
+  --success: light-dark(#16794a, #4ade80);
+  --success-muted: light-dark(rgba(22, 121, 74, 0.09), rgba(74, 222, 128, 0.12));
+  --warning: light-dark(#a35c00, #fbbf24);
+  --warning-muted: light-dark(rgba(163, 92, 0, 0.09), rgba(251, 191, 36, 0.12));
+  --error: light-dark(#c1291f, #f87171);
+  --error-muted: light-dark(rgba(193, 41, 31, 0.08), rgba(248, 113, 113, 0.12));
+
+  --sidebar-width: 292px;
+
+  /* --- Espaçamento: uma escala, sem números soltos no meio do CSS -------- */
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 12px;
+  --space-6: 16px;
+  --space-7: 20px;
+  --space-8: 28px;
+
+  /* --- Raio: mais macio que a V1. O composer é a peça mais arredondada da
+         tela, e é de propósito — é onde a mão vai. ------------------------- */
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-full: 999px;
+
+  /* --- Elevação: no claro, sombra é o que separa camadas (não há borda forte
+         que sirva). No escuro ela vira quase só profundidade.
+
+     ATENÇÃO: light-dark() é uma função de COR. Envolver a sombra inteira
+     (`light-dark(0 1px 2px …, …)`) produz um valor inválido para box-shadow, e
+     o CSS descarta a declaração toda em silêncio — inclusive quando ela carrega
+     outras camadas, como o anel de foco do composer. Só a cor entra na função;
+     a geometria é a mesma nos dois temas. ------------------------------- */
+  --shadow-xs: 0 1px 2px light-dark(rgba(9, 9, 11, 0.06), rgba(0, 0, 0, 0.5));
+  --shadow-sm: 0 1px 3px light-dark(rgba(9, 9, 11, 0.09), rgba(0, 0, 0, 0.55));
+  --shadow-md: 0 6px 20px -6px light-dark(rgba(9, 9, 11, 0.13), rgba(0, 0, 0, 0.62));
+  --shadow-lg: 0 18px 50px -14px light-dark(rgba(9, 9, 11, 0.2), rgba(0, 0, 0, 0.72));
+
+  /* --- Tipografia -------------------------------------------------------
+         Os arquivos viajam no pacote (styles/fonts.css) — webfont remota é
+         bloqueada pela CSP da extensão. O stack do sistema fica só como rede
+         de segurança até o woff2 resolver.
+
+         Geist na interface, Instrument Serif nos títulos grandes. A serifada
+         tem um peso só: onde ela entra, hierarquia vem de tamanho e tracking,
+         nunca de font-weight.
+
+         Base 14px — a V1 usava 13 e ficava apertado num painel de 320px. */
+  --font-sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", ui-sans-serif,
+    system-ui, sans-serif;
+  --font-display: "Instrument Serif", "Iowan Old Style", Georgia, "Times New Roman", serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", "Cascadia Code", "Consolas", monospace;
+
+  --text-mono: 11px;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-lg: 16px;
+  --text-xl: 19px;
+  --text-2xl: 25px;
+  --text-brand: 21px;
+
+  /* Título grande com tracking negativo é metade do "parece Apple". */
+  --tracking-snug: -0.008em;
+  --tracking-tight: -0.014em;
+  --tracking-tighter: -0.022em;
+
+  /* Tipografia relativa e controles de formulário. */
+  --text-code-inline: calc(var(--text-base) * 0.86);
+  --control-height: 44px;
+  --composer-min-height: var(--control-height);
+  --segment-padding-y: 7px;
+  --input-padding-y: 9px;
+  --input-padding-x: 11px;
+  --dropdown-min-width: 248px;
+
+  /* --- Movimento --------------------------------------------------------
+     Durações curtas para resposta direta, longas só para superfícies grandes
+     (gaveta, painel). Curvas: quase toda saída é uma quint out — arranca e
+     assenta, sem meio-termo. */
+  --dur-1: 90ms;
+  --dur-2: 140ms;
+  --dur-3: 200ms;
+  --dur-4: 320ms;
+  --dur-5: 460ms;
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in: cubic-bezier(0.64, 0, 0.78, 0);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  /* Curva de gaveta do iOS: sai rápido, assenta longo. */
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  /* Mola com overshoot real (linear() amostrada). Só para o que "aparece":
+     dropdown, botão de enviar, chips. Em superfície grande, enjoa. */
+  --ease-spring: linear(
+    0,
+    0.009,
+    0.035 2.1%,
+    0.141,
+    0.281 6.7%,
+    0.723 12.9%,
+    0.938 16.7%,
+    1.017,
+    1.077,
+    1.121,
+    1.149 24.3%,
+    1.159,
+    1.163,
+    1.161,
+    1.154 29.9%,
+    1.129 32.8%,
+    1.051 39.6%,
+    1.017 43.1%,
+    0.991,
+    0.977 51%,
+    0.974 53.8%,
+    0.975 57.1%,
+    0.997 69.8%,
+    1.003 76.9%,
+    1
+  );
+
+  --hairline: 1px solid var(--border);
+}
+
+/* Toggle de tema: sobrescreve o `color-scheme`, e todos os light-dark() acima
+   viram o outro lado do par. Nenhum token precisa ser redeclarado. */
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-optical-sizing: auto;
+  font-synthesis: none;
+  font-feature-settings: "kern" 1, "liga" 1, "calt" 1;
+}
+
+/* Dados que mudam de tamanho precisam manter a mesma coluna visual. */
+.status-meta,
+.message-meta-inline,
+.history-meta,
+.tool-step-meta,
+.execution-details-meta,
+.plan-drawer-count,
+.plan-meta,
+.attachment-chip-size,
+.model-option-meta {
+  font-variant-numeric: tabular-nums;
+}
+
+#appRoot {
+  width: 100%;
+  height: 100%;
+}
+
+#modalRoot {
+  position: relative;
+  z-index: 100;
+}
+
+button,
+input,
+select,
+textarea {
+  border: none;
+  outline: none;
+  background: none;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+/* Foco: anel azul de 2px por fora do elemento. Único lugar onde a cor é
+   obrigatória — acessibilidade não é preferência estética. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+
+/* O mouse não deve ver o anel; o teclado sempre deve. */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+select {
+  background-color: var(--surface-sunken);
+  color: var(--foreground);
+  border-radius: var(--radius-sm);
+  padding: var(--segment-padding-y) 10px;
+  border: var(--hairline);
+}
+
+select option,
+select optgroup {
+  background-color: var(--background-elevated);
+  color: var(--foreground);
+}
+
+button {
+  cursor: pointer;
+  transition:
+    color var(--dur-2) var(--ease-out), background-color var(--dur-2) var(--ease-out),
+    border-color var(--dur-2) var(--ease-out), opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-1) var(--ease-out);
+}
+
+/* Toda superfície clicável responde ao toque. Sem isso a UI parece não escutar. */
+button:active:not(:disabled) {
+  transform: scale(0.96);
+  transition-duration: var(--dur-1);
+}
+
+/* Linhas largas encolhem menos — 0.96 numa linha de 292px parece um pulo. */
+.nav-item:active:not(:disabled),
+.history-item:active:not(:disabled),
+.model-option:active:not(:disabled),
+.settings-section > summary:active {
+  transform: scale(0.994);
+}
+
+/* --- Rolagem -------------------------------------------------------------
+   Polegar fino, sem trilho, e só ganha contraste quando a mão chega perto. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: var(--radius-full);
+  transition: background-color var(--dur-3) var(--ease-out);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted-dim);
+  background-clip: content-box;
+}
+
+::selection {
+  background: var(--accent-selection);
+  color: var(--foreground);
+}
+
+/* Movimento reduzido: some com deslocamento e escala, mantém opacidade e cor —
+   elas explicam o que mudou e não causam desconforto. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-property: opacity, color, background-color, border-color !important;
+    transition-duration: 120ms !important;
+  }
+
+  button:active:not(:disabled),
+  .nav-item:active:not(:disabled),
+  .history-item:active:not(:disabled),
+  .model-option:active:not(:disabled),
+  .settings-section > summary:active {
+    transform: none;
+  }
+
+  /* Gavetas, modais e entradas flutuantes: sem deslize/escala — só opacidade/cor.
+     Transform de POSICIONAMENTO (centro do toast, gaveta fechada) sobrevive. */
+  .sidebar,
+  .sidebar.closed,
+  .activity-panel,
+  .activity-panel.open,
+  .modal .modal-content,
+  .modal.hidden .modal-content,
+  .jump-to-latest,
+  .error-banner,
+  .run-incomplete-banner,
+  .error-banner.leaving,
+  .run-incomplete-banner.leaving {
+    transform: none !important;
+    transition-property: opacity, color, background-color, border-color, visibility !important;
+  }
+
+  .sidebar.closed {
+    opacity: 0;
+    visibility: hidden;
+  }
+
+  .sidebar:not(.closed) {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  /* Toast ancorado em left: 50% — translateX(-50%) é layout, não animação. */
+  .success-toast,
+  .success-toast.hiding {
+    transform: translateX(-50%) !important;
+    transition-property: opacity, color, background-color, border-color !important;
+  }
+
+  .nav-item::before,
+  .nav-item.active::before {
+    transform: none;
+  }
+}

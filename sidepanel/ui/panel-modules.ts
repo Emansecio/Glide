@@ -1,0 +1,16 @@
+import './panel-chat.js';
+import './panel-context.js';
+import './panel-core.js';
+import './panel-guards.js';
+import './panel-helpers.js';
+import './panel-history.js';
+import './panel-markdown.js';
+import './panel-plan.js';
+import './panel-run-liveness.js';
+import './panel-scroll.js';
+import './panel-settings.js';
+import './panel-status.js';
+import './panel-streaming.js';
+import './panel-attachments.js';
+import './panel-tools.js';
+import './panel-usage.js';

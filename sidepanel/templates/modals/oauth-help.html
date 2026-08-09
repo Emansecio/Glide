@@ -1,0 +1,59 @@
+<div id="oauthHelpModal" class="modal hidden" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="oauthHelpTitle">
+    <div class="modal-backdrop" id="oauthHelpModalBackdrop"></div>
+    <div class="modal-content">
+        <div class="modal-header">
+            <div class="modal-title-row">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="16" x2="12" y2="12" />
+                    <line x1="12" y1="8" x2="12.01" y2="8" />
+                </svg>
+                <span id="oauthHelpTitle" class="modal-title">Como conectar sua conta Claude</span>
+            </div>
+            <button id="closeOauthHelpBtn" class="icon-btn" type="button" title="Fechar" aria-label="Fechar ajuda de conexão">
+                <svg class="icon-close" width="14" height="14" aria-hidden="true"><use href="#icon-close" /></svg>
+            </button>
+        </div>
+        <div class="modal-subtitle">
+            O Glide usa a sua assinatura do Claude (Pro/Max), não os créditos da API. Três formas de conectar, da mais simples à manual:
+        </div>
+        <div class="settings-body oauth-help-body">
+            <p><strong>Opção 1 — Conectar com Claude (recomendado)</strong></p>
+            <ol class="oauth-help-list">
+                <li>Clique em <strong>Conectar com Claude</strong> nas configurações.</li>
+                <li>Autorize na aba que abrir, com a conta da sua assinatura.</li>
+                <li>Pronto — o token é salvo e renovado automaticamente.</li>
+            </ol>
+
+            <div class="divider">ou</div>
+
+            <p><strong>Opção 2 — Importar credentials.json</strong></p>
+            <ol class="oauth-help-list">
+                <li>Clique em <strong>Importar credenciais</strong>.</li>
+                <li>Selecione o arquivo:
+                    <ul class="oauth-help-nested-list">
+                        <li><strong>Windows:</strong> <code>C:\Users\SeuNome\.claude\.credentials.json</code></li>
+                        <li><strong>Linux/Mac:</strong> <code>~/.claude/.credentials.json</code></li>
+                    </ul>
+                </li>
+                <li>O Glide extrai o token e o material de renovação do arquivo.</li>
+            </ol>
+
+            <div class="divider">ou</div>
+
+            <p><strong>Opção 3 — Pelo terminal</strong></p>
+            <ol class="oauth-help-list">
+                <li>Faça login no Claude Code, se ainda não fez:
+                    <pre class="oauth-help-code">claude login</pre>
+                </li>
+                <li>Gere um token de longa duração:
+                    <pre class="oauth-help-code">claude setup-token</pre>
+                </li>
+                <li>Copie o token (começa com <code>sk-ant-oat01-</code>) e cole no campo de token.</li>
+            </ol>
+        </div>
+        <div class="settings-actions oauth-help-actions">
+            <button id="closeOauthHelpBtnOk" class="btn btn-primary" type="button">Entendi</button>
+        </div>
+    </div>
+</div>

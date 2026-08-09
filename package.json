@@ -1,7 +1,7 @@
 {
   "name": "glide-v2-extension",
   "version": "0.2.0",
-  "description": "Browser automation extension with configurable LLM providers — V2 interface (branco/azul/preto, claro e escuro)",
+  "description": "AI-assisted browser automation in a Chrome side panel",
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs --target=ext --prod",
@@ -32,15 +32,18 @@
     "format": "biome format --write .",
     "dev": "echo 'Run npm run build (prod) or build:dev (sourcemaps), then load dist/ in chrome://extensions'"
   },
+  "author": "Emansecio",
   "keywords": [
     "chrome-extension",
     "ai",
     "automation",
     "openai",
     "anthropic",
-    "browser-agent"
+    "browser-agent",
+    "browser-tools",
+    "chrome-sidepanel",
+    "ollama"
   ],
-  "author": "",
   "license": "MIT",
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.17",

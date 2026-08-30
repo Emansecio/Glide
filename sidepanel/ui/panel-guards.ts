@@ -122,7 +122,7 @@ export function isHistoryListLoadTokenStale(requestToken: number, currentToken: 
 }
 
 const SETTINGS_CONTROL_SELECTOR =
-  '#provider, #apiKey, #model, #customEndpoint, #systemPrompt, #saveSettingsBtn, #detectModelsBtn, #anthropicOauthBtn, #codexOauthBtn, #importCredentialsBtn, #enableDebugger, #notifyOnComplete';
+  '#provider, #apiKey, #model, #customEndpoint, #systemPrompt, #saveSettingsBtn, #detectModelsBtn, #anthropicOauthBtn, #codexOauthBtn, #importCredentialsBtn, #enableDebugger, #notifyOnComplete, #permRead, #permInteract, #permNavigate, #permTabs, #permScreenshots, #permSensitiveDataRead, #permClipboard, #permFileUpload, #permDownloads, #permScripting';
 
 SidePanelUI.prototype.bumpRenderSessionGeneration = function bumpRenderSessionGeneration() {
   this.renderSessionGeneration += 1;

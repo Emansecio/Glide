@@ -38,6 +38,7 @@ export const getSidePanelElements = (): SidePanelElements => ({
   historyItems: byId<HTMLElement>('historyItems'),
   clearHistoryBtn: byId<HTMLButtonElement>('clearHistoryBtn'),
   startNewSessionBtn: byId<HTMLButtonElement>('startNewSessionBtn'),
+  privateSessionBtn: byId<HTMLButtonElement>('privateSessionBtn'),
   settingsTabGeneral: byId<HTMLElement>('settingsTabGeneral'),
 
   detectModelsBtn: byId<HTMLButtonElement>('detectModelsBtn'),
@@ -56,6 +57,17 @@ export const getSidePanelElements = (): SidePanelElements => ({
   systemPrompt: byId<HTMLTextAreaElement>('systemPrompt'),
   enableDebugger: byId<HTMLInputElement>('enableDebugger'),
   notifyOnComplete: byId<HTMLInputElement>('notifyOnComplete'),
+  permRead: byId<HTMLInputElement>('permRead'),
+  permInteract: byId<HTMLInputElement>('permInteract'),
+  permNavigate: byId<HTMLInputElement>('permNavigate'),
+  permTabs: byId<HTMLInputElement>('permTabs'),
+  permScreenshots: byId<HTMLInputElement>('permScreenshots'),
+  permSensitiveDataRead: byId<HTMLInputElement>('permSensitiveDataRead'),
+  permClipboard: byId<HTMLInputElement>('permClipboard'),
+  permFileUpload: byId<HTMLInputElement>('permFileUpload'),
+  permDownloads: byId<HTMLInputElement>('permDownloads'),
+  permScripting: byId<HTMLInputElement>('permScripting'),
+  historyPersistenceSegmented: byId<HTMLElement>('historyPersistenceSegmented'),
 
   // Settings actions
   saveSettingsBtn: byId<HTMLButtonElement>('saveSettingsBtn'),

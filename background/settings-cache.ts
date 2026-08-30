@@ -1,5 +1,6 @@
 import { migrateAnthropicModel } from '../ai/anthropic-options.js';
 import { CODEX_CHATGPT_STORAGE_KEY, isJwtToken, isOpenAiApiKey, resolveCodexAuthMode } from '../ai/codex-auth.js';
+import { resolveHistoryPersistenceMode } from '../ai/persist-tool-args.js';
 import { normalizeProviderModel } from '../ai/providers.js';
 import { invalidateRuntimeCaches } from '../ai/runtime-cache.js';
 import { migrateStoredProvider } from '../ai/sdk-client.js';
@@ -20,6 +21,7 @@ export const RUNTIME_SETTINGS_KEYS = [
   'timeout',
   'enableScreenshots',
   'toolPermissions',
+  'historyPersistence',
   'allowedDomains',
   'visionBridge',
   'visionBridgeSync',
@@ -52,13 +54,14 @@ export const normalizeRuntimeSettings = (raw: Record<string, unknown>): Record<s
   } else {
     // Clone so we never mutate a frozen/shared storage object in place.
     settings.toolPermissions = { ...DEFAULT_TOOL_PERMISSIONS, ...settings.toolPermissions };
-    // One-shot: previous builds wrote scripting:false with no settings UI. Promote
-    // once so executeScript works; after promotion, an explicit false sticks.
-    if (settings.toolPermissionsScriptingPromoted !== true) {
-      settings.toolPermissions.scripting = true;
-      settings.toolPermissionsScriptingPromoted = true;
+    // Previous builds auto-promoted scripting:true. executeScript is broken under
+    // extension CSP, so revoke that promotion once; an explicit true still wins later.
+    if (settings.toolPermissionsScriptingPromoted === true && settings.toolPermissionsScriptingRevoked !== true) {
+      settings.toolPermissions.scripting = false;
+      settings.toolPermissionsScriptingRevoked = true;
     }
   }
+  settings.historyPersistence = resolveHistoryPersistenceMode(settings.historyPersistence);
   if (settings.allowedDomains === undefined) settings.allowedDomains = '';
   if (settings.autoRecoveryMode === undefined) settings.autoRecoveryMode = 'balanced';
   if (settings.screenshotOnFailure === undefined) settings.screenshotOnFailure = true;
@@ -122,17 +125,19 @@ export const loadCachedRuntimeSettings = async (): Promise<Record<string, any>> 
     return cachedSettings as Record<string, any>;
   }
 
-  const raw = await chrome.storage.local.get([...RUNTIME_SETTINGS_KEYS, 'toolPermissionsScriptingPromoted']);
+  const raw = await chrome.storage.local.get([
+    ...RUNTIME_SETTINGS_KEYS,
+    'toolPermissionsScriptingPromoted',
+    'toolPermissionsScriptingRevoked',
+  ]);
   const settings = normalizeRuntimeSettings(raw as Record<string, unknown>);
-  // Persist the one-shot scripting promotion so it is not re-applied after the
-  // user deliberately sets scripting:false in a future settings UI.
   if (
-    settings.toolPermissionsScriptingPromoted === true &&
-    (raw as Record<string, unknown>).toolPermissionsScriptingPromoted !== true
+    settings.toolPermissionsScriptingRevoked === true &&
+    (raw as Record<string, unknown>).toolPermissionsScriptingRevoked !== true
   ) {
     void chrome.storage.local.set({
       toolPermissions: settings.toolPermissions,
-      toolPermissionsScriptingPromoted: true,
+      toolPermissionsScriptingRevoked: true,
     });
   }
   cachedSettings = settings;

@@ -51,6 +51,8 @@ export type HttpRequestArgs = {
   maxBodyChars?: number;
   /** Optional enterprise allowlist (comma/newline string or hostname array). */
   allowedDomains?: string | string[];
+  /** Combined with the request timeout; used for run-level stop. */
+  signal?: AbortSignal;
 };
 
 export type HttpRequestResult = {
@@ -66,6 +68,7 @@ export type HttpRequestResult = {
   error?: string;
   hint?: string;
   timedOut?: boolean;
+  code?: string;
 };
 
 export function normalizeHttpMethod(raw: unknown): string {
@@ -224,6 +227,9 @@ export async function performHttpRequest(
   let body = method === 'GET' || method === 'HEAD' ? undefined : args.body != null ? String(args.body) : undefined;
 
   const controller = new AbortController();
+  const onRunAbort = () => controller.abort();
+  args.signal?.addEventListener('abort', onRunAbort);
+  if (args.signal?.aborted) controller.abort();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     // Manual redirect following: re-validate every hop so a public open-redirect
@@ -326,16 +332,25 @@ export async function performHttpRequest(
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const timedOut = /abort/i.test(message);
+    const runAborted = Boolean(args.signal?.aborted);
+    const timedOut = !runAborted && /abort/i.test(message);
     return {
       success: false,
-      error: timedOut ? `httpRequest timed out after ${timeoutMs}ms` : message,
+      error: runAborted
+        ? 'httpRequest cancelled because the run was stopped.'
+        : timedOut
+          ? `httpRequest timed out after ${timeoutMs}ms`
+          : message,
       timedOut,
-      hint: timedOut
-        ? 'Increase timeoutMs or paginate with smaller pages.'
-        : 'Check URL/headers. For Instagram, set X-IG-App-ID and X-CSRFToken (from executeScript document.cookie). Cookies are sent automatically via credentials:include.',
+      code: runAborted ? 'RUN_ABORTED' : undefined,
+      hint: runAborted
+        ? 'The user stopped the run while this request was in flight.'
+        : timedOut
+          ? 'Increase timeoutMs or paginate with smaller pages.'
+          : 'Check URL/headers. For Instagram, set X-IG-App-ID and X-CSRFToken (from executeScript document.cookie). Cookies are sent automatically via credentials:include.',
     };
   } finally {
     clearTimeout(timer);
+    args.signal?.removeEventListener('abort', onRunAbort);
   }
 }

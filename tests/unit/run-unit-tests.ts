@@ -15,6 +15,11 @@ import {
   writeAnthropicOAuth,
 } from '../../ai/anthropic-oauth.js';
 import {
+  buildCommandCodeRequestBody,
+  convertCommandCodePrompt,
+  createCommandCodeModel,
+} from '../../ai/command-code-model.js';
+import {
   COMPACTION_ENTER_PERCENT,
   COMPACTION_RELEASE_PERCENT,
   DEFAULT_COMPACTION_SETTINGS,
@@ -37,6 +42,7 @@ import type { Message } from '../../ai/message-schema.js';
 import { IMAGE_TOKEN_ESTIMATE, estimateTokensFromContent, extractThinking } from '../../ai/message-utils.js';
 import { toModelMessages } from '../../ai/model-convert.js';
 import { normalizePersistedContent, sanitizeMessageForPersistence } from '../../ai/persist-serialization.js';
+import { sanitizeToolCallForPersistence } from '../../ai/persist-tool-args.js';
 import {
   createExponentialBackoff,
   extractRetryAfterMs,
@@ -52,6 +58,8 @@ import {
 } from '../../ai/task-intent.js';
 import { extractRecoverableToolCalls, stripRecoverableToolCalls } from '../../ai/tool-call-recovery.js';
 import { wrapUntrustedContent } from '../../ai/untrusted-content.js';
+import { probeCommandCode } from '../../background/command-code-probe.js';
+import { bootstrapLocalCommandCodeSettings } from '../../background/local-provider-bootstrap.js';
 
 import { buildAnthropicProviderOptions, migrateAnthropicModel } from '../../ai/anthropic-options.js';
 import {
@@ -197,6 +205,7 @@ import {
   DEFAULT_TOOL_PERMISSIONS,
   getToolPermissionCategory,
   isToolCategoryAllowed,
+  toolPermissionsCacheKey,
 } from '../../background/tool-permissions.js';
 import { MAX_QUEUED_VISION_JOBS, VisionQueue, resolveVisualDeliveryMode } from '../../background/vision-queue.js';
 import {
@@ -245,6 +254,7 @@ import { GLIDE_BRIDGE_MESSAGE_TYPE, isMutativeBridgeOp, shouldFallbackFromBridge
 import { isSameOriginUrl, isUrlAllowedByDomains, parseAllowedDomains } from '../../tools/domain-policy.js';
 import {
   buildExecutableBody,
+  buildUserScriptSource,
   isCspEvalError,
   resolveExecuteScriptTimeoutMs,
   resolveExecuteScriptWorld,
@@ -526,7 +536,7 @@ function testToolDefinitions(runner: TestRunner) {
     );
   });
 
-  runner.test('executeScript documents ISOLATED default and optional world', () => {
+  runner.test('executeScript documents USER_SCRIPT default and optional world', () => {
     const tools = buildToolDefinitions(8);
     const exec = tools.find((t) => t.name === 'executeScript');
     runner.assertTrue(!!exec, 'executeScript must be registered');
@@ -534,7 +544,7 @@ function testToolDefinitions(runner: TestRunner) {
     runner.assertTrue('code' in props, 'code param');
     runner.assertTrue('world' in props, 'world param');
     runner.assertTrue('timeoutMs' in props, 'timeoutMs param');
-    runner.assertTrue(String(exec?.description || '').includes('ISOLATED'), 'mentions ISOLATED default');
+    runner.assertTrue(String(exec?.description || '').includes('USER_SCRIPT'), 'mentions USER_SCRIPT default');
   });
 
   runner.test('httpRequest is registered for extension-host API calls', () => {
@@ -818,10 +828,10 @@ function testBrowserToolArgValidation(runner: TestRunner) {
     }
   });
 
-  runner.test('downloads permission is allow-by-default', () => {
-    runner.assertTrue(DEFAULT_TOOL_PERMISSIONS.downloads, 'downloads defaults on');
-    runner.assertTrue(isToolCategoryAllowed('downloads', {}), 'downloads allowed when unset');
-    runner.assertFalse(isToolCategoryAllowed('downloads', { downloads: false }), 'downloads blocked when false');
+  runner.test('downloads permission is opt-in', () => {
+    runner.assertFalse(DEFAULT_TOOL_PERMISSIONS.downloads, 'downloads defaults off');
+    runner.assertFalse(isToolCategoryAllowed('downloads', {}), 'downloads denied when unset');
+    runner.assertTrue(isToolCategoryAllowed('downloads', { downloads: true }), 'downloads allowed when true');
   });
 }
 
@@ -921,7 +931,7 @@ function testResolveTargetFrameIdHelper(runner: TestRunner) {
   });
 }
 
-function testHttpRequestHelper(runner: TestRunner) {
+async function testHttpRequestHelper(runner: TestRunner) {
   log('\n=== Testing httpRequest helpers ===', 'info');
 
   runner.test('sanitizeHttpHeaders strips forbidden cookie/host headers', () => {
@@ -948,6 +958,24 @@ function testHttpRequestHelper(runner: TestRunner) {
     runner.assertFalse(bad.success, 'file rejected');
     const priv = await performHttpRequest({ url: 'http://127.0.0.1/admin' });
     runner.assertFalse(priv.success, 'loopback rejected');
+  });
+
+  await runner.asyncTest('performHttpRequest honors run abort signal', async () => {
+    const controller = new AbortController();
+    const mockFetch = (_input: RequestInfo | URL, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () =>
+          reject(Object.assign(new Error('aborted'), { name: 'AbortError' })),
+        );
+      });
+    const pending = performHttpRequest(
+      { url: 'https://example.com/slow', timeoutMs: 30_000, signal: controller.signal },
+      mockFetch as typeof fetch,
+    );
+    controller.abort();
+    const res = await pending;
+    runner.assertFalse(res.success);
+    runner.assertEqual(res.code, 'RUN_ABORTED');
   });
 
   runner.test('performHttpRequest returns body from mock fetch', async () => {
@@ -1059,10 +1087,11 @@ function testExecuteScriptRunner(runner: TestRunner) {
     runner.assertTrue(body.includes('await fetch'), 'keeps await fetch');
   });
 
-  runner.test('resolveExecuteScriptWorld defaults to ISOLATED', () => {
-    runner.assertEqual(resolveExecuteScriptWorld(undefined), 'ISOLATED');
+  runner.test('resolveExecuteScriptWorld defaults to USER_SCRIPT', () => {
+    runner.assertEqual(resolveExecuteScriptWorld(undefined), 'USER_SCRIPT');
     runner.assertEqual(resolveExecuteScriptWorld('main'), 'MAIN');
     runner.assertEqual(resolveExecuteScriptWorld('ISOLATED'), 'ISOLATED');
+    runner.assertEqual(resolveExecuteScriptWorld('USER_SCRIPT'), 'USER_SCRIPT');
   });
 
   runner.test('resolveExecuteScriptTimeoutMs defaults and clamps', () => {
@@ -1128,6 +1157,12 @@ function testExecuteScriptRunner(runner: TestRunner) {
     runner.assertTrue(limited.truncated);
     runner.assertEqual(limited.serializedAs, 'string');
   });
+
+  runner.test('buildUserScriptSource wraps user code without eval', () => {
+    const source = buildUserScriptSource('return document.title');
+    runner.assertTrue(source.includes('return document.title') || source.includes('return (document.title)'));
+    runner.assertFalse(source.includes('new Function'));
+  });
 }
 
 function testDefaultSystemPrompt(runner: TestRunner) {
@@ -1159,7 +1194,7 @@ function testDefaultSystemPrompt(runner: TestRunner) {
     runner.assertTrue(DEFAULT_SYSTEM_PROMPT.includes('getConsoleOutput'), 'mentions console diagnostics');
     runner.assertTrue(DEFAULT_SYSTEM_PROMPT.includes('getStorageData'), 'mentions storage diagnostics');
     runner.assertTrue(DEFAULT_SYSTEM_PROMPT.includes('executeScript'), 'mentions executeScript');
-    runner.assertTrue(DEFAULT_SYSTEM_PROMPT.includes('ISOLATED'), 'mentions ISOLATED world for executeScript');
+    runner.assertTrue(DEFAULT_SYSTEM_PROMPT.includes('USER_SCRIPT'), 'mentions USER_SCRIPT world for executeScript');
     runner.assertTrue(
       DEFAULT_SYSTEM_PROMPT.includes('install hooks') || DEFAULT_SYSTEM_PROMPT.includes('install'),
       'mentions hook install pattern',
@@ -3378,6 +3413,7 @@ function testSessionTools(runner: TestRunner) {
 
   const browserTools = [
     { name: 'click', description: 'click', input_schema: { type: 'object' as const, properties: {} } },
+    { name: 'getContent', description: 'read', input_schema: { type: 'object' as const, properties: {} } },
     { name: 'screenshot', description: 'shot', input_schema: { type: 'object' as const, properties: {} } },
     { name: 'annotatedScreenshot', description: 'som', input_schema: { type: 'object' as const, properties: {} } },
     { name: 'elementScreenshot', description: 'el', input_schema: { type: 'object' as const, properties: {} } },
@@ -3460,7 +3496,8 @@ function testSessionTools(runner: TestRunner) {
       toolPermissions: { read: true, interact: true, scripting: false },
     });
     const names = tools.map((tool) => tool.name);
-    runner.assertTrue(names.includes('getNetworkRequests'), 'read tools remain when read allowed');
+    runner.assertTrue(names.includes('getContent'), 'page-read tools remain when read allowed');
+    runner.assertFalse(names.includes('getNetworkRequests'), 'sensitive reads stay off unless opted in');
     runner.assertFalse(names.includes('executeScript'), 'scripting denied removes executeScript from schema');
     runner.assertTrue(names.includes('set_plan'), 'plan tools are not permission-gated');
   });
@@ -3484,23 +3521,20 @@ function testToolPermissions(runner: TestRunner) {
   log('\n=== Testing Tool Permissions ===', 'info');
 
   runner.test('Sensitive data-inspection tools are gated by a permission category', () => {
-    runner.assertEqual(getToolPermissionCategory('getStorageData'), 'read', 'getStorageData must be gateable');
-    runner.assertEqual(getToolPermissionCategory('getNetworkRequests'), 'read', 'getNetworkRequests must be gateable');
-    runner.assertEqual(getToolPermissionCategory('getConsoleOutput'), 'read', 'getConsoleOutput must be gateable');
-    runner.assertEqual(
-      getToolPermissionCategory('getPerformanceMetrics'),
-      'read',
-      'getPerformanceMetrics must be gateable',
-    );
+    runner.assertEqual(getToolPermissionCategory('getStorageData'), 'sensitiveDataRead');
+    runner.assertEqual(getToolPermissionCategory('getNetworkRequests'), 'sensitiveDataRead');
+    runner.assertEqual(getToolPermissionCategory('getConsoleOutput'), 'sensitiveDataRead');
+    runner.assertEqual(getToolPermissionCategory('getPerformanceMetrics'), 'sensitiveDataRead');
+    runner.assertFalse(isToolCategoryAllowed('sensitiveDataRead', {}), 'sensitive reads default off');
   });
 
   runner.test('executeScript is gated by a dedicated scripting category', () => {
     runner.assertEqual(getToolPermissionCategory('executeScript'), 'scripting', 'executeScript needs its own category');
   });
 
-  runner.test('Scripting permission is allow-by-default and honors explicit false', () => {
-    runner.assertTrue(DEFAULT_TOOL_PERMISSIONS.scripting, 'scripting must default to true');
-    runner.assertTrue(isToolCategoryAllowed('scripting', {}), 'missing scripting toggle allows (default on)');
+  runner.test('Scripting permission is opt-in and honors explicit true', () => {
+    runner.assertFalse(DEFAULT_TOOL_PERMISSIONS.scripting, 'scripting must default to false');
+    runner.assertFalse(isToolCategoryAllowed('scripting', {}), 'missing scripting toggle denies');
     runner.assertFalse(isToolCategoryAllowed('scripting', { scripting: false }), 'explicit false denies');
     runner.assertTrue(isToolCategoryAllowed('scripting', { scripting: true }), 'explicit true allows');
   });
@@ -3514,8 +3548,8 @@ function testToolPermissions(runner: TestRunner) {
   runner.test('debugger/cdp is opt-in (deny unless true)', () => {
     runner.assertEqual(getToolPermissionCategory('cdp'), 'debugger', 'cdp maps to debugger');
     runner.assertEqual(getToolPermissionCategory('readPage'), 'read', 'readPage is read');
-    runner.assertEqual(getToolPermissionCategory('clipboard'), 'interact', 'clipboard is interact');
-    runner.assertEqual(getToolPermissionCategory('setInputFiles'), 'interact', 'setInputFiles is interact');
+    runner.assertEqual(getToolPermissionCategory('clipboard'), 'clipboard', 'clipboard has its own category');
+    runner.assertEqual(getToolPermissionCategory('setInputFiles'), 'fileUpload', 'setInputFiles is fileUpload');
     runner.assertFalse(DEFAULT_TOOL_PERMISSIONS.debugger, 'debugger defaults off');
     runner.assertFalse(isToolCategoryAllowed('debugger', {}), 'missing debugger denies');
     runner.assertFalse(isToolCategoryAllowed('debugger', { debugger: false }), 'false denies');
@@ -3539,6 +3573,20 @@ function testToolPermissions(runner: TestRunner) {
       toolPermissions: { interact: true, read: true, debugger: true },
     });
     runner.assertTrue(on.map((t) => t.name).includes('cdp'), 'cdp listed when debugger true');
+  });
+
+  runner.test('session-tool cache key changes when opt-in permissions flip', () => {
+    const unset = toolPermissionsCacheKey({});
+    runner.assertTrue(unset !== toolPermissionsCacheKey({ scripting: true }), 'scripting true busts cache');
+    runner.assertTrue(
+      unset !== toolPermissionsCacheKey({ sensitiveDataRead: true }),
+      'sensitiveDataRead true busts cache',
+    );
+    runner.assertTrue(unset !== toolPermissionsCacheKey({ clipboard: true }), 'clipboard true busts cache');
+    runner.assertTrue(unset !== toolPermissionsCacheKey({ fileUpload: true }), 'fileUpload true busts cache');
+    runner.assertTrue(unset !== toolPermissionsCacheKey({ downloads: true }), 'downloads true busts cache');
+    runner.assertEqual(toolPermissionsCacheKey({ scripting: false }), unset, 'opt-in false matches unset');
+    runner.assertTrue(unset !== toolPermissionsCacheKey({ read: false }), 'allow-by-default false busts cache');
   });
 }
 
@@ -5153,6 +5201,111 @@ function testVisualDelivery(runner: TestRunner) {
   });
 }
 
+async function testCommandCodeAdapter(runner: TestRunner) {
+  log('\n=== Testing Command Code adapter ===', 'info');
+
+  runner.test('convertCommandCodePrompt keeps image parts', () => {
+    const { messages } = convertCommandCodePrompt([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'describe this' },
+          { type: 'image', image: 'data:image/png;base64,AAA' },
+        ],
+      },
+    ] as any);
+    const user = messages[0] as { content: Array<{ type: string; image?: string; mediaType?: string }> };
+    runner.assertEqual(user.content.length, 2);
+    runner.assertEqual(user.content[1]?.type, 'image');
+    runner.assertTrue(Boolean(user.content[1]?.image), 'image payload is kept');
+    runner.assertEqual(user.content[1]?.mediaType, 'image/png');
+  });
+
+  runner.test('buildCommandCodeRequestBody does not use null memory', () => {
+    const body = buildCommandCodeRequestBody(
+      {
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        tools: [],
+      } as any,
+      'moonshotai/Kimi-K3',
+    );
+    runner.assertEqual(body.memory, '');
+  });
+
+  await runner.asyncTest('truncated Command Code stream is an error, not stop', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response('{"type":"text-delta","text":"hello"}\n', {
+        status: 200,
+        headers: { 'content-type': 'application/x-ndjson' },
+      })) as typeof fetch;
+    try {
+      const model = createCommandCodeModel('moonshotai/Kimi-K3', 'test-key');
+      const result = await model.doStream({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      } as any);
+      const parts: Array<{ type: string; finishReason?: { unified?: string }; error?: unknown }> = [];
+      const reader = result.stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        parts.push(value as { type: string; finishReason?: { unified?: string }; error?: unknown });
+      }
+      runner.assertTrue(
+        parts.some((part) => part.type === 'error'),
+        'EOF without finish emits error',
+      );
+      const finish = parts.find((part) => part.type === 'finish');
+      runner.assertEqual(finish?.finishReason?.unified, 'error');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  await runner.asyncTest('Command Code health check reports offline on 401', async () => {
+    const probe = await probeCommandCode(
+      'bad-key',
+      undefined,
+      (async () => new Response('nope', { status: 401 })) as typeof fetch,
+    );
+    runner.assertFalse(probe.online);
+    runner.assertTrue(String(probe.error || '').includes('401'));
+  });
+
+  await runner.asyncTest('Command Code bootstrap does not switch the active provider', async () => {
+    const store: Record<string, unknown> = { provider: 'ollama', model: 'llama3' };
+    (globalThis as any).chrome = {
+      runtime: { getURL: (path: string) => `https://extension.test/${path}` },
+      storage: {
+        local: {
+          get: async (key: string | string[]) => {
+            const keys = Array.isArray(key) ? key : [key];
+            const out: Record<string, unknown> = {};
+            for (const item of keys) if (item in store) out[item] = store[item];
+            return out;
+          },
+          set: async (patch: Record<string, unknown>) => {
+            Object.assign(store, patch);
+          },
+        },
+      },
+    };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ apiKey: 'cc-local-key', model: 'moonshotai/Kimi-K3' }), {
+        status: 200,
+      })) as typeof fetch;
+    try {
+      await bootstrapLocalCommandCodeSettings();
+      runner.assertEqual(store.provider, 'ollama', 'active provider stays put');
+      runner.assertEqual(store.model, 'llama3', 'active model stays put');
+      runner.assertEqual(store['apiKey_command-code'], 'cc-local-key');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+}
+
 function testPersistSerialization(runner: TestRunner) {
   log('\n=== Testing Persist Serialization Helpers ===', 'info');
 
@@ -5185,6 +5338,44 @@ function testPersistSerialization(runner: TestRunner) {
     const wrapped = wrapUntrustedContent('{"ok":true}', 'tool-result');
     runner.assertTrue(wrapped.startsWith('<untrusted-content'));
     runner.assertTrue(wrapped.includes('</untrusted-content>'));
+  });
+
+  runner.test('sanitizeToolCallForPersistence redacts authorization, passwords and typed text', () => {
+    const http = sanitizeToolCallForPersistence('httpRequest', {
+      url: 'https://example.com/login',
+      method: 'POST',
+      headers: { Authorization: 'Bearer CANARY-AUTH-TOKEN' },
+      body: '{"password":"CANARY-PASSWORD"}',
+    });
+    const typed = sanitizeToolCallForPersistence('type', {
+      selector: 'input[type=password]',
+      text: 'CANARY-TYPED-SECRET',
+    });
+    const script = sanitizeToolCallForPersistence('executeScript', { code: 'return document.cookie' });
+    const serialized = JSON.stringify({ http, typed, script });
+    runner.assertFalse(serialized.includes('CANARY-AUTH-TOKEN'));
+    runner.assertFalse(serialized.includes('CANARY-PASSWORD'));
+    runner.assertFalse(serialized.includes('CANARY-TYPED-SECRET'));
+    runner.assertFalse(serialized.includes('document.cookie'));
+    runner.assertEqual(http.origin, 'https://example.com');
+    runner.assertEqual(typed.textLength, 'CANARY-TYPED-SECRET'.length);
+  });
+
+  runner.test('sanitizeMessageForPersistence redacts tool-call canaries', () => {
+    const sanitized = sanitizeMessageForPersistence({
+      role: 'assistant',
+      content: 'ok',
+      toolCalls: [
+        {
+          id: 'c1',
+          name: 'httpRequest',
+          args: { url: 'https://api.example/x', headers: { Authorization: 'Bearer CANARY-AUTH' }, body: 'password=1' },
+        },
+      ],
+    });
+    const dumped = JSON.stringify(sanitized);
+    runner.assertFalse(dumped.includes('CANARY-AUTH'));
+    runner.assertFalse(dumped.includes('password=1'));
   });
 }
 
@@ -5327,7 +5518,7 @@ async function main() {
   testResolveTargetFrameIdHelper(runner);
   testDefaultSystemPrompt(runner);
   testExecuteScriptRunner(runner);
-  testHttpRequestHelper(runner);
+  await testHttpRequestHelper(runner);
   testAIProviderConfig(runner);
   testToolSchemaConversion(runner);
   testInputValidation(runner);
@@ -5385,6 +5576,7 @@ async function main() {
   testNormalizeUsage(runner);
   testVisualDelivery(runner);
   testPersistSerialization(runner);
+  await testCommandCodeAdapter(runner);
   await testAnthropicOAuthPolicy(runner);
 
   const success = runner.printSummary();

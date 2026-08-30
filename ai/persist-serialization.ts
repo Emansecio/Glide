@@ -1,6 +1,7 @@
 import { compactValue } from './compact-value.js';
 import type { ContentPart, Message, MessageContent } from './message-schema.js';
 import { isImagePart, isTextPart } from './message-utils.js';
+import { type HistoryPersistenceMode, sanitizeToolCallForPersistence } from './persist-tool-args.js';
 
 export type PersistContentLimits = {
   maxCharsPerTextField?: number;
@@ -147,6 +148,7 @@ function structuredCloneSafe<T>(value: T): T {
 export function sanitizeMessageForPersistence(
   message: Partial<Message> | null | undefined,
   limits: PersistContentLimits = {},
+  mode: HistoryPersistenceMode = 'redacted',
 ): Message | null {
   if (!message || typeof message !== 'object') return null;
   const role = String(message.role || '');
@@ -166,7 +168,9 @@ export function sanitizeMessageForPersistence(
 
   if (Array.isArray(message.toolCalls) && message.toolCalls.length > 0) {
     sanitized.toolCalls = message.toolCalls.slice(0, 10).map((call) => {
-      let args = call?.args && typeof call.args === 'object' ? structuredCloneSafe(call.args) : {};
+      const name = trimText(String(call?.name || ''), 120);
+      const rawArgs = call?.args && typeof call.args === 'object' ? (call.args as Record<string, unknown>) : {};
+      let args = sanitizeToolCallForPersistence(name, rawArgs, mode);
       let serialized = '{}';
       try {
         serialized = JSON.stringify(args);
@@ -178,8 +182,8 @@ export function sanitizeMessageForPersistence(
       }
       return {
         id: trimText(String(call?.id || ''), 120),
-        name: trimText(String(call?.name || ''), 120),
-        args: args as Record<string, unknown>,
+        name,
+        args,
       };
     });
   }

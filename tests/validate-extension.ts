@@ -131,6 +131,7 @@ class ExtensionValidator {
       const required = [
         'sidePanel',
         'scripting',
+        'userScripts',
         'tabs',
         'tabGroups',
         'storage',

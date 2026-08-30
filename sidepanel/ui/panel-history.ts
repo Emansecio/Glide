@@ -1,6 +1,7 @@
 import { cloneConversationHistory, normalizeConversationHistory } from '../../ai/message-schema.js';
 import { dedupeThinking, extractThinking } from '../../ai/message-utils.js';
 import { sanitizeMessageForPersistence } from '../../ai/persist-serialization.js';
+import { resolveHistoryPersistenceMode } from '../../ai/persist-tool-args.js';
 import {
   CHAT_SESSIONS_INDEX_KEY,
   type ChatSessionIndexEntry,
@@ -54,9 +55,14 @@ SidePanelUI.prototype.truncateHistoryField = function truncateHistoryField(
 };
 
 SidePanelUI.prototype.sanitizeHistoryMessage = function sanitizeHistoryMessage(message: any) {
-  return sanitizeMessageForPersistence(message, {
-    maxCharsPerTextField: HISTORY_MAX_CHARS_PER_FIELD,
-  });
+  const mode = resolveHistoryPersistenceMode(this.historyPersistence);
+  return sanitizeMessageForPersistence(
+    message,
+    {
+      maxCharsPerTextField: HISTORY_MAX_CHARS_PER_FIELD,
+    },
+    mode,
+  );
 };
 
 SidePanelUI.prototype.buildHistoryTranscript = function buildHistoryTranscript(history: any[]) {
@@ -206,6 +212,7 @@ SidePanelUI.prototype.removeHistorySessionKeys = async function removeHistorySes
 
 SidePanelUI.prototype.persistHistoryNow = async function persistHistoryNow() {
   const persistBarrier = this.historyDeletionBarrier;
+  if (this.privateSession || resolveHistoryPersistenceMode(this.historyPersistence) === 'off') return;
   // Only persist if there's actual content
   if (!this.displayHistory || this.displayHistory.length === 0) return;
 

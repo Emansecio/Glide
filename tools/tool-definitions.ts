@@ -202,7 +202,7 @@ export const buildToolDefinitions = (_maxSessionTabs: number): ToolDefinition[] 
   defineTool('describeSessionTabs', 'List tabs captured for this session.', {}),
   defineTool(
     'executeScript',
-    'Execute JavaScript in the active tab and return a JSON-serializable result. Default world ISOLATED is NOT subject to page CSP (Instagram cannot block extension isolated-world new Function). DOM, origin storage, and same-origin fetch() with cookies work. Prefer httpRequest for API pagination outside the page when possible. Async/await and Promises are awaited (timeoutMs default 60s, max 120s). world:"MAIN" only for page JS globals (may CSP-fail; auto-falls back). Return compact JSON. Examples: "return document.title"; "return document.cookie".',
+    'Execute JavaScript in the active tab via chrome.userScripts (USER_SCRIPT world, not eval). Requires the user to enable scripting in Settings and “Allow User Scripts” on the extension. Prefer deterministic tools (readPage, click, httpRequest) first. Async/await and Promises are awaited (timeoutMs default 60s, max 120s). world:"MAIN" only for page JS globals (page CSP may block). Return compact JSON. Examples: "return document.title".',
     {
       code: {
         type: 'string',
@@ -212,7 +212,7 @@ export const buildToolDefinitions = (_maxSessionTabs: number): ToolDefinition[] 
       world: {
         type: 'string',
         description:
-          'Execution world: "ISOLATED" (default, CSP-safe, DOM+storage+same-origin fetch) or "MAIN" (page JS globals; may be CSP-blocked).',
+          'Execution world: "USER_SCRIPT" (default, exempt from page CSP) or "MAIN" (page JS globals; may be CSP-blocked).',
       },
       timeoutMs: {
         type: 'number',

@@ -11,7 +11,7 @@
  * (fetch pagination loops, etc.).
  */
 
-export type ExecuteScriptWorld = 'ISOLATED' | 'MAIN';
+export type ExecuteScriptWorld = 'USER_SCRIPT' | 'MAIN' | 'ISOLATED';
 
 export type ExecuteScriptInjectionResult =
   | {
@@ -174,7 +174,56 @@ export function resolveExecuteScriptWorld(raw: unknown): ExecuteScriptWorld {
   const v = String(raw || '')
     .trim()
     .toUpperCase();
-  return v === 'MAIN' ? 'MAIN' : 'ISOLATED';
+  if (v === 'MAIN') return 'MAIN';
+  if (v === 'ISOLATED') return 'ISOLATED';
+  return 'USER_SCRIPT';
+}
+
+/** Source passed to chrome.userScripts.execute — compiled as a script, not via eval. */
+export function buildUserScriptSource(code: string): string {
+  const body = buildExecutableBody(code);
+  return `(() => {
+  const run = async () => {
+    ${body}
+  };
+  const serialize = (value) => {
+    if (value === undefined) {
+      return { ok: true, value: null, valueType: 'undefined', serializedAs: 'null' };
+    }
+    try {
+      const json = JSON.stringify(value);
+      if (json.length <= 100000) {
+        return { ok: true, value: JSON.parse(json), valueType: typeof value, serializedAs: 'json' };
+      }
+      return {
+        ok: true,
+        value: json.slice(0, 100000) + '…[truncated]',
+        valueType: typeof value,
+        serializedAs: 'string',
+        truncated: true,
+      };
+    } catch {
+      const text = String(value);
+      return {
+        ok: true,
+        value: text.length <= 100000 ? text : text.slice(0, 100000) + '…[truncated]',
+        valueType: typeof value,
+        serializedAs: 'string',
+      };
+    }
+  };
+  return Promise.resolve(run())
+    .then(serialize)
+    .catch((err) => ({
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+      phase: 'runtime',
+    }));
+})()`;
+}
+
+export function isUserScriptsApiAvailable(): boolean {
+  return typeof chrome !== 'undefined' && typeof chrome.userScripts?.execute === 'function';
 }
 
 /** Default / max timeout for executeScript (pagination loops need headroom). */

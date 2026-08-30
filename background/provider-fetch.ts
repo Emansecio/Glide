@@ -1,4 +1,5 @@
 import { normalizeProviderId, resolveProviderBaseUrl } from '../ai/sdk-client.js';
+import { probeCommandCode } from './command-code-probe.js';
 import { type OllamaModelInfo, type OllamaProbeResult, formatOllamaListSummary, probeOllama } from './ollama-detect.js';
 
 export type ProviderModelsRequest = {
@@ -70,6 +71,20 @@ export async function fetchProviderModels(request: ProviderModelsRequest): Promi
       online: true,
       endpoint: probe.endpoint,
       summary: formatOllamaListSummary(probe),
+      latencyMs: probe.latencyMs,
+    };
+  }
+
+  if (provider === 'command-code') {
+    const probe = await probeCommandCode(apiKey, customEndpoint);
+    if (!probe.online) {
+      throw new Error(probe.error || 'Command Code offline. Confira a chave e o endpoint.');
+    }
+    return {
+      models: probe.models,
+      modelDetails: [],
+      online: true,
+      endpoint: probe.endpoint,
       latencyMs: probe.latencyMs,
     };
   }

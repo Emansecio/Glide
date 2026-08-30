@@ -44,6 +44,9 @@ logs/
 .env
 .env.local
 
+# Local provider credentials
+local/
+
 # Temporary files
 tmp/
 temp/

@@ -4,6 +4,7 @@ import { generateText, jsonSchema, tool } from 'ai';
 import { ensureFreshAnthropicToken } from './anthropic-oauth.js';
 import { resolveProviderOptions } from './anthropic-options.js';
 import { createCodexChatGptModel } from './codex-responses-model.js';
+import { createCommandCodeModel } from './command-code-model.js';
 import { QWEN_DEFAULT_BASE_URL, normalizeQwenModelId } from './qwen-settings.js';
 import { wrapUntrustedContent } from './untrusted-content.js';
 import { XAI_API_BASE_URL, ensureFreshXaiToken } from './xai-oauth.js';
@@ -24,7 +25,7 @@ export const extensionFetch: typeof globalThis.fetch = (input, init) => globalTh
 
 // Provedores suportados. 'anthropic' é o Claude Code (OAuth); os demais falam
 // o protocolo OpenAI-compatible em endpoints distintos.
-export type ProviderId = 'anthropic' | 'codex' | 'opencode' | 'ollama' | 'qwen' | 'xai';
+export type ProviderId = 'anthropic' | 'codex' | 'opencode' | 'ollama' | 'qwen' | 'xai' | 'command-code';
 
 export function normalizeProviderId(provider?: string): ProviderId {
   const normalized = String(provider || '')
@@ -46,6 +47,9 @@ export function normalizeProviderId(provider?: string): ProviderId {
   }
   if (normalized === 'xai' || normalized === 'grok' || normalized === 'grokcloud' || normalized === 'grok-cloud') {
     return 'xai';
+  }
+  if (normalized === 'command-code' || normalized === 'commandcode' || normalized === 'command_code') {
+    return 'command-code';
   }
   if (!normalized) return 'ollama'; // Empty / unknown -> local Ollama by default (Ollama-first)
   return 'ollama';
@@ -81,6 +85,7 @@ export const PROVIDER_DEFAULT_ENDPOINTS: Record<ProviderId, string> = {
   ollama: 'http://localhost:11434/v1',
   qwen: QWEN_DEFAULT_BASE_URL,
   xai: XAI_API_BASE_URL,
+  'command-code': 'https://api.commandcode.ai',
 };
 
 export const PROVIDER_DEFAULT_MODELS: Record<ProviderId, string> = {
@@ -90,6 +95,7 @@ export const PROVIDER_DEFAULT_MODELS: Record<ProviderId, string> = {
   ollama: 'llama3.1',
   qwen: 'deepseek-v4-flash-0731',
   xai: 'grok-4.5',
+  'command-code': 'moonshotai/Kimi-K3',
 };
 
 // A custom endpoint receives the provider API key on every request, so it must
@@ -264,6 +270,10 @@ export function resolveLanguageModel(settings: SDKModelSettings) {
       fetch: createXaiAuthFetch(apiKey),
     });
     return compat(modelId);
+  }
+
+  if (provider === 'command-code') {
+    return createCommandCodeModel(modelId, apiKey, resolveProviderBaseUrl(provider, settings.customEndpoint));
   }
 
   // Codex API key, OpenCode Zen, Qwen/ModelStudio e Ollama: OpenAI-compatible.

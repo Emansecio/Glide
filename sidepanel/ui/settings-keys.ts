@@ -14,7 +14,7 @@ export const SETTINGS_STORAGE_KEYS = ['provider', 'apiKey', 'model', 'customEndp
  * OAuth, o SDK e as configurações já salvas); os slots por provedor são o arquivo de
  * onde ele é reidratado.
  */
-export const PROVIDER_KEY_IDS = ['anthropic', 'codex', 'opencode', 'qwen', 'xai', 'ollama'] as const;
+export const PROVIDER_KEY_IDS = ['anthropic', 'codex', 'opencode', 'qwen', 'xai', 'ollama', 'command-code'] as const;
 
 export const providerApiKeyField = (provider: string): string => `apiKey_${provider}`;
 

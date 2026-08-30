@@ -132,6 +132,8 @@ export class SidePanelUI {
   notifyOnComplete: boolean;
   _notificationClickBound?: boolean;
   historyPersistDebounceTimerId: number | null;
+  privateSession: boolean;
+  historyPersistence: 'full' | 'redacted' | 'off';
   historyWriteQueue: SerialTaskQueue;
   historyListDirty: boolean;
   currentView: 'chat' | 'history';
@@ -250,7 +252,7 @@ export class SidePanelUI {
     updateNavActive(this.elements, 'settings');
   }
 
-  async startNewSession() {
+  async startNewSession(options: { privateSession?: boolean } = {}) {
     await this.flushPendingHistoryPersist?.();
     await this.waitForRunStopAck?.();
     this.bumpRenderSessionGeneration?.();
@@ -267,6 +269,7 @@ export class SidePanelUI {
     this.pendingSessionId = null;
     this.sessionStartedAt = Date.now();
     this.firstUserMessage = '';
+    this.privateSession = options.privateSession === true;
     void chrome.runtime.sendMessage({ type: 'session_active', sessionId: this.sessionId });
     this.lastUsage = null;
     this.sessionTokenTotals = {
@@ -290,7 +293,12 @@ export class SidePanelUI {
     this.updateChatEmptyState?.();
     this.resetActivityPanel();
     this.updateSessionUsageDisplay?.();
-    this.updateStatus('Pronto para uma nova conversa', 'success');
+    this.updateStatus(
+      this.privateSession
+        ? 'Sessão privada — o histórico desta conversa não será salvo'
+        : 'Pronto para uma nova conversa',
+      this.privateSession ? 'warning' : 'success',
+    );
     this.switchView('chat');
     this.scheduleContextUsageRecompute?.({ force: true });
     this.scrollToBottom({ force: true });
@@ -367,6 +375,8 @@ export class SidePanelUI {
     this.historyDeletionBarrier = 0;
     this.historyListLoadToken = 0;
     this.stoppingRun = false;
+    this.privateSession = false;
+    this.historyPersistence = 'redacted';
     this._runStopAckWaiter = null;
     this.pendingOAuthProvider = null;
     this.codexChatGptSession = null;
@@ -400,9 +410,11 @@ export interface SidePanelUI {
   addPendingAttachment(...args: any[]): any;
   appendContextMessages(...args: any[]): any;
   applyContextUsageFromChars(...args: any[]): any;
+  applyPermissionCheckboxes(...args: any[]): any;
   applyContextUsageSnapshot(...args: any[]): any;
   applyDetectedModels(...args: any[]): any;
   applyPlanUpdate(...args: any[]): any;
+  bindHistoryPersistenceControl(...args: any[]): any;
   bindHistoryStorageSync(...args: any[]): any;
   bindThinkingToggle(...args: any[]): any;
   bindAssistantActions(...args: any[]): any;
@@ -433,6 +445,7 @@ export interface SidePanelUI {
   clearStreamingRenderTimers(...args: any[]): any;
   closeModelMenu(...args: any[]): any;
   closeSidebar(...args: any[]): any;
+  collectPermissionCheckboxes(...args: any[]): any;
   collectCurrentFormProfile(...args: any[]): any;
   completeStreamingMessage(...args: any[]): any;
   consumeExecutionTurnSummary(...args: any[]): any;
@@ -547,6 +560,7 @@ export interface SidePanelUI {
   renderPlanDrawer(...args: any[]): any;
   resetActivityPanel(): void;
   sweepInFlightToolContainers(...args: any[]): any;
+  syncHistoryPersistenceSegments(...args: any[]): any;
   syncAssistantActionButtons(...args: any[]): any;
   setComposerBusy(busy: boolean): void;
   resetContextUsageTracking(...args: any[]): any;

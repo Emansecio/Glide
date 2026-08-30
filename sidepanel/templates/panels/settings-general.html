@@ -42,6 +42,7 @@
                 <option value="qwen">Qwen Cloud (ModelStudio)</option>
                 <option value="xai">Grok (xAI)</option>
                 <option value="ollama">Ollama (local)</option>
+                <option value="command-code">Command Code</option>
             </select>
         </div>
 
@@ -156,6 +157,105 @@
                     <span>CDP / debugger (opt-in)</span>
                 </label>
                 <small>Expõe a ferramenta <code>cdp</code> (Chrome DevTools Protocol). Mostra o banner amarelo do Chrome na aba. Prefira as tools de página; use só quando rede/script não bastarem.</small>
+            </div>
+        </div>
+    </details>
+
+    <details class="settings-section">
+        <summary>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                aria-hidden="true">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+            </svg>
+            Permissões
+        </summary>
+        <div class="settings-body">
+            <div class="form-group">
+                <label class="checkbox-row" for="permRead">
+                    <input type="checkbox" id="permRead" />
+                    <span>Leitura da página</span>
+                </label>
+                <small>Texto visível, estrutura, busca e inventário da aba anexada.</small>
+            </div>
+            <div class="form-group">
+                <label class="checkbox-row" for="permInteract">
+                    <input type="checkbox" id="permInteract" />
+                    <span>Interação</span>
+                </label>
+                <small>Clique, digitação, scroll, espera e formulários.</small>
+            </div>
+            <div class="form-group">
+                <label class="checkbox-row" for="permNavigate">
+                    <input type="checkbox" id="permNavigate" />
+                    <span>Navegação</span>
+                </label>
+            </div>
+            <div class="form-group">
+                <label class="checkbox-row" for="permTabs">
+                    <input type="checkbox" id="permTabs" />
+                    <span>Abas da sessão</span>
+                </label>
+            </div>
+            <div class="form-group">
+                <label class="checkbox-row" for="permScreenshots">
+                    <input type="checkbox" id="permScreenshots" />
+                    <span>Capturas de tela</span>
+                </label>
+            </div>
+            <div class="form-group">
+                <label class="checkbox-row" for="permSensitiveDataRead">
+                    <input type="checkbox" id="permSensitiveDataRead" />
+                    <span>Dados sensíveis da página</span>
+                </label>
+                <small>Storage, cookies, corpos de rede, console e métricas. Desligado por padrão.</small>
+            </div>
+            <div class="form-group">
+                <label class="checkbox-row" for="permClipboard">
+                    <input type="checkbox" id="permClipboard" />
+                    <span>Área de transferência</span>
+                </label>
+            </div>
+            <div class="form-group">
+                <label class="checkbox-row" for="permFileUpload">
+                    <input type="checkbox" id="permFileUpload" />
+                    <span>Upload de arquivos</span>
+                </label>
+            </div>
+            <div class="form-group">
+                <label class="checkbox-row" for="permDownloads">
+                    <input type="checkbox" id="permDownloads" />
+                    <span>Downloads</span>
+                </label>
+            </div>
+            <div class="form-group">
+                <label class="checkbox-row" for="permScripting">
+                    <input type="checkbox" id="permScripting" />
+                    <span>Execução de script</span>
+                </label>
+                <small>Habilita <code>executeScript</code>. Também é preciso ativar “Permitir scripts do usuário” em chrome://extensions → Glide V2. Desligado por padrão.</small>
+            </div>
+        </div>
+    </details>
+
+    <details class="settings-section">
+        <summary>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                aria-hidden="true">
+                <path d="M12 20h9" />
+                <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+            </svg>
+            Histórico
+        </summary>
+        <div class="settings-body">
+            <div class="form-group">
+                <label id="historyPersistenceLabel">O que salvar nas conversas</label>
+                <div class="theme-segmented" id="historyPersistenceSegmented" role="radiogroup" aria-labelledby="historyPersistenceLabel">
+                    <button type="button" class="theme-segment" role="radio" aria-checked="false" tabindex="-1" data-history-persistence="full">Completo</button>
+                    <button type="button" class="theme-segment" role="radio" aria-checked="true" tabindex="0" data-history-persistence="redacted">Redigido</button>
+                    <button type="button" class="theme-segment" role="radio" aria-checked="false" tabindex="-1" data-history-persistence="off">Não salvar</button>
+                </div>
+                <small>O padrão redige senhas, headers, clipboard e código. Completo guarda os argumentos. “Não salvar” desliga o histórico.</small>
             </div>
         </div>
     </details>

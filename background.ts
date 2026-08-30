@@ -65,6 +65,7 @@ import {
   isFailureTrackedTool,
   normalizeThrownToolError,
 } from './background/failure-recovery.js';
+import { bootstrapLocalCommandCodeSettings } from './background/local-provider-bootstrap.js';
 import {
   bindPanelPortListener,
   bumpSidePanelClaimGeneration,
@@ -143,9 +144,11 @@ import {
 } from './background/session-lifecycle.js';
 import { buildSessionTools } from './background/session-tools.js';
 import { bindRuntimeSettingsCacheInvalidation, loadCachedRuntimeSettings } from './background/settings-cache.js';
+import { restrictLocalStorageToTrustedContexts } from './background/storage-access.js';
 import {
   isToolCategoryAllowed,
   getToolPermissionCategory as resolveToolPermissionCategory,
+  toolPermissionsCacheKey,
 } from './background/tool-permissions.js';
 import {
   VisionQueue,
@@ -155,6 +158,7 @@ import {
 } from './background/vision-queue.js';
 import { BrowserTools } from './tools/browser-tools.js';
 import { cdpDetach, cdpDetachAll } from './tools/cdp-session.js';
+import type { ToolExecutionContext } from './tools/tool-context.js';
 import { clampIntUnknown, isHttpUrl } from './tools/validation.js';
 import { buildRunPlan } from './types/plan.js';
 import type { RunPlan } from './types/plan.js';
@@ -187,6 +191,10 @@ class BackgroundService {
   activeInFlightToolCalls: number;
   /** When the current in-flight tool batch started (for wall-clock watchdog). */
   private activeInFlightToolStartedAt: number;
+  private runPhase: 'idle' | 'running' | 'stopping' | 'stopped';
+  private inFlightByRun: Map<string, { count: number; startedAt: number }>;
+  private quarantinedRunIds: Set<string>;
+  private stopGraceTimerId: ReturnType<typeof setTimeout> | null;
   /** Manual execute_tool in flight — blocks agent runs from interleaving. */
   private manualToolBusy: boolean;
   dedicatedTabId: number | null;
@@ -375,8 +383,72 @@ class BackgroundService {
     return this.runAbortRegistry.getSignal(runId);
   }
 
+  private buildToolExecutionContext(runMeta: RunMeta, lockedTabId: number | null): ToolExecutionContext {
+    return {
+      runId: runMeta.runId,
+      sessionId: runMeta.sessionId,
+      lockedTabId,
+      signal: this.getRunAbortSignal(runMeta.runId) || new AbortController().signal,
+      deadlineAt: Date.now() + 120_000,
+    };
+  }
+
   private isRunAborted(runId: string): boolean {
     return this.runAbortRegistry.isAborted(runId);
+  }
+
+  private getInFlightCount(runId: string): number {
+    return this.inFlightByRun.get(runId)?.count || 0;
+  }
+
+  private incrementInFlight(runId: string) {
+    const current = this.inFlightByRun.get(runId) || { count: 0, startedAt: Date.now() };
+    if (current.count === 0) current.startedAt = Date.now();
+    current.count += 1;
+    this.inFlightByRun.set(runId, current);
+    if (this.activeRunId === runId) {
+      this.activeInFlightToolCalls = current.count;
+      this.activeInFlightToolStartedAt = current.startedAt;
+    }
+  }
+
+  private decrementInFlight(runId: string) {
+    const current = this.inFlightByRun.get(runId);
+    if (!current) {
+      if (this.activeRunId === runId) this.activeInFlightToolCalls = 0;
+      return;
+    }
+    current.count = Math.max(0, current.count - 1);
+    if (current.count === 0) {
+      this.inFlightByRun.delete(runId);
+      if (this.activeRunId === runId) {
+        this.activeInFlightToolCalls = 0;
+        this.activeInFlightToolStartedAt = 0;
+      }
+      if (this.runPhase === 'stopping' && this.activeRunId === runId) {
+        this.completeUserStop(runId);
+      }
+      return;
+    }
+    this.inFlightByRun.set(runId, current);
+    if (this.activeRunId === runId) this.activeInFlightToolCalls = current.count;
+  }
+
+  private completeUserStop(runId: string) {
+    if (this.stopGraceTimerId) {
+      clearTimeout(this.stopGraceTimerId);
+      this.stopGraceTimerId = null;
+    }
+    const runMeta = this.activeRunId === runId ? this.activeRunMeta : null;
+    this.runPhase = 'stopped';
+    this.releaseRunExclusiveLock(runId);
+    if (runMeta) {
+      this.sendRuntime(runMeta, {
+        type: 'run_stopped',
+        message: 'Execução interrompida por você.',
+        details: { runId: runMeta.runId, sessionId: runMeta.sessionId, timestamp: Date.now() },
+      });
+    }
   }
 
   // Sentinel de "run em andamento" em storage.session. O estado do run vive só na
@@ -468,6 +540,10 @@ class BackgroundService {
     this.activeRunLastActivityAt = 0;
     this.activeInFlightToolCalls = 0;
     this.activeInFlightToolStartedAt = 0;
+    this.runPhase = 'idle';
+    this.inFlightByRun = new Map();
+    this.quarantinedRunIds = new Set();
+    this.stopGraceTimerId = null;
     this.manualToolBusy = false;
     this.dedicatedTabId = null;
     this.dedicatedTabWindowId = null;
@@ -661,6 +737,8 @@ class BackgroundService {
   }
 
   init() {
+    void restrictLocalStorageToTrustedContexts();
+    void bootstrapLocalCommandCodeSettings();
     bindRuntimeSettingsCacheInvalidation();
     bindPanelPortListener();
     // openPanelOnActionClick would let Chrome auto-open the panel using whatever
@@ -828,23 +906,20 @@ class BackgroundService {
             sendResponse?.({ success: false, stopped: false, activeRunId });
             return false;
           }
-          const runMeta = this.activeRunMeta;
-          // Avisa o painel ANTES de abortar: o abort desenrola o loop com
-          // "Run aborted." (marcado como parada deliberada), então nenhum
-          // run_error genérico é emitido depois disto.
-          if (runMeta) {
-            this.sendRuntime(runMeta, {
-              type: 'run_stopped',
-              message: 'Execução interrompida por você.',
-              details: { runId: runMeta.runId, sessionId: runMeta.sessionId, timestamp: Date.now() },
-            });
-          }
+          this.runPhase = 'stopping';
           this.runAbortRegistry.abort(activeRunId);
-          // Libera o lock na hora (como o idle watchdog): senão o painel já
-          // desbloqueia mas o próximo send ainda vê activeRunId e falha com
-          // "já existe uma execução".
-          this.releaseRunExclusiveLock(activeRunId);
-          sendResponse?.({ success: true, stopped: true, activeRunId });
+          const inFlight = this.getInFlightCount(activeRunId);
+          if (inFlight === 0) {
+            this.completeUserStop(activeRunId);
+            sendResponse?.({ success: true, stopped: true, activeRunId });
+            return false;
+          }
+          if (this.stopGraceTimerId) clearTimeout(this.stopGraceTimerId);
+          this.stopGraceTimerId = setTimeout(() => {
+            this.quarantinedRunIds.add(activeRunId);
+            this.completeUserStop(activeRunId);
+          }, 15_000);
+          sendResponse?.({ success: true, stopped: false, stopping: true, activeRunId });
           return false;
         }
 
@@ -856,7 +931,8 @@ class BackgroundService {
             success: true,
             activeRunId: this.activeRunId,
             lastActivityAt: this.activeRunLastActivityAt || null,
-            inFlightToolCalls: this.activeInFlightToolCalls,
+            inFlightToolCalls: this.activeRunId ? this.getInFlightCount(this.activeRunId) : 0,
+            stopping: this.runPhase === 'stopping',
           });
           return false;
         }
@@ -1062,6 +1138,8 @@ class BackgroundService {
   }
 
   async loadRuntimeSettings() {
+    await restrictLocalStorageToTrustedContexts();
+    await bootstrapLocalCommandCodeSettings();
     return loadCachedRuntimeSettings();
   }
 
@@ -1258,6 +1336,8 @@ class BackgroundService {
       }
       this.activeRunId = runMeta.runId;
       this.activeRunMeta = runMeta;
+      this.runPhase = 'running';
+      this.quarantinedRunIds.delete(runMeta.runId);
       this.activeRunAbortController = this.runAbortRegistry.create(runMeta.runId);
       this.orchestrationOwnerRunId = runMeta.runId;
       this.sessionGenerations.bump(sessionId);
@@ -2338,6 +2418,7 @@ class BackgroundService {
     this.touchActiveRun(options.runMeta.runId);
     const effectiveSettings = (options.settings || this.currentSettings || {}) as Record<string, any>;
     const lockedTabId = typeof options.lockedTabId === 'number' ? options.lockedTabId : null;
+    const toolContext = this.buildToolExecutionContext(options.runMeta, lockedTabId);
     const callId = toolCallId || `tool_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const startedAt = Date.now();
     const normalizedArgsResult = this.normalizeToolCallArgs(toolName, args);
@@ -2401,10 +2482,7 @@ class BackgroundService {
     }
 
     sendStart();
-    if (this.activeInFlightToolCalls === 0) {
-      this.activeInFlightToolStartedAt = Date.now();
-    }
-    this.activeInFlightToolCalls += 1;
+    this.incrementInFlight(options.runMeta.runId);
 
     try {
       if (this.isRunAborted(options.runMeta.runId)) {
@@ -2685,7 +2763,19 @@ class BackgroundService {
           sendResult(cancelled, toolArgs);
           return cancelled;
         }
-        result = await this.browserTools.executeTool(toolName, toolArgs);
+        result = await this.browserTools.executeTool(toolName, toolArgs, toolContext);
+        if (
+          this.quarantinedRunIds.has(options.runMeta.runId) ||
+          this.orchestrationOwnerRunId !== options.runMeta.runId
+        ) {
+          const discarded = {
+            success: false,
+            code: 'RUN_SUPERSEDED',
+            error: 'Tool result discarded because the run was stopped or superseded.',
+          };
+          sendResult(discarded, toolArgs);
+          return discarded;
+        }
 
         // closeTab falhou: remove a marca "agente" para o usuário poder fechar a
         // aba travada e o run abortar de verdade.
@@ -2816,13 +2906,17 @@ class BackgroundService {
           } else {
             const queryHint = failureSelector || (toolName === 'type' ? String(toolArgs?.text || '') : '');
             // Escalate only when similar_elements lack selectors; prefer exact match first.
-            const findResult = (await this.browserTools.executeTool('findElement', {
-              query: queryHint,
-              type: 'any',
-              maxResults: 5,
-              fuzzy: recoveryBudget.maxFind > 1 && !promoted.length,
-              ...(toolArgs?.tabId ? { tabId: toolArgs.tabId, _strictTabId: true } : {}),
-            })) as Record<string, any>;
+            const findResult = (await this.browserTools.executeTool(
+              'findElement',
+              {
+                query: queryHint,
+                type: 'any',
+                maxResults: 5,
+                fuzzy: recoveryBudget.maxFind > 1 && !promoted.length,
+                ...(toolArgs?.tabId ? { tabId: toolArgs.tabId, _strictTabId: true } : {}),
+              },
+              toolContext,
+            )) as Record<string, any>;
             if (findResult?.success && Array.isArray(findResult.candidates)) {
               (result as Record<string, any>).findElementCandidates = findResult.candidates;
               (result as Record<string, any>).hint =
@@ -2906,6 +3000,7 @@ class BackgroundService {
           const screenshotResult = (await this.browserTools.executeTool(
             'screenshot',
             recoveryScreenshotArgs,
+            toolContext,
           )) as Record<string, any>;
           if (screenshotResult?.success) {
             recoveryStage = 'screenshot';
@@ -3060,10 +3155,7 @@ class BackgroundService {
       });
       return enrichedResult;
     } finally {
-      this.activeInFlightToolCalls = Math.max(0, this.activeInFlightToolCalls - 1);
-      if (this.activeInFlightToolCalls === 0) {
-        this.activeInFlightToolStartedAt = 0;
-      }
+      this.decrementInFlight(options.runMeta.runId);
       this.touchActiveRun(options.runMeta.runId);
     }
   }
@@ -4478,10 +4570,14 @@ class BackgroundService {
     if (!isToolCategoryAllowed(category, permissions)) {
       const reason =
         category === 'scripting'
-          ? 'Permission blocked: scripting (toolPermissions.scripting is false — enable it to allow executeScript).'
+          ? 'Permission blocked: scripting (opt-in). Enable executeScript in Settings and Allow User Scripts.'
           : category === 'debugger'
             ? 'Permission blocked: debugger (opt-in). Enable “CDP / debugger” in Settings or set toolPermissions.debugger=true, then reload the run.'
-            : `Permission blocked: ${category}`;
+            : category === 'sensitiveDataRead'
+              ? 'Permission blocked: sensitiveDataRead (opt-in). Enable storage/network/console inspection in Settings.'
+              : category === 'clipboard' || category === 'fileUpload' || category === 'downloads'
+                ? `Permission blocked: ${category} (opt-in). Enable it in Settings.`
+                : `Permission blocked: ${category}`;
       return {
         allowed: false,
         reason,
@@ -4797,7 +4893,7 @@ Next required call: ${requiredNextCall}
       orchestrationPass === 1
         ? `
 <tool_surface>
-Schema tools are live. Prefer: readPage/findElement → click/type; getNetworkRequests → httpRequest for APIs; executeScript ISOLATED for DOM/cookies; clipboard/setInputFiles/mouse drag when needed.${debuggerOn ? ' cdp is enabled (opt-in debugger).' : ' cdp not in schema unless user enables debugger in Settings.'}
+Schema tools are live. Prefer: readPage/findElement → click/type; getNetworkRequests → httpRequest for APIs; executeScript only when listed (requires Allow User Scripts); clipboard/setInputFiles/mouse drag when permitted.${debuggerOn ? ' cdp is enabled (opt-in debugger).' : ' cdp not in schema unless user enables debugger in Settings.'}
 </tool_surface>`
         : '';
     const state = `${compactStateSection}
@@ -4999,15 +5095,7 @@ You are PROHIBITED from generating a final response until you either:
     options: { includePlanTools?: boolean } = {},
   ) {
     const permissions = (settings?.toolPermissions || {}) as Record<string, unknown>;
-    const permissionKey = [
-      permissions.read === false ? '0' : '1',
-      permissions.interact === false ? '0' : '1',
-      permissions.navigate === false ? '0' : '1',
-      permissions.tabs === false ? '0' : '1',
-      permissions.screenshots === false ? '0' : '1',
-      permissions.scripting === false ? '0' : '1',
-      permissions.debugger === true ? '1' : '0',
-    ].join('');
+    const permissionKey = toolPermissionsCacheKey(permissions);
     const cacheKey = [
       lockedTabId ?? 'none',
       settings?.enableScreenshots === false ? '0' : '1',

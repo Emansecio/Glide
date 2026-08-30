@@ -123,6 +123,17 @@ export function checkProviderReadiness(input: PreflightInput): PreflightIssue | 
 
   // Ollama é local e não usa credencial: um endpoint inválido é o único problema
   // detectável antes da chamada.
+  if (provider === 'command-code') {
+    if (!hasKey) {
+      return {
+        reason: 'missing_credential',
+        action: 'open_settings',
+        message: 'Falta a chave do Command Code. Adicione-a em Configurações para usar este provedor.',
+      };
+    }
+    return null;
+  }
+
   if (hasText(input.customEndpoint)) {
     try {
       new URL(String(input.customEndpoint));

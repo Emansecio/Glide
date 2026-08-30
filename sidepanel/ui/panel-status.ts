@@ -114,6 +114,7 @@ const PROVIDER_FAMILY_LABELS: Record<string, string> = {
   codex: 'Codex',
   opencode: 'OpenCode',
   ollama: 'Ollama',
+  'command-code': 'Command Code',
 };
 
 SidePanelUI.prototype.updateStatus = function updateStatus(text: string, type = 'default') {

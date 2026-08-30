@@ -63,6 +63,14 @@ export const PROVIDER_UI: Record<string, ProviderUiMeta> = {
     showEndpoint: true,
     canDetectModels: true,
   },
+  'command-code': {
+    keyLabel: 'Chave de API do Command Code',
+    keyPlaceholder: 'Cole sua chave do Command Code...',
+    keyHint: 'A chave fica salva no slot do Command Code e usa a API oficial em api.commandcode.ai.',
+    modelHint: 'Modelo padrão: Kimi K3 (moonshotai/Kimi-K3).',
+    showEndpoint: false,
+    canDetectModels: false,
+  },
 };
 
 export const PROVIDER_PRESET_MODELS: Record<string, string[]> = {
@@ -85,6 +93,7 @@ export const PROVIDER_PRESET_MODELS: Record<string, string[]> = {
     'MiniMax-M2.5',
   ],
   xai: ['grok-4.5', 'composer-2.5'],
+  'command-code': ['moonshotai/Kimi-K3'],
   ollama: [],
 };
 
@@ -158,6 +167,7 @@ export const MODEL_DISPLAY_LABELS: Record<string, string> = {
   'MiniMax-M2.5': 'MiniMax M2.5',
   'grok-4.5': 'Grok 4.5',
   'composer-2.5': 'Composer 2.5',
+  'moonshotai/Kimi-K3': 'Kimi K3',
 };
 
 export {

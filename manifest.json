@@ -6,6 +6,7 @@
   "permissions": [
     "sidePanel",
     "scripting",
+    "userScripts",
     "tabs",
     "tabGroups",
     "storage",

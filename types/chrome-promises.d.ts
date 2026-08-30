@@ -12,6 +12,7 @@ declare namespace chrome {
     interface StorageArea {
       get(keys?: string[] | string | Record<string, any> | null): Promise<Record<string, any>>;
       set(items: Record<string, any>): Promise<void>;
+      setAccessLevel?(options: { accessLevel: 'TRUSTED_CONTEXTS' | 'TRUSTED_AND_UNTRUSTED_CONTEXTS' }): Promise<void>;
     }
   }
 
@@ -40,5 +41,17 @@ declare namespace chrome {
     function executeScript<Args extends any[], Result>(
       injection: chrome.scripting.ScriptInjection<Args>,
     ): Promise<Array<chrome.scripting.InjectionResult<Result>>>;
+  }
+
+  namespace userScripts {
+    type ExecutionWorld = 'USER_SCRIPT' | 'MAIN';
+    interface UserScriptInjection {
+      target: chrome.scripting.InjectionTarget;
+      js: Array<{ code: string } | { file: string }>;
+      world?: ExecutionWorld;
+      injectImmediately?: boolean;
+    }
+    function execute(injection: UserScriptInjection): Promise<Array<chrome.scripting.InjectionResult>>;
+    function configureWorld(options: { messaging?: boolean; csp?: string }): Promise<void>;
   }
 }

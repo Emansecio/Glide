@@ -9,6 +9,7 @@ import {
   resolveCodexApiKeyFieldValue,
 } from '../../ai/codex-auth.js';
 import { DEFAULT_SYSTEM_PROMPT } from '../../ai/default-prompt.js';
+import { resolveHistoryPersistenceMode } from '../../ai/persist-tool-args.js';
 import {
   MODEL_DISPLAY_LABELS,
   PROVIDER_DEFAULT_ENDPOINTS,
@@ -20,6 +21,7 @@ import {
   normalizeProviderId,
   normalizeProviderModel,
 } from '../../ai/providers.js';
+import { DEFAULT_TOOL_PERMISSIONS } from '../../background/tool-permissions.js';
 import { SidePanelUI } from './panel-ui.js';
 import {
   PROVIDER_KEY_IDS,
@@ -308,6 +310,7 @@ SidePanelUI.prototype.loadSettings = async function loadSettings() {
   const settings = await readSettings([
     ...SETTINGS_LOAD_KEYS,
     'toolPermissions',
+    'historyPersistence',
     'notifyOnComplete',
     CODEX_CHATGPT_STORAGE_KEY,
   ]);
@@ -338,6 +341,10 @@ SidePanelUI.prototype.loadSettings = async function loadSettings() {
     const perms = (settings as Record<string, any>).toolPermissions || {};
     this.elements.enableDebugger.checked = perms.debugger === true;
   }
+  this.applyPermissionCheckboxes((settings as Record<string, any>).toolPermissions || {});
+  this.historyPersistence = resolveHistoryPersistenceMode((settings as Record<string, unknown>).historyPersistence);
+  this.bindHistoryPersistenceControl();
+  this.syncHistoryPersistenceSegments();
   this.notifyOnComplete = (settings as Record<string, unknown>).notifyOnComplete === true;
   if (this.elements.notifyOnComplete) {
     this.elements.notifyOnComplete.checked = this.notifyOnComplete;
@@ -404,6 +411,7 @@ SidePanelUI.prototype.persistAllSettings = async function persistAllSettings({ s
   if (this.elements.enableDebugger) {
     prevPerms.debugger = this.elements.enableDebugger.checked === true;
   }
+  this.collectPermissionCheckboxes(prevPerms);
 
   const payload: Record<string, unknown> = {
     provider: activeProvider,
@@ -412,6 +420,7 @@ SidePanelUI.prototype.persistAllSettings = async function persistAllSettings({ s
     customEndpoint: activeProfile.customEndpoint || '',
     systemPrompt: activeProfile.systemPrompt || this.getDefaultSystemPrompt(),
     toolPermissions: prevPerms,
+    historyPersistence: this.historyPersistence || 'redacted',
     notifyOnComplete: this.elements.notifyOnComplete?.checked === true,
   };
   // Persiste TODOS os slots conhecidos: assim a credencial de cada provedor
@@ -437,6 +446,60 @@ SidePanelUI.prototype.persistAllSettings = async function persistAllSettings({ s
   if (!silent) {
     this.updateStatus('Configurações salvas com sucesso', 'success');
   }
+};
+
+const PERMISSION_CHECKBOXES: Array<{ key: string; element: string }> = [
+  { key: 'read', element: 'permRead' },
+  { key: 'interact', element: 'permInteract' },
+  { key: 'navigate', element: 'permNavigate' },
+  { key: 'tabs', element: 'permTabs' },
+  { key: 'screenshots', element: 'permScreenshots' },
+  { key: 'sensitiveDataRead', element: 'permSensitiveDataRead' },
+  { key: 'clipboard', element: 'permClipboard' },
+  { key: 'fileUpload', element: 'permFileUpload' },
+  { key: 'downloads', element: 'permDownloads' },
+  { key: 'scripting', element: 'permScripting' },
+];
+
+SidePanelUI.prototype.applyPermissionCheckboxes = function applyPermissionCheckboxes(perms: Record<string, unknown>) {
+  const merged = { ...DEFAULT_TOOL_PERMISSIONS, ...perms };
+  for (const item of PERMISSION_CHECKBOXES) {
+    const input = this.elements[item.element] as HTMLInputElement | null;
+    if (input) input.checked = merged[item.key] === true;
+  }
+};
+
+SidePanelUI.prototype.collectPermissionCheckboxes = function collectPermissionCheckboxes(
+  perms: Record<string, unknown>,
+) {
+  for (const item of PERMISSION_CHECKBOXES) {
+    const input = this.elements[item.element] as HTMLInputElement | null;
+    if (input) perms[item.key] = input.checked === true;
+  }
+};
+
+SidePanelUI.prototype.syncHistoryPersistenceSegments = function syncHistoryPersistenceSegments() {
+  const group = this.elements.historyPersistenceSegmented as HTMLElement | null;
+  if (!group) return;
+  const mode = this.historyPersistence || 'redacted';
+  const buttons = Array.from(group.querySelectorAll<HTMLButtonElement>('[data-history-persistence]'));
+  for (const button of buttons) {
+    const selected = button.dataset.historyPersistence === mode;
+    button.setAttribute('aria-checked', selected ? 'true' : 'false');
+    button.tabIndex = selected ? 0 : -1;
+  }
+};
+
+SidePanelUI.prototype.bindHistoryPersistenceControl = function bindHistoryPersistenceControl() {
+  const group = this.elements.historyPersistenceSegmented as HTMLElement | null;
+  if (!group || group.dataset.bound === 'true') return;
+  group.dataset.bound = 'true';
+  group.addEventListener('click', (event) => {
+    const button = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>('[data-history-persistence]');
+    if (!button) return;
+    this.historyPersistence = resolveHistoryPersistenceMode(button.dataset.historyPersistence);
+    this.syncHistoryPersistenceSegments();
+  });
 };
 
 SidePanelUI.prototype.getDefaultSystemPrompt = function getDefaultSystemPrompt() {

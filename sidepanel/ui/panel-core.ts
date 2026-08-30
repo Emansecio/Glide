@@ -94,6 +94,9 @@ SidePanelUI.prototype.setupEventListeners = function setupEventListeners() {
   this.elements.startNewSessionBtn?.addEventListener('click', () => {
     void this.startNewSession();
   });
+  this.elements.privateSessionBtn?.addEventListener('click', () => {
+    void this.startNewSession({ privateSession: true });
+  });
   this.elements.clearHistoryBtn?.addEventListener('click', () => this.clearAllHistory());
 
   bindSettings(this);

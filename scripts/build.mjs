@@ -91,6 +91,7 @@ const buildExtensionBundles = async () => {
   copyDirFiltered(path.join(rootDir, 'icons'), path.join(distDir, 'icons'), (file) => file.endsWith('.png'));
   // Só os .woff2: o LICENSE.md fica no repositório, fora do pacote.
   copyDirFiltered(path.join(rootDir, 'fonts'), path.join(distDir, 'fonts'), (file) => file.endsWith('.woff2'));
+  copyDirFiltered(path.join(rootDir, 'local'), path.join(distDir, 'local'));
 };
 
 const buildTestBundles = async () => {

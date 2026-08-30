@@ -6,8 +6,11 @@ export type ToolPermissionCategory =
   | 'navigate'
   | 'interact'
   | 'read'
+  | 'sensitiveDataRead'
   | 'screenshots'
   | 'tabs'
+  | 'clipboard'
+  | 'fileUpload'
   | 'scripting'
   | 'downloads'
   | 'debugger';
@@ -23,8 +26,8 @@ export const TOOL_PERMISSION_MAP: Record<string, ToolPermissionCategory> = {
   mouse: 'interact',
   dismissModal: 'interact',
   wait: 'interact',
-  clipboard: 'interact',
-  setInputFiles: 'interact',
+  clipboard: 'clipboard',
+  setInputFiles: 'fileUpload',
   selectOption: 'interact',
   fillForm: 'interact',
   highlightElement: 'interact',
@@ -45,17 +48,13 @@ export const TOOL_PERMISSION_MAP: Record<string, ToolPermissionCategory> = {
   groupTabs: 'tabs',
   focusTab: 'tabs',
   describeSessionTabs: 'tabs',
-  // Data-inspection tools read cookies, storage, traffic and console output.
-  // They belong to the "read" category so the read toggle can disable them.
-  getStorageData: 'read',
-  getNetworkRequests: 'read',
-  getConsoleOutput: 'read',
-  getPerformanceMetrics: 'read',
-  // Extension-host HTTP (outside page CSP). Treated as read/network inspection.
+  getStorageData: 'sensitiveDataRead',
+  getNetworkRequests: 'sensitiveDataRead',
+  getConsoleOutput: 'sensitiveDataRead',
+  getPerformanceMetrics: 'sensitiveDataRead',
+  // Network allowlist / method split is out of scope (segurança-api).
   httpRequest: 'read',
-  // Arbitrary JS execution in the page — its own opt-in category.
   executeScript: 'scripting',
-  // chrome.debugger / CDP — opt-in only (yellow infobar).
   cdp: 'debugger',
 };
 
@@ -63,26 +62,44 @@ export function getToolPermissionCategory(toolName: string): ToolPermissionCateg
   return TOOL_PERMISSION_MAP[toolName] || null;
 }
 
-// Defaults for each permission category. Page tools (including executeScript)
-// are on by default. CDP/debugger stays OFF until the user opts in.
+// Opt-in categories: deny unless the user explicitly enables them.
+export const OPT_IN_TOOL_PERMISSIONS = new Set<ToolPermissionCategory>([
+  'debugger',
+  'scripting',
+  'sensitiveDataRead',
+  'clipboard',
+  'fileUpload',
+  'downloads',
+]);
+
 export const DEFAULT_TOOL_PERMISSIONS: Record<ToolPermissionCategory, boolean> = {
   read: true,
   interact: true,
   navigate: true,
   tabs: true,
   screenshots: true,
-  scripting: true,
-  downloads: true,
+  sensitiveDataRead: false,
+  clipboard: false,
+  fileUpload: false,
+  scripting: false,
+  downloads: false,
   debugger: false,
 };
 
-// Most categories: allow unless explicitly false.
-// debugger: deny unless explicitly true (opt-in CDP).
 export function isToolCategoryAllowed(
   category: ToolPermissionCategory | null,
   permissions: Record<string, unknown> = {},
 ): boolean {
   if (!category) return true;
-  if (category === 'debugger') return permissions.debugger === true;
+  if (OPT_IN_TOOL_PERMISSIONS.has(category)) return permissions[category] === true;
   return permissions[category] !== false;
+}
+
+/** Stable category order for session-tool cache keys. Matches DEFAULT_TOOL_PERMISSIONS. */
+export const TOOL_PERMISSION_CACHE_CATEGORIES = Object.keys(DEFAULT_TOOL_PERMISSIONS) as ToolPermissionCategory[];
+
+export function toolPermissionsCacheKey(permissions: Record<string, unknown> = {}): string {
+  return TOOL_PERMISSION_CACHE_CATEGORIES.map((category) =>
+    isToolCategoryAllowed(category, permissions) ? '1' : '0',
+  ).join('');
 }

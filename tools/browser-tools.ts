@@ -11,12 +11,11 @@ import { type GlideBridgeOp, isMutativeBridgeOp, sendGlideBridge, shouldFallback
 import { isSameOriginUrl, isUrlAllowedByDomains, parseAllowedDomains } from './domain-policy.js';
 import {
   type ExecuteScriptInjectionResult,
-  type ExecuteScriptWorld,
+  buildUserScriptSource,
   isCspEvalError,
+  isUserScriptsApiAvailable,
   resolveExecuteScriptTimeoutMs,
   resolveExecuteScriptWorld,
-  runUserScriptInPage,
-  shouldAllowMainToIsolatedFallback,
 } from './execute-script-runner.js';
 import { pickFrameIdForSelectorProbe, probeSelectorInFrame } from './frame-discovery.js';
 import {
@@ -38,6 +37,7 @@ import {
 import { highlightTargetOverlay, measureScreenshotTarget } from './ref-resolver.js';
 import { waitForHistoryTransition, waitForTabReadiness } from './tab-readiness.js';
 import { type TabResolution, withResolvedTab } from './tab-resolve.js';
+import { type ToolExecutionContext, abortedToolResult, isToolContextAborted, sleepWithSignal } from './tool-context.js';
 import { buildToolDefinitions } from './tool-definitions.js';
 import { INLINE_TOOL_HANDLERS, TOOL_HANDLER_REGISTRY } from './tool-registry.js';
 import type { ToolDefinition } from './tool-schema.js';
@@ -136,6 +136,7 @@ export class BrowserTools {
     { at: number; value: Awaited<ReturnType<BrowserTools['resolveExecutableTab']>> }
   >();
   private injectedFnRegistry: Map<string, { installed: Set<string>; blocked: boolean }>;
+  currentToolContext: ToolExecutionContext | null = null;
 
   constructor() {
     this.sessionTabs = new Map();
@@ -928,8 +929,12 @@ export class BrowserTools {
     }
   }
 
-  async executeTool(toolName: string, args: Record<string, any> = {}) {
+  async executeTool(toolName: string, args: Record<string, any> = {}, context?: ToolExecutionContext) {
+    this.currentToolContext = context || null;
     try {
+      if (isToolContextAborted(this.currentToolContext)) {
+        return abortedToolResult();
+      }
       const validatedArgs = this.validateToolArgs(toolName, args);
       if (!validatedArgs.ok) {
         return {
@@ -972,7 +977,43 @@ export class BrowserTools {
         error: `Tool "${toolName}" failed: ${error?.message || String(error)}`,
         hint: 'Try a different approach or check the arguments.',
       };
+    } finally {
+      this.currentToolContext = null;
     }
+  }
+
+  private async quarantineSessionTab(
+    tabId: number,
+    options: { previousUrl?: string; closeIfRollbackFails?: boolean } = {},
+  ): Promise<{ rolledBack: boolean; closed: boolean }> {
+    this.sessionTabs.delete(tabId);
+    if (this.currentSessionTabId === tabId) this.currentSessionTabId = null;
+    this.invalidateTabResolveMemo(tabId);
+    if (options.previousUrl && requireHttpUrl(options.previousUrl).ok) {
+      try {
+        await chrome.tabs.update(tabId, { url: options.previousUrl });
+        return { rolledBack: true, closed: false };
+      } catch {
+        /* fall through to close */
+      }
+    }
+    if (options.closeIfRollbackFails !== false) {
+      try {
+        await chrome.tabs.remove(tabId);
+        return { rolledBack: false, closed: true };
+      } catch {
+        /* tab may already be gone */
+      }
+    }
+    return { rolledBack: false, closed: false };
+  }
+
+  private rejectPrivateTab(toolName: string, tab: chrome.tabs.Tab | null | undefined) {
+    const url = String(tab?.url || '');
+    if (!isHttpUrl(url)) return null;
+    const dest = requireHttpUrl(url, `${toolName} tab url`);
+    if (dest.ok) return null;
+    return dest;
   }
 
   private async safeGetTab(tabId: number) {
@@ -1129,6 +1170,19 @@ export class BrowserTools {
           },
         };
       }
+      const privateStrict = this.rejectPrivateTab(toolName, strictTab);
+      if (privateStrict && typeof strictTab.id === 'number') {
+        await this.quarantineSessionTab(strictTab.id);
+        return {
+          ok: false as const,
+          result: {
+            success: false,
+            code: 'PRIVATE_TAB_BLOCKED',
+            error: privateStrict.error,
+            hint: privateStrict.hint,
+          },
+        };
+      }
       return {
         ok: true as const,
         resolution: {
@@ -1184,6 +1238,20 @@ export class BrowserTools {
       return {
         ok: false as const,
         result: this.buildNoExecutableTabError(toolName, requestedTabId, candidates),
+      };
+    }
+
+    const privateSelected = this.rejectPrivateTab(toolName, selected);
+    if (privateSelected) {
+      await this.quarantineSessionTab(selected.id);
+      return {
+        ok: false as const,
+        result: {
+          success: false,
+          code: 'PRIVATE_TAB_BLOCKED',
+          error: privateSelected.error,
+          hint: privateSelected.hint,
+        },
       };
     }
 
@@ -1514,6 +1582,8 @@ export class BrowserTools {
       }
 
       try {
+        const previousTab = await this.safeGetTab(tabId);
+        const previousUrl = String(previousTab?.url || '');
         await chrome.tabs.update(tabId, { url: urlCheck.url });
         this.currentSessionTabId = tabId;
         const readiness = await waitForTabReadiness(tabId);
@@ -1523,14 +1593,19 @@ export class BrowserTools {
         // a public open-redirect cannot put the session on private/metadata hosts.
         const finalCheck = requireHttpUrl(finalUrl, 'navigate final url');
         if (!finalCheck.ok) {
+          const quarantine = await this.quarantineSessionTab(tabId, {
+            previousUrl,
+            closeIfRollbackFails: true,
+          });
           return {
             success: false,
             code: 'PRIVATE_REDIRECT_BLOCKED',
             error: finalCheck.error,
             hint: finalCheck.hint,
-            tabId,
             requestedUrl: urlCheck.url,
             finalUrl,
+            rolledBack: quarantine.rolledBack,
+            closed: quarantine.closed,
             ...readiness,
           };
         }
@@ -3990,7 +4065,8 @@ export class BrowserTools {
       const ms = typeof args.ms === 'number' ? Math.max(0, Math.min(15000, Math.round(args.ms))) : 1000;
       const bridged = await this.tryBridge(tabId, 'wait', { condition: 'time', ms });
       if (bridged) return this.attachResolutionMeta(bridged, resolution);
-      await new Promise((resolve) => setTimeout(resolve, ms));
+      const completed = await sleepWithSignal(ms, this.currentToolContext?.signal);
+      if (!completed) return this.attachResolutionMeta(abortedToolResult(), resolution);
       return this.attachResolutionMeta({ success: true, waited: ms, condition: 'time' }, resolution);
     }
 
@@ -5657,120 +5733,105 @@ export class BrowserTools {
     if (!code) {
       return { success: false, error: 'code is required and must be a non-empty string' };
     }
-    // Default ISOLATED: page CSP (Instagram etc.) blocks new Function/eval in MAIN.
-    // Isolated world still shares the DOM + origin storage with the page.
-    // fetch() same-origin includes cookies — enough for Instagram friendships loops.
     const preferredWorld = resolveExecuteScriptWorld(args.world);
+    const world = preferredWorld === 'ISOLATED' ? 'USER_SCRIPT' : preferredWorld;
     const timeoutMs = resolveExecuteScriptTimeoutMs(args.timeoutMs);
-    return withResolvedTab(this, args, 'executeScript', async (resolution) => {
-      const isScriptTimeoutError = (error: unknown) =>
-        error !== null && typeof error === 'object' && (error as { code?: unknown }).code === 'SCRIPT_TIMEOUT';
-
-      const runOnce = async (world: ExecuteScriptWorld) => {
-        try {
-          // runUserScriptInPage is async + self-contained so chrome.scripting
-          // serializes it and waits when user code returns a Promise (fetch loops).
-          const injected = (await this.runInTab(
-            resolution.tabId,
-            runUserScriptInPage,
-            [code],
-            timeoutMs,
-            false,
-            world,
-          )) as ExecuteScriptInjectionResult | null;
-
-          // runInTab may return a policy-style object on inaccessible tabs.
-          if (injected && typeof injected === 'object' && 'success' in injected && injected.success === false) {
-            return {
-              ok: false as const,
-              error: String((injected as { error?: string }).error || 'Tab inaccessible'),
-              phase: 'runtime' as const,
-              cspLikely: false,
-              world,
-              raw: injected,
-              timedOut: false,
-            };
-          }
-          if (!injected || typeof injected !== 'object' || !('ok' in injected)) {
-            return {
-              ok: false as const,
-              error: 'Script injection returned no result (empty injection result).',
-              phase: 'runtime' as const,
-              cspLikely: false,
-              world,
-              timedOut: false,
-            };
-          }
-          return {
-            ...injected,
-            cspLikely: injected.ok === false ? Boolean(injected.cspLikely) : false,
-            world,
-            timedOut: false,
-          };
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          return {
-            ok: false as const,
-            error: message,
-            phase: 'runtime' as const,
-            cspLikely: !isScriptTimeoutError(err) && isCspEvalError(message),
-            world,
-            timedOut: isScriptTimeoutError(err),
-          };
-        }
+    if (!isUserScriptsApiAvailable()) {
+      return {
+        success: false,
+        code: 'USER_SCRIPTS_UNAVAILABLE',
+        error: 'executeScript requer Chrome 135+ e “Permitir scripts do usuário” nas configurações da extensão.',
+        hint: 'chrome://extensions → Glide V2 → Allow User Scripts. A ferramenta fica desligada por padrão.',
+        world,
       };
-
-      let outcome = await runOnce(preferredWorld);
-      let fellBackFromMain = false;
-      if (preferredWorld === 'MAIN' && outcome.ok === false && shouldAllowMainToIsolatedFallback(outcome)) {
-        const retry = await runOnce('ISOLATED');
-        if (retry.ok) {
-          outcome = retry;
-          fellBackFromMain = true;
-        } else {
+    }
+    return withResolvedTab(this, args, 'executeScript', async (resolution) => {
+      if (isToolContextAborted(this.currentToolContext)) {
+        return abortedToolResult();
+      }
+      try {
+        await chrome.userScripts.configureWorld?.({ messaging: false });
+      } catch {
+        /* already configured or permission not granted yet */
+      }
+      const source = buildUserScriptSource(code);
+      const signal = this.currentToolContext?.signal;
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(
+          () => reject(Object.assign(new Error('SCRIPT_TIMEOUT'), { code: 'SCRIPT_TIMEOUT' })),
+          timeoutMs,
+        );
+      });
+      const abortPromise = signal
+        ? new Promise<never>((_, reject) => {
+            const onAbort = () => reject(Object.assign(new Error('RUN_ABORTED'), { code: 'RUN_ABORTED' }));
+            if (signal.aborted) onAbort();
+            else signal.addEventListener('abort', onAbort, { once: true });
+          })
+        : null;
+      try {
+        const injectionPromise = chrome.userScripts.execute({
+          target: { tabId: resolution.tabId },
+          js: [{ code: source }],
+          world: world === 'MAIN' ? 'MAIN' : 'USER_SCRIPT',
+          injectImmediately: true,
+        });
+        const races = [injectionPromise, timeoutPromise];
+        if (abortPromise) races.push(abortPromise);
+        const results = (await Promise.race(races)) as chrome.scripting.InjectionResult[];
+        const injected = results?.[0]?.result as ExecuteScriptInjectionResult | undefined;
+        if (!injected || typeof injected !== 'object' || !('ok' in injected)) {
           return {
             success: false,
-            error: outcome.error,
-            phase: outcome.phase,
-            world: preferredWorld,
-            cspBlocked: true,
-            hint: 'Page CSP blocked eval/new Function in MAIN world. Retry with world:"ISOLATED" (default) for DOM/storage, or use getNetworkRequests + scroll for API pagination instead of page JS loops.',
-            isolatedError: retry.error,
+            error: 'Script injection returned no result (empty injection result).',
+            phase: 'runtime',
+            world,
           };
         }
-      }
-
-      if (outcome.ok === false) {
-        const blocked = Boolean(outcome.cspLikely) || isCspEvalError(outcome.error);
+        if (injected.ok === false) {
+          return {
+            success: false,
+            error: injected.error,
+            phase: injected.phase,
+            world,
+            cspBlocked: Boolean(injected.cspLikely) || isCspEvalError(injected.error),
+          };
+        }
+        return {
+          success: true,
+          result: injected.value ?? null,
+          resultType: injected.valueType,
+          world,
+          serializedAs: injected.serializedAs,
+          timeoutMs,
+        };
+      } catch (err) {
+        const codeName = err && typeof err === 'object' ? String((err as { code?: unknown }).code || '') : '';
+        if (codeName === 'RUN_ABORTED' || isToolContextAborted(this.currentToolContext)) {
+          return abortedToolResult();
+        }
+        const message = err instanceof Error ? err.message : String(err);
+        const timedOut = codeName === 'SCRIPT_TIMEOUT' || /timeout/i.test(message);
+        const allowScripts =
+          /user scripts/i.test(message) || /userScripts/i.test(message) || /not allowed/i.test(message);
         return {
           success: false,
-          error: outcome.error,
-          phase: outcome.phase,
-          world: outcome.world,
-          cspBlocked: blocked,
-          timedOut: outcome.timedOut,
-          hint: blocked
-            ? 'Page CSP blocked dynamic script evaluation. Use world:"ISOLATED" (default), or drive pagination with scroll + getNetworkRequests.'
-            : 'Check code syntax. Use return <value> to get a result. Prefer scroll + getNetworkRequests for Instagram list pagination.',
+          error: timedOut
+            ? `executeScript timed out after ${timeoutMs}ms`
+            : allowScripts
+              ? 'Ative “Permitir scripts do usuário” em chrome://extensions → Glide V2.'
+              : message,
+          code: timedOut ? 'SCRIPT_TIMEOUT' : allowScripts ? 'USER_SCRIPTS_DISABLED' : undefined,
+          world,
+          timedOut,
+          hint: allowScripts
+            ? 'A extensão precisa da permissão Allow User Scripts para executar código arbitrário.'
+            : 'Use return <value>. Prefira as tools determinísticas (readPage, click, httpRequest) quando possível.',
         };
+      } finally {
+        if (timeoutId) clearTimeout(timeoutId);
       }
-
-      return {
-        success: true,
-        result: outcome.value ?? null,
-        resultType: outcome.valueType,
-        world: outcome.world,
-        serializedAs: outcome.serializedAs,
-        awaited: Boolean(outcome.awaited),
-        timeoutMs,
-        ...(fellBackFromMain
-          ? {
-              worldFallback: 'ISOLATED' as const,
-              warning:
-                'MAIN world blocked by page CSP; ran in ISOLATED (DOM + origin storage + same-origin fetch with cookies work; page JS globals may be hidden).',
-            }
-          : {}),
-      };
     });
   }
 
@@ -5827,6 +5888,7 @@ export class BrowserTools {
       timeoutMs: typeof args.timeoutMs === 'number' ? args.timeoutMs : undefined,
       maxBodyChars: typeof args.maxBodyChars === 'number' ? args.maxBodyChars : undefined,
       allowedDomains: allowlist,
+      signal: this.currentToolContext?.signal,
     });
     return result;
   }

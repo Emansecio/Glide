@@ -193,7 +193,7 @@ SidePanelUI.prototype.requestStopRun = async function requestStopRun() {
   }
 };
 
-const RUN_STOP_ACK_TIMEOUT_MS = 8000;
+const RUN_STOP_ACK_TIMEOUT_MS = 20000;
 const RUN_STOP_ACK_POLL_MS = 250;
 
 SidePanelUI.prototype.waitForRunStopAck = async function waitForRunStopAck(options: { timeoutMs?: number } = {}) {

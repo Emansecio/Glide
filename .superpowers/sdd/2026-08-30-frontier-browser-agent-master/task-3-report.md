@@ -153,3 +153,26 @@ Findings:
 2. Ambiguous recovery presents status/banner and leaves composer interactive; it does not add dedicated confirm/discard buttons. User continuation replaces stale checkpoint without replay.
 3. Explicit async visual descriptions receive a 1-second bounded final wait. Slower descriptions produce deterministic pending disclosure instead of blocking run up to provider timeout.
 4. Worker fixture validates Chrome target restart, resume event, and zero tool replay from an ambiguous checkpoint; it does not use a paid/live model, by design.
+
+## Fix 1 — review findings resolved
+
+Implementation commit: `2e66e9e` (`fix: preserve tool history in run recovery`).
+
+- **Important safe-resume gap:** `background/run-checkpoint-store.ts` now sanitizes normal tool-call/tool-result history for recovery instead of rejecting every `role: 'tool'` message. Pairing IDs remain intact; tool arguments/results are redacted through persistence sanitizers; image/base64 payloads and sensitive keyed values are stripped; total snapshot remains capped at 128 KiB. `background.ts` now emits existing checkpoint-unavailable warning when either checkpoint state or recovery context cannot be stored.
+- **Minor stopped label mismatch:** `sidepanel/ui/panel-core.ts` now routes explicit `run_stopped` status through `getTerminalStatusPresentation('stopped')`, yielding required `Interrompida` label.
+- **Coverage:** added realistic prior tool turn recovery test, pairing/redaction assertions, byte-bound failure test, and stopped-label assertion.
+
+Validation after fix:
+
+- Focused: `npm run test:vitest -- --run tests/vitest/run-checkpoint-store.test.ts tests/vitest/run-recovery.test.ts tests/vitest/run-terminal-reason.test.ts` — PASS, 3 files / 14 tests.
+- Required check: `npm run check` — PASS, TypeScript and Biome (`Checked 180 files ... No fixes applied.`).
+- Milestone gate: `npm run test:frontier` — PASS:
+  - build: production `build:all` passed;
+  - Vitest: 15 files / 56 tests passed;
+  - legacy unit: 336 passed;
+  - validator: 33 passed;
+  - main E2E: 16 checks passed;
+  - frontier actions: click-once, find-element, checkbox-frame passed;
+  - worker recovery: safe resume event and ambiguous zero-replay checks passed.
+
+Fix evidence: `.superpowers/sdd/2026-08-30-frontier-browser-agent-master/task-3-fix-1-report.md`.

@@ -194,3 +194,20 @@ Validation after fix:
 - Milestone gate: `npm run test:frontier` — PASS: production build; Vitest 15 files / 58 tests; legacy unit 336; validator 33; main E2E 16; all frontier action fixtures; all three worker-recovery checks.
 
 Fix evidence: `.superpowers/sdd/2026-08-30-frontier-browser-agent-master/task-3-fix-2-report.md`.
+
+## Fix 3 — stale checkpoint invalidation resolved
+
+Implementation commit: `3ed4162` (`fix: invalidate stale checkpoints on write failure`).
+
+- **Critical stale-resume gap:** active-checkpoint write failure now disables resume and best-effort clears both active checkpoint and recovery snapshot keys. Disabled stores retry cleanup on later persistence attempts and do not repopulate recovery state.
+- **Visible degradation:** coordinator persistence reports first failure per run. Background routes model, commit, and action-journal phase failures through existing informational checkpoint warning without stopping live execution.
+- **Restart regression:** test persists a safe resumable checkpoint, forces later action-phase persistence failure, continues action dispatch/commit, then creates a fresh store and verifies no stale checkpoint or recovery context can resume.
+
+Validation after fix:
+
+- Focused milestone Vitest: `npm run test:vitest -- --run tests/vitest/run-coordinator.test.ts tests/vitest/run-checkpoint-store.test.ts tests/vitest/action-journal.test.ts tests/vitest/run-recovery.test.ts tests/vitest/run-terminal-reason.test.ts tests/vitest/vision-inbox.test.ts tests/vitest/verification-state.test.ts` — PASS, 7 files / 31 tests.
+- Focused worker restart: `npm run build:all && node dist/tests/e2e/test-worker-recovery.js` — PASS, all three safe/committed-stale/ambiguous recovery checks.
+- Required check: `npm run check` — PASS, TypeScript and Biome (`Checked 180 files ... No fixes applied.`).
+- Milestone gate: `npm run test:frontier` — PASS: production build; Vitest 15 files / 59 tests; legacy unit 336; validator 33; main E2E 16; all frontier action fixtures; all worker-recovery checks.
+
+Fix evidence: `.superpowers/sdd/2026-08-30-frontier-browser-agent-master/task-3-fix-3-report.md`.

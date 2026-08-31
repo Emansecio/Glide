@@ -3610,29 +3610,48 @@ export class BrowserTools {
         // Selector helpers inlined (no eval) so injection works under strict page CSP (e.g. Instagram).
         function buildLocalSelector(element: any, options?: any) {
           options = options || {};
-          if (element.id) return '#' + CSS.escape(element.id);
-          const dataTestId = element.getAttribute('data-testid');
-          if (dataTestId) return '[data-testid="' + CSS.escape(dataTestId) + '"]';
-          const name = element.getAttribute('name');
-          if (name) return '[name="' + CSS.escape(name) + '"]';
-          const ariaLabel = element.getAttribute('aria-label');
-          if (ariaLabel) return '[aria-label="' + CSS.escape(ariaLabel) + '"]';
-          if (options.includePlaceholder) {
-            const placeholder = element.placeholder;
-            if (placeholder) return '[placeholder="' + CSS.escape(placeholder) + '"]';
+          const root = element.getRootNode();
+          const unique = (selector: string) => {
+            try {
+              const matches = root.querySelectorAll(selector);
+              return matches.length === 1 && matches[0] === element;
+            } catch {
+              return false;
+            }
+          };
+          const candidates: string[] = [];
+          if (element.id) candidates.push('#' + CSS.escape(element.id));
+          const attributes = ['data-testid', 'name', 'aria-label'];
+          if (options.includePlaceholder) attributes.push('placeholder');
+          for (const attribute of attributes) {
+            const value = element.getAttribute(attribute);
+            if (value) candidates.push('[' + attribute + '="' + CSS.escape(value) + '"]');
           }
-          const cls = Array.from(element.classList).find(
-            (c: any) => /^[a-z][a-z0-9_-]{2,40}$/i.test(c) && !/[0-9]{5,}/.test(c),
-          );
-          if (cls) return '.' + cls;
-          const parent = element.parentElement;
-          if (parent) {
-            const tag = element.tagName.toLowerCase();
-            const siblings = Array.from(parent.children).filter((c: any) => c.tagName.toLowerCase() === tag);
-            const index = siblings.indexOf(element) + 1;
-            return tag + ':nth-of-type(' + index + ')';
+          const classes = Array.from(element.classList).filter(
+            (c: any) =>
+              /^[a-z][a-z0-9_-]{2,40}$/i.test(c) && !/[0-9]{5,}/.test(c) && !/^x[a-z0-9]{4,}$/i.test(c),
+          ) as string[];
+          for (let count = 1; count <= Math.min(3, classes.length); count += 1) {
+            candidates.push(classes.slice(0, count).map((name) => '.' + CSS.escape(name)).join(''));
           }
-          return element.tagName.toLowerCase();
+          for (const candidate of candidates) {
+            if (unique(candidate)) return candidate;
+          }
+          const segments: string[] = [];
+          let current = element;
+          while (current && current !== root) {
+            const tag = current.tagName.toLowerCase();
+            const parent = current.parentElement;
+            const siblings = parent
+              ? Array.from(parent.children).filter((child: any) => child.tagName === current.tagName)
+              : [];
+            const index = siblings.indexOf(current) + 1;
+            segments.unshift(siblings.length > 1 ? tag + ':nth-of-type(' + index + ')' : tag);
+            const selector = segments.join(' > ');
+            if (unique(selector)) return selector;
+            current = parent;
+          }
+          return segments.join(' > ') || element.tagName.toLowerCase();
         }
         function buildOptimalSelector(element: any) {
           const localSelector = buildLocalSelector(element, { includePlaceholder: true });
@@ -3792,7 +3811,11 @@ export class BrowserTools {
             ]
               .filter(Boolean)
               .map((f) => f.toLowerCase());
-            if (shortFields.some((field) => field.includes(needle) || needle.includes(field))) {
+            if (
+              shortFields.some(
+                (field) => field === needle || field.includes(needle) || (field.length >= 3 && needle.includes(field)),
+              )
+            ) {
               exactCandidates.push(element);
               if (exactCandidates.length >= maxRes) break;
             }

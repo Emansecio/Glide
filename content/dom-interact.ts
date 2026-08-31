@@ -3,6 +3,8 @@
  * Tuned for SPAs (Instagram-style): role=button divs, portals, dialogs, fixed overlays.
  */
 
+import { buildUniqueSelector, matchesElementQuery } from './selector-engine.js';
+
 export const DIALOG_SELECTOR =
   '[role="dialog"], [aria-modal="true"], div[role="dialog"], [data-testid*="modal" i], [class*="Dialog" i], [class*="modal" i]';
 
@@ -1126,43 +1128,15 @@ export const scrollPage = (direction: string, amount: number, selector?: string,
 };
 
 const buildOptimalSelector = (element: Element): string => {
-  const localSelector = buildLocalSelector(element, { includePlaceholder: true });
   const root = element.getRootNode();
+  const localSelector = buildUniqueSelector(
+    element,
+    root instanceof ShadowRoot || root instanceof Document ? root : element.ownerDocument,
+  ).selector;
   if (root instanceof ShadowRoot) {
     return `${buildOptimalSelector(root.host)} >>> ${localSelector}`;
   }
   return localSelector;
-};
-
-const levenshtein = (a: string, b: string): number => {
-  const m = a.length;
-  const n = b.length;
-  if (m === 0) return n;
-  if (n === 0) return m;
-  if (Math.abs(m - n) > 3) return Math.abs(m - n);
-  let prev = new Array(n + 1);
-  let curr = new Array(n + 1);
-  for (let j = 0; j <= n; j++) prev[j] = j;
-  for (let i = 1; i <= m; i++) {
-    curr[0] = i;
-    const ca = a.charCodeAt(i - 1);
-    for (let j = 1; j <= n; j++) {
-      const cost = ca === b.charCodeAt(j - 1) ? 0 : 1;
-      curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
-    }
-    const tmp = prev;
-    prev = curr;
-    curr = tmp;
-  }
-  return prev[n];
-};
-
-const fuzzyThreshold = (q: string): number => {
-  const len = q.length;
-  if (len <= 4) return 0;
-  if (len <= 8) return 1;
-  if (len <= 15) return 2;
-  return 3;
 };
 
 export type FindElementCandidate = {
@@ -1280,7 +1254,6 @@ export const findElementsByQuery = (options: {
   const needle = normalizeText(searchQuery).toLowerCase();
   if (!needle) return { success: false, code: 'EMPTY_QUERY', error: 'Empty query.', query: searchQuery };
 
-  const MAX_FUZZY_FIELD_LEN = 40;
   const MAX_CANDIDATE_SCAN = getFindElementScanCap(deepScan);
   const INTERACTIVE =
     'button, a[href], input, textarea, select, [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="option"], label, [tabindex="0"]';
@@ -1384,88 +1357,14 @@ export const findElementsByQuery = (options: {
     return true;
   };
 
-  const threshold = useFuzzy ? fuzzyThreshold(needle) : 0;
-
-  const matchCandidatesInElements = (allElements: HTMLElement[]): HTMLElement[] => {
-    const exactCandidates: HTMLElement[] = [];
-    const fuzzyCandidates: Array<{ element: HTMLElement; distance: number }> = [];
-
-    for (const element of allElements) {
-      if (!isVisible(element)) continue;
-      const tag = element.tagName.toLowerCase();
-      if (!passesTypeFilter(element, tag)) continue;
-      const shortFields = [
-        normalizeText(element.getAttribute('aria-label') || ''),
-        normalizeText(element.getAttribute('title') || ''),
-        normalizeText((element as HTMLInputElement).placeholder || ''),
-        normalizeText(element.getAttribute('name') || ''),
-        normalizeText(element.getAttribute('data-testid') || ''),
-        normalizeText(element.id || ''),
-      ]
-        .filter(Boolean)
-        .map((f) => f.toLowerCase());
-      if (shortFields.some((field) => field.includes(needle) || needle.includes(field))) {
-        exactCandidates.push(element);
-        if (exactCandidates.length >= maxRes) break;
-      }
-    }
-
-    if (exactCandidates.length < maxRes) {
-      for (const element of allElements) {
-        if (exactCandidates.includes(element)) continue;
-        if (!isVisible(element)) continue;
-        const tag = element.tagName.toLowerCase();
-        if (!passesTypeFilter(element, tag)) continue;
-        const text = normalizeText(element.textContent || '').toLowerCase();
-        if (text && text.length <= 200 && text.includes(needle)) {
-          exactCandidates.push(element);
-          if (exactCandidates.length >= maxRes) break;
-        }
-      }
-    }
-
-    if (useFuzzy && threshold > 0 && exactCandidates.length < maxRes) {
-      for (const element of allElements) {
-        if (exactCandidates.includes(element)) continue;
-        if (!isVisible(element)) continue;
-        const tag = element.tagName.toLowerCase();
-        if (!passesTypeFilter(element, tag)) continue;
-        const fields = [
-          normalizeText(element.getAttribute('aria-label') || ''),
-          normalizeText(element.getAttribute('title') || ''),
-          normalizeText((element as HTMLInputElement).placeholder || ''),
-          normalizeText(element.getAttribute('name') || ''),
-          normalizeText(element.getAttribute('data-testid') || ''),
-        ].filter((field) => field && field.length <= MAX_FUZZY_FIELD_LEN);
-
-        let minDist = Number.POSITIVE_INFINITY;
-        for (const field of fields) {
-          const lower = field.toLowerCase();
-          if (Math.abs(lower.length - needle.length) > threshold + 1) continue;
-          const dist = levenshtein(needle, lower);
-          if (dist < minDist) minDist = dist;
-          if (minDist === 0) break;
-          if (field.includes(' ')) {
-            for (const word of field.split(/\s+/)) {
-              if (word.length < needle.length - threshold || word.length > needle.length + threshold) continue;
-              const wdist = levenshtein(needle, word.toLowerCase());
-              if (wdist < minDist) minDist = wdist;
-            }
-          }
-        }
-        if (minDist <= threshold) fuzzyCandidates.push({ element, distance: minDist });
-      }
-    }
-
-    const combined = exactCandidates.slice(0, maxRes);
-    if (combined.length < maxRes && fuzzyCandidates.length > 0) {
-      fuzzyCandidates.sort((a, b) => a.distance - b.distance);
-      for (const fc of fuzzyCandidates.slice(0, maxRes - combined.length)) {
-        if (!combined.includes(fc.element)) combined.push(fc.element);
-      }
-    }
-    return combined;
-  };
+  const matchCandidatesInElements = (allElements: HTMLElement[]): HTMLElement[] =>
+    allElements
+      .filter((element) => isVisible(element) && passesTypeFilter(element, element.tagName.toLowerCase()))
+      .map((element, index) => ({ element, index, match: matchesElementQuery(element, needle, useFuzzy) }))
+      .filter(({ match }) => match.matched)
+      .sort((left, right) => right.match.score - left.match.score || left.index - right.index)
+      .slice(0, maxRes)
+      .map(({ element }) => element);
 
   let searchRoot: Document | Element = document;
   let combined: HTMLElement[] = [];

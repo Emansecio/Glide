@@ -10,7 +10,6 @@ import {
 } from '../../ai/codex-auth.js';
 import { DEFAULT_SYSTEM_PROMPT } from '../../ai/default-prompt.js';
 import { resolveHistoryPersistenceMode } from '../../ai/persist-tool-args.js';
-import { resolveSystemPromptMode, type SystemPromptMode } from '../../ai/system-prompt-mode.js';
 import {
   MODEL_DISPLAY_LABELS,
   PROVIDER_DEFAULT_ENDPOINTS,
@@ -22,6 +21,7 @@ import {
   normalizeProviderId,
   normalizeProviderModel,
 } from '../../ai/providers.js';
+import { type SystemPromptMode, resolveSystemPromptMode } from '../../ai/system-prompt-mode.js';
 import { DEFAULT_TOOL_PERMISSIONS } from '../../background/tool-permissions.js';
 import { SidePanelUI } from './panel-ui.js';
 import {

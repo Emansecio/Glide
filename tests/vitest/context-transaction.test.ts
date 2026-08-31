@@ -32,9 +32,9 @@ describe('ContextTransactionStore', () => {
   it('allows only one terminal commit per run and turn', () => {
     const store = new ContextTransactionStore();
     store.commit(input());
-    expect(() =>
-      store.commit(input({ sourceRevision: 1, messages: [message('different terminal payload')] })),
-    ).toThrow(/already committed/i);
+    expect(() => store.commit(input({ sourceRevision: 1, messages: [message('different terminal payload')] }))).toThrow(
+      /already committed/i,
+    );
   });
 
   it('returns the prior commit for an exact duplicate', () => {

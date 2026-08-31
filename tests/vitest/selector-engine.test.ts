@@ -15,7 +15,8 @@ describe('selector engine', () => {
   });
 
   it('rejects duplicate stable classes', () => {
-    document.body.innerHTML = '<section><button class="action">First</button><button class="action">Second action</button></section>';
+    document.body.innerHTML =
+      '<section><button class="action">First</button><button class="action">Second action</button></section>';
     const secondAction = document.querySelectorAll('button')[1];
     const candidate = buildUniqueSelector(secondAction);
     expect(candidate.selector).not.toBe('.action');
@@ -39,7 +40,8 @@ describe('selector engine', () => {
   });
 
   it('builds a structural selector scoped to the supplied root', () => {
-    document.body.innerHTML = '<div id="outside"><span>Other</span></div><div id="scope"><span>One</span><span>Two</span></div>';
+    document.body.innerHTML =
+      '<div id="outside"><span>Other</span></div><div id="scope"><span>One</span><span>Two</span></div>';
     const scope = document.querySelector('#scope')!;
     const target = scope.querySelectorAll('span')[1];
     const candidate = buildUniqueSelector(target, scope);

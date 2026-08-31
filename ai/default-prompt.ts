@@ -42,7 +42,10 @@ export const STREAMLINED_AUTOMATION_PROMPT = `${DEFAULT_SYSTEM_PROMPT}
 Use browser tools for explicit browser tasks. Use set_plan only for multi-step extraction, audit, or troubleshooting.`;
 
 export function isDefaultAutomationPrompt(systemPrompt: string): boolean {
-  const normalize = (value: string) => String(value || '').replace(/\r\n/g, '\n').trim();
+  const normalize = (value: string) =>
+    String(value || '')
+      .replace(/\r\n/g, '\n')
+      .trim();
   const prompt = normalize(systemPrompt);
   return prompt === normalize(DEFAULT_SYSTEM_PROMPT) || prompt === normalize(STREAMLINED_AUTOMATION_PROMPT);
 }

@@ -3,7 +3,12 @@ import { resolveUniqueSelectorFrame } from '../../tools/frame-target.js';
 
 describe('single-frame mutation targeting', () => {
   it('returns the only frame matching a selector', () => {
-    expect(resolveUniqueSelectorFrame([{ frameId: 0, matched: false }, { frameId: 4, matched: true }])).toEqual({
+    expect(
+      resolveUniqueSelectorFrame([
+        { frameId: 0, matched: false },
+        { frameId: 4, matched: true },
+      ]),
+    ).toEqual({
       ok: true,
       frameId: 4,
     });

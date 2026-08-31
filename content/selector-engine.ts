@@ -158,7 +158,9 @@ export function buildUniqueSelector(
   while (current && current !== root) {
     const tag = current.tagName.toLowerCase();
     const parent: Element | null = current.parentElement;
-    const siblings = parent ? Array.from(parent.children).filter((sibling) => sibling.tagName === current?.tagName) : [];
+    const siblings = parent
+      ? Array.from(parent.children).filter((sibling) => sibling.tagName === current?.tagName)
+      : [];
     const index = siblings.indexOf(current) + 1;
     segments.unshift(siblings.length > 1 ? `${tag}:nth-of-type(${index})` : tag);
     const selector = segments.join(' > ');

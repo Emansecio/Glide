@@ -30,7 +30,6 @@ import {
   shouldCompact,
 } from './ai/compaction.js';
 import { STREAMLINED_AUTOMATION_PROMPT, isDefaultAutomationPrompt } from './ai/default-prompt.js';
-import { withScopedOwnership } from './ai/system-prompt-mode.js';
 import { createMessage, normalizeConversationHistory } from './ai/message-schema.js';
 import type { Message } from './ai/message-schema.js';
 import { isEmptyModelPassResult } from './ai/model-pass-result.js';
@@ -51,11 +50,13 @@ import {
 } from './ai/retry-engine.js';
 import { buildRunToolSet, getCachedLanguageModel } from './ai/runtime-cache.js';
 import { describeImageWithModel, migrateStoredProvider } from './ai/sdk-client.js';
+import { withScopedOwnership } from './ai/system-prompt-mode.js';
 import { detectTaskIntent, hasRecentToolActivity } from './ai/task-intent.js';
 import { extractRecoverableToolCalls, stripRecoverableToolCalls } from './ai/tool-call-recovery.js';
 import { buildToolTurnMessages } from './ai/tool-history.js';
 import { ensureFreshXaiToken, getXaiAuthHealth, readXaiOAuth } from './ai/xai-oauth.js';
 import { ModelActivityWatchdog } from './background/activity-timeout.js';
+import { canApplyCompactionResult, contextTransactionStore } from './background/context-transaction.js';
 import { shouldForceToolContinuation, textAwaitsUser } from './background/continuation-intent.js';
 import { DomCacheLru } from './background/dom-cache.js';
 import {
@@ -135,7 +136,6 @@ import {
   resolveTimeoutMs,
   shouldInvalidateDomCache,
 } from './background/service-config.js';
-import { canApplyCompactionResult, contextTransactionStore } from './background/context-transaction.js';
 import { resolveUserMessageContextAction, sessionContextStore } from './background/session-context-store.js';
 import {
   ActiveRunSentinelRegistry,
@@ -3501,9 +3501,7 @@ class BackgroundService {
           messages: [{ role: 'user', content: promptText }],
           // Cap de SAÍDA — reserveTokens é orçamento de input/contexto, não de sumário.
           maxOutputTokens: COMPACTION_MAX_OUTPUT_TOKENS,
-          abortSignal: combineAbortSignals(
-            abortSignal ? [abortSignal, timeoutSignal] : [timeoutSignal],
-          ),
+          abortSignal: combineAbortSignals(abortSignal ? [abortSignal, timeoutSignal] : [timeoutSignal]),
         }),
       );
 

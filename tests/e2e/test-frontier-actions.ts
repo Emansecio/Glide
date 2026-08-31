@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { chromium, type BrowserContext, type Page, type Worker } from 'playwright';
+import { type BrowserContext, type Page, type Worker, chromium } from 'playwright';
 import { startFixtureServer } from './fixture-server.js';
 
 const requestedCase = process.argv.includes('--case') ? process.argv[process.argv.indexOf('--case') + 1] : '';
@@ -71,10 +71,13 @@ async function clickOnce(context: BrowserContext, worker: Worker, panel: Page, b
     assert(result?.success, `click ${selector} failed: ${result?.error || JSON.stringify(result)}`);
   }
 
-  const state = await page.evaluate(() =>
-    (window as unknown as {
-      __actionLab: { click: number; checkboxClick: number; change: number; checkbox: boolean; submit: number };
-    }).__actionLab,
+  const state = await page.evaluate(
+    () =>
+      (
+        window as unknown as {
+          __actionLab: { click: number; checkboxClick: number; change: number; checkbox: boolean; submit: number };
+        }
+      ).__actionLab,
   );
   assert(state.click === 1, `button click count expected 1, got ${state.click}`);
   assert(state.checkboxClick === 1, `checkbox click count expected 1, got ${state.checkboxClick}`);

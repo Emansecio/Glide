@@ -419,6 +419,8 @@ SidePanelUI.prototype.loadSession = async function loadSession(session: ChatSess
     // recebe contexto duplicado.
     this.displayHistory = cloneConversationHistory(displayNormalized);
     this.contextHistory = cloneConversationHistory(contextNormalized);
+    // Revisions live in service-worker lineage memory; persisted legacy sessions restart at zero.
+    this.contextRevision = 0;
     this.invalidateContextUsageCache?.();
     this.sessionId = session.id || `session-${Date.now()}`;
     this.sessionStartedAt = Number(session.startedAt || Date.now());

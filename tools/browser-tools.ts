@@ -1124,7 +1124,9 @@ export class BrowserTools {
       });
       return resolveUniqueSelectorFrame(
         results
-          .filter((entry): entry is chrome.scripting.InjectionResult<{ found: boolean }> => typeof entry.frameId === 'number')
+          .filter(
+            (entry): entry is chrome.scripting.InjectionResult<{ found: boolean }> => typeof entry.frameId === 'number',
+          )
           .map((entry) => ({ frameId: entry.frameId as number, matched: entry.result?.found === true })),
       );
     } catch {
@@ -3649,11 +3651,15 @@ export class BrowserTools {
             if (value) candidates.push('[' + attribute + '="' + CSS.escape(value) + '"]');
           }
           const classes = Array.from(element.classList).filter(
-            (c: any) =>
-              /^[a-z][a-z0-9_-]{2,40}$/i.test(c) && !/[0-9]{5,}/.test(c) && !/^x[a-z0-9]{4,}$/i.test(c),
+            (c: any) => /^[a-z][a-z0-9_-]{2,40}$/i.test(c) && !/[0-9]{5,}/.test(c) && !/^x[a-z0-9]{4,}$/i.test(c),
           ) as string[];
           for (let count = 1; count <= Math.min(3, classes.length); count += 1) {
-            candidates.push(classes.slice(0, count).map((name) => '.' + CSS.escape(name)).join(''));
+            candidates.push(
+              classes
+                .slice(0, count)
+                .map((name) => '.' + CSS.escape(name))
+                .join(''),
+            );
           }
           for (const candidate of candidates) {
             if (unique(candidate)) return candidate;
@@ -7262,20 +7268,18 @@ export class BrowserTools {
       }
       frameId = uniqueFrame.frameId;
     }
-    const result = await sendGlideBridge(
-      resolution.tabId,
-      'setChecked',
-      { selector, checked: wantChecked },
-      8000,
-      { frameId },
+    const result = await sendGlideBridge(resolution.tabId, 'setChecked', { selector, checked: wantChecked }, 8000, {
+      frameId,
+    });
+    const baseResult = result || {
+      success: false,
+      code: 'BRIDGE_TIMEOUT',
+      error: 'Target frame bridge timed out; checked state was not retried.',
+    };
+    return this.attachResolutionMeta(
+      this.attachFrameMeta({ ...baseResult, targetFrameId: frameId }, frameMeta),
+      resolution,
     );
-    const baseResult =
-      result || {
-        success: false,
-        code: 'BRIDGE_TIMEOUT',
-        error: 'Target frame bridge timed out; checked state was not retried.',
-      };
-    return this.attachResolutionMeta(this.attachFrameMeta({ ...baseResult, targetFrameId: frameId }, frameMeta), resolution);
   }
 
   async navigateHistory(args: Record<string, unknown>) {

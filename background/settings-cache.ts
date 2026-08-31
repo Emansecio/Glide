@@ -3,8 +3,8 @@ import { CODEX_CHATGPT_STORAGE_KEY, isJwtToken, isOpenAiApiKey, resolveCodexAuth
 import { resolveHistoryPersistenceMode } from '../ai/persist-tool-args.js';
 import { normalizeProviderModel } from '../ai/providers.js';
 import { invalidateRuntimeCaches } from '../ai/runtime-cache.js';
-import { resolveSystemPromptMode } from '../ai/system-prompt-mode.js';
 import { migrateStoredProvider } from '../ai/sdk-client.js';
+import { resolveSystemPromptMode } from '../ai/system-prompt-mode.js';
 import { PROVIDER_API_KEY_FIELDS, providerApiKeyField } from '../sidepanel/ui/settings-keys.js';
 import { SETTINGS_STORAGE_KEYS } from '../sidepanel/ui/settings-keys.js';
 import { invalidateProviderNetRequestRulesCache } from './provider-net-rules.js';

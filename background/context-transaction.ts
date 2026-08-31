@@ -1,4 +1,4 @@
-import { cloneConversationHistory, normalizeConversationHistory, type Message } from '../ai/message-schema.js';
+import { type Message, cloneConversationHistory, normalizeConversationHistory } from '../ai/message-schema.js';
 
 export type ContextUsage = {
   approxTokens?: number;

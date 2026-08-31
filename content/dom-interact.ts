@@ -468,7 +468,8 @@ export const setCheckedOnTarget = (selector: string, checked: boolean) => {
   const isCheckable =
     (isInput && (inputType === 'checkbox' || inputType === 'radio')) ||
     ['checkbox', 'switch', 'radio'].includes(element.getAttribute('role') || '');
-  if (!isCheckable) return { success: false as const, code: 'NOT_CHECKABLE', error: 'Target is not a checkbox or radio.' };
+  if (!isCheckable)
+    return { success: false as const, code: 'NOT_CHECKABLE', error: 'Target is not a checkbox or radio.' };
   if (isRadio && !checked) {
     return {
       success: false as const,

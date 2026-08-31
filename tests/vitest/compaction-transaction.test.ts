@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { canApplyCompactionResult } from '../../background/context-transaction.js';
 
-async function simulatePendingCompaction(options: { abort?: boolean; sourceRevision?: number; currentRevision?: number }) {
+async function simulatePendingCompaction(options: {
+  abort?: boolean;
+  sourceRevision?: number;
+  currentRevision?: number;
+}) {
   const controller = new AbortController();
   let resolveSummary!: () => void;
   const pending = new Promise<void>((resolve) => {
@@ -34,7 +38,12 @@ async function simulatePendingCompaction(options: { abort?: boolean; sourceRevis
 
 describe('compaction transaction guard', () => {
   it('discards summary resolved after abort without storage or runtime effects', async () => {
-    expect(await simulatePendingCompaction({ abort: true })).toEqual({ deleted: 0, created: 0, committed: 0, emitted: 0 });
+    expect(await simulatePendingCompaction({ abort: true })).toEqual({
+      deleted: 0,
+      created: 0,
+      committed: 0,
+      emitted: 0,
+    });
   });
 
   it('discards summary from a stale source revision identically', async () => {

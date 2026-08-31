@@ -350,7 +350,10 @@ const validateRuntimeMessageShape = (message: GenericRecord): RuntimeMessageVali
       if (!isOptionalArray(message.responseMessages)) {
         return { ok: false, reason: 'assistant_final.responseMessages must be an array.' };
       }
-      if (message.contextRevision !== undefined && (!Number.isInteger(message.contextRevision) || Number(message.contextRevision) < 0)) {
+      if (
+        message.contextRevision !== undefined &&
+        (!Number.isInteger(message.contextRevision) || Number(message.contextRevision) < 0)
+      ) {
         return { ok: false, reason: 'assistant_final.contextRevision must be a non-negative integer.' };
       }
       if (!isOptionalRecord(message.qualityReport)) {
@@ -377,7 +380,8 @@ const validateRuntimeMessageShape = (message: GenericRecord): RuntimeMessageVali
         return { ok: false, reason: 'context_commit.revision must be a positive integer.' };
       }
       if (!Array.isArray(message.messages)) return { ok: false, reason: 'context_commit.messages must be an array.' };
-      if (typeof message.compacted !== 'boolean') return { ok: false, reason: 'context_commit.compacted must be boolean.' };
+      if (typeof message.compacted !== 'boolean')
+        return { ok: false, reason: 'context_commit.compacted must be boolean.' };
       if (!isContextUsageLike(message.contextUsage)) {
         return { ok: false, reason: 'context_commit.contextUsage is invalid.' };
       }

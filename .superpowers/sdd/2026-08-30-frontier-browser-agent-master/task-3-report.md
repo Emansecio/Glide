@@ -176,3 +176,21 @@ Validation after fix:
   - worker recovery: safe resume event and ambiguous zero-replay checks passed.
 
 Fix evidence: `.superpowers/sdd/2026-08-30-frontier-browser-agent-master/task-3-fix-1-report.md`.
+
+## Fix 2 — stale same-turn recovery snapshot resolved
+
+Implementation commit: `f4eae30` (`fix: advance safe run recovery snapshots`).
+
+- **Critical same-turn replay gap:** recovery history now refreshes after run-local tool/retry/visual history changes, after compaction, and before terminal context commit. Each refresh advances coordinator `contextRevision`; following checkpoint persists matching revision.
+- **Commit-to-history crash window:** recovery snapshots carry `lastCommittedActionId`. Recovery pauses when checkpoint committed action is absent from snapshot, preventing auto-replay between browser-effect commit and replay-history persistence.
+- **Storage degradation:** oversized/failed recovery snapshots disable resume and clear active recovery keys best-effort; live execution continues with informational warning.
+- **Regression:** worker-restart fixture now covers committed mutative action plus stale history and asserts `run_resume_required` with zero `tool_execution_start` replay.
+
+Validation after fix:
+
+- Focused Vitest: `npm run test:vitest -- --run tests/vitest/run-coordinator.test.ts tests/vitest/run-checkpoint-store.test.ts tests/vitest/run-recovery.test.ts tests/vitest/action-journal.test.ts` — PASS, 4 files / 19 tests.
+- Focused worker restart: `npm run build:all && node dist/tests/e2e/test-worker-recovery.js` — PASS, safe resume plus committed-stale and ambiguous zero-replay checks.
+- Required check: `npm run check` — PASS, TypeScript and Biome (`Checked 180 files ... No fixes applied.`).
+- Milestone gate: `npm run test:frontier` — PASS: production build; Vitest 15 files / 58 tests; legacy unit 336; validator 33; main E2E 16; all frontier action fixtures; all three worker-recovery checks.
+
+Fix evidence: `.superpowers/sdd/2026-08-30-frontier-browser-agent-master/task-3-fix-2-report.md`.

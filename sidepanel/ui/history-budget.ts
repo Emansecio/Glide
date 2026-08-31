@@ -93,11 +93,7 @@ export function fitSessionToBudget(session: StoredSession, maxBytes: number): St
   if (hasDistinctContext) {
     const transcriptBudget = Math.max(512, Math.floor((budget - 768) / 2));
     fitted.transcript = fitMessagesToBudget(fitted.transcript, transcriptBudget, 'session_budget');
-    fitted.contextTranscript = fitMessagesToBudget(
-      fitted.contextTranscript || [],
-      transcriptBudget,
-      'session_budget',
-    );
+    fitted.contextTranscript = fitMessagesToBudget(fitted.contextTranscript || [], transcriptBudget, 'session_budget');
   } else {
     fitted.transcript = fitMessagesToBudget(fitted.transcript, budget - 512, 'session_budget');
     fitted.contextTranscript = undefined;

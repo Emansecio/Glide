@@ -57,7 +57,6 @@ import { buildToolTurnMessages } from './ai/tool-history.js';
 import { ensureFreshXaiToken, getXaiAuthHealth, readXaiOAuth } from './ai/xai-oauth.js';
 import { ActionJournal, MUTATIVE_BROWSER_EFFECT_TOOLS } from './background/action-journal.js';
 import { ModelActivityWatchdog } from './background/activity-timeout.js';
-import { applyManualPlanUpdate } from './background/plan-controller.js';
 import {
   canApplyCompactionResult,
   contextTransactionStore,
@@ -81,6 +80,7 @@ import {
   hasConnectedPanelPorts,
   postToPanelPorts,
 } from './background/panel-port.js';
+import { applyManualPlanUpdate } from './background/plan-controller.js';
 import { checkProviderReadiness } from './background/preflight.js';
 import {
   UNTRUSTED_DATA_POLICY,

@@ -2,6 +2,7 @@ import { cloneConversationHistory, normalizeConversationHistory } from '../../ai
 import { dedupeThinking, extractThinking } from '../../ai/message-utils.js';
 import { sanitizeMessageForPersistence } from '../../ai/persist-serialization.js';
 import { resolveHistoryPersistenceMode } from '../../ai/persist-tool-args.js';
+import { fitSessionToBudget } from './history-budget.js';
 import {
   CHAT_SESSIONS_INDEX_KEY,
   type ChatSessionIndexEntry,
@@ -20,7 +21,6 @@ import {
   shrinkSessionPayloadForQuota,
   transcriptsEqual,
 } from './history-storage.js';
-import { fitSessionToBudget } from './history-budget.js';
 import { isHistoryListLoadTokenStale, isHistoryPersistBarrierStale, isRenderGenerationStale } from './panel-guards.js';
 import { SidePanelUI } from './panel-ui.js';
 

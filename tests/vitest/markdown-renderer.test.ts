@@ -56,7 +56,11 @@ describe('renderMarkdownToHtml', () => {
   });
 
   it('falls back to escaped plain text for malformed runtime input', () => {
-    const malformed = { toString: () => { throw new Error('malformed'); } } as unknown as string;
+    const malformed = {
+      toString: () => {
+        throw new Error('malformed');
+      },
+    } as unknown as string;
     const result = renderMarkdownToHtml(malformed);
     expect(result.fallback).toBe(true);
     if (!result.fallback) throw new Error('expected fallback');

@@ -251,12 +251,14 @@ SidePanelUI.prototype.togglePlanStep = async function togglePlanStep(index: numb
       runId: this.activeRunId || undefined,
     });
     if (this.pendingPlanStepIds.has(step.id)) {
-      this.applyPlanUpdateAck(response || {
-        planId: plan.planId,
-        version: plan.version,
-        accepted: false,
-        error: 'Sem confirmação do plano.',
-      });
+      this.applyPlanUpdateAck(
+        response || {
+          planId: plan.planId,
+          version: plan.version,
+          accepted: false,
+          error: 'Sem confirmação do plano.',
+        },
+      );
     }
   } catch {
     this.pendingPlanStepIds.delete(step.id);

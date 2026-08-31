@@ -3,20 +3,26 @@ import { ATTACHMENT_LIMITS, validateAttachmentBatch } from '../../sidepanel/ui/a
 
 describe('attachment policy', () => {
   it('rejects oversized text before any read method can run', () => {
-    const text = vi.fn(() => { throw new Error('must not read'); });
-    const decisions = validateAttachmentBatch([], [
-      { name: 'huge.txt', type: 'text/plain', size: ATTACHMENT_LIMITS.textBytes + 1, text },
-    ]);
+    const text = vi.fn(() => {
+      throw new Error('must not read');
+    });
+    const decisions = validateAttachmentBatch(
+      [],
+      [{ name: 'huge.txt', type: 'text/plain', size: ATTACHMENT_LIMITS.textBytes + 1, text }],
+    );
     expect(decisions[0].accepted).toBe(false);
     expect(decisions[0].reason).toContain('2 MB');
     expect(text).not.toHaveBeenCalled();
   });
 
   it('rejects oversized image before decoding', () => {
-    const arrayBuffer = vi.fn(() => { throw new Error('must not decode'); });
-    const decisions = validateAttachmentBatch([], [
-      { name: 'huge.png', type: 'image/png', size: ATTACHMENT_LIMITS.imageBytes + 1, arrayBuffer },
-    ]);
+    const arrayBuffer = vi.fn(() => {
+      throw new Error('must not decode');
+    });
+    const decisions = validateAttachmentBatch(
+      [],
+      [{ name: 'huge.png', type: 'image/png', size: ATTACHMENT_LIMITS.imageBytes + 1, arrayBuffer }],
+    );
     expect(decisions[0].accepted).toBe(false);
     expect(arrayBuffer).not.toHaveBeenCalled();
   });

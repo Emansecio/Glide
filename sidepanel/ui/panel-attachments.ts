@@ -97,7 +97,12 @@ export async function compressImageBlob(
     canvas.height = height;
     const ctx = canvas.getContext('2d');
     if (!ctx) {
-      return { dataUrl: await readAsDataUrl(blob), mime: blob.type || 'image/png', width: img.width, height: img.height };
+      return {
+        dataUrl: await readAsDataUrl(blob),
+        mime: blob.type || 'image/png',
+        width: img.width,
+        height: img.height,
+      };
     }
     ctx.drawImage(img, 0, 0, width, height);
     const preferPng = blob.type === 'image/png' && width * height < 900_000;

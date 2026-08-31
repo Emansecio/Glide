@@ -43,10 +43,7 @@ function existingBytes(item: PendingAttachmentMeta): number {
   return 0;
 }
 
-export function validateAttachmentBatch(
-  existing: PendingAttachmentMeta[],
-  files: FileLike[],
-): AttachmentDecision[] {
+export function validateAttachmentBatch(existing: PendingAttachmentMeta[], files: FileLike[]): AttachmentDecision[] {
   let total = existing.reduce((sum, item) => sum + existingBytes(item), 0);
   let textCount = existing.filter((item) => item.kind === 'text').length;
   let imageCount = existing.filter((item) => item.kind === 'image').length;

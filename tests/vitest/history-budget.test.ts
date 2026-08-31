@@ -27,7 +27,11 @@ describe('history byte budgets', () => {
     const report = 'final '.repeat(3_000);
     const fitted = fitSessionToBudget(
       session([
-        { role: 'assistant', content: '', toolCalls: [{ id: '1', name: 'readPage', args: { body: 'x'.repeat(60_000) } }] },
+        {
+          role: 'assistant',
+          content: '',
+          toolCalls: [{ id: '1', name: 'readPage', args: { body: 'x'.repeat(60_000) } }],
+        },
         { role: 'tool', toolCallId: '1', content: 'payload'.repeat(10_000) },
         { role: 'assistant', content: report },
       ]),

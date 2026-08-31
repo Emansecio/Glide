@@ -1,8 +1,6 @@
 import MarkdownIt from 'markdown-it';
 
-export type MarkdownRenderResult =
-  | { html: string; fallback: false }
-  | { html: string; fallback: true; error: string };
+export type MarkdownRenderResult = { html: string; fallback: false } | { html: string; fallback: true; error: string };
 
 const escapeHtml = (value: string): string =>
   value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -44,7 +42,9 @@ markdown.renderer.rules.link_open = (tokens, index, options, env, self) => {
   token.attrSet('href', safeHref);
   token.attrSet('target', '_blank');
   token.attrSet('rel', 'noopener noreferrer');
-  return defaultLinkOpen ? defaultLinkOpen(tokens, index, options, env, self) : self.renderToken(tokens, index, options);
+  return defaultLinkOpen
+    ? defaultLinkOpen(tokens, index, options, env, self)
+    : self.renderToken(tokens, index, options);
 };
 
 markdown.renderer.rules.link_close = (tokens, index, options, _env, self) => {

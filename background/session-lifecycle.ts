@@ -1,3 +1,19 @@
+export function combineAbortSignals(signals: AbortSignal[]): AbortSignal {
+  const active = signals.filter(Boolean);
+  const signalAny = (AbortSignal as typeof AbortSignal & { any?: (items: AbortSignal[]) => AbortSignal }).any;
+  if (typeof signalAny === 'function') return signalAny(active);
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  for (const signal of active) {
+    if (signal.aborted) {
+      abort();
+      break;
+    }
+    signal.addEventListener('abort', abort, { once: true });
+  }
+  return controller.signal;
+}
+
 /** Run-scoped session tombstones — predecessor finally must not clear successor marks. */
 export class SessionTombstoneRegistry {
   private tombstones = new Map<string, string>();

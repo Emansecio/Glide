@@ -19,6 +19,23 @@ export type ContextCommit = {
 
 export type ContextCommitInput = Omit<ContextCommit, 'revision'> & { sourceRevision: number };
 
+export function canApplyCompactionResult(input: {
+  abortSignal?: AbortSignal;
+  runOwned: boolean;
+  tombstoned: boolean;
+  generationMatches: boolean;
+  sourceRevision: number;
+  currentRevision: number;
+}): boolean {
+  return (
+    input.abortSignal?.aborted !== true &&
+    input.runOwned &&
+    !input.tombstoned &&
+    input.generationMatches &&
+    input.sourceRevision === input.currentRevision
+  );
+}
+
 type SessionSnapshot = { revision: number; messages: Message[] };
 
 const cloneCommit = (commit: ContextCommit): ContextCommit => ({

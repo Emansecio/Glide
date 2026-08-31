@@ -134,13 +134,14 @@ import {
   resolveTimeoutMs,
   shouldInvalidateDomCache,
 } from './background/service-config.js';
-import { contextTransactionStore } from './background/context-transaction.js';
+import { canApplyCompactionResult, contextTransactionStore } from './background/context-transaction.js';
 import { resolveUserMessageContextAction, sessionContextStore } from './background/session-context-store.js';
 import {
   ActiveRunSentinelRegistry,
   SessionCompactionQueue,
   SessionGenerationRegistry,
   SessionTombstoneRegistry,
+  combineAbortSignals,
   createSentinelToken,
 } from './background/session-lifecycle.js';
 import { buildSessionTools } from './background/session-tools.js';
@@ -1573,11 +1574,12 @@ class BackgroundService {
               runtimeProfile,
               runtimeSettings,
               sessionIdAtStart: sessionId,
+              sourceRevision: contextTransactionStore.read(sessionId).revision,
+              abortSignal: this.getRunAbortSignal(runMeta.runId),
             }),
           );
           if (compactedHistory) {
             currentHistory = compactedHistory;
-            sessionId = runMeta.sessionId;
           }
         }
       }
@@ -1966,11 +1968,12 @@ class BackgroundService {
                 runtimeProfile,
                 runtimeSettings,
                 sessionIdAtStart: sessionId,
+                sourceRevision: contextTransactionStore.read(sessionId).revision,
+                abortSignal: this.getRunAbortSignal(runMeta.runId),
               }),
             );
             if (compactedHistory) {
               currentHistory = compactedHistory;
-              sessionId = runMeta.sessionId;
             }
           }
         }
@@ -2312,10 +2315,11 @@ class BackgroundService {
               runtimeProfile,
               runtimeSettings,
               sessionIdAtStart: sessionId,
+              sourceRevision,
+              abortSignal: this.getRunAbortSignal(runMeta.runId),
             }),
           );
           if (compactedHistory) {
-            sessionId = runMeta.sessionId;
             terminalHistory = compactedHistory;
             compacted = true;
             contextUsage = estimateContextTokens(compactedHistory);
@@ -3406,6 +3410,8 @@ class BackgroundService {
     runtimeProfile,
     runtimeSettings,
     sessionIdAtStart,
+    sourceRevision,
+    abortSignal,
   }: {
     runMeta: RunMeta;
     history: Message[];
@@ -3414,9 +3420,11 @@ class BackgroundService {
     runtimeProfile: Record<string, any>;
     runtimeSettings: Record<string, any>;
     sessionIdAtStart?: string;
+    sourceRevision: number;
+    abortSignal?: AbortSignal;
   }): Promise<Message[] | null> {
     const sourceSessionId = sessionIdAtStart || runMeta.sessionId;
-    if (this.sessionTombstones.isTombstoned(sourceSessionId)) return null;
+    if (this.sessionTombstones.isTombstoned(sourceSessionId) || abortSignal?.aborted) return null;
     const generationAtStart = this.sessionGenerations.get(sourceSessionId);
 
     const compactionSettings = DEFAULT_COMPACTION_SETTINGS;
@@ -3469,7 +3477,8 @@ class BackgroundService {
     let summaryText: string | null = null;
 
     for (let attempt = 0; attempt < MAX_COMPACTION_RETRIES; attempt += 1) {
-      const compactionRun = await withAbortTimeout(compactionTimeoutMs, (signal) =>
+      if (abortSignal?.aborted) return null;
+      const compactionRun = await withAbortTimeout(compactionTimeoutMs, (timeoutSignal) =>
         generateText({
           model,
           ...resolveProviderOptions(runtimeProfile.provider),
@@ -3477,7 +3486,9 @@ class BackgroundService {
           messages: [{ role: 'user', content: promptText }],
           // Cap de SAÍDA — reserveTokens é orçamento de input/contexto, não de sumário.
           maxOutputTokens: COMPACTION_MAX_OUTPUT_TOKENS,
-          abortSignal: signal,
+          abortSignal: combineAbortSignals(
+            abortSignal ? [abortSignal, timeoutSignal] : [timeoutSignal],
+          ),
         }),
       );
 
@@ -3502,7 +3513,8 @@ class BackgroundService {
     }
 
     if (!summaryText) {
-      summaryText = buildTruncateOnlySummary(messagesToSummarize);
+      const truncated = buildTruncateOnlySummary(messagesToSummarize);
+      summaryText = previousSummary ? `${previousSummary}\n\n${truncated}` : truncated;
       this.sendRuntime(runMeta, {
         type: 'run_warning',
         message: 'A compactação do contexto usou o resumo simplificado (sem sumarização pelo modelo).',
@@ -3510,8 +3522,14 @@ class BackgroundService {
     }
 
     if (
-      this.sessionTombstones.isTombstoned(sourceSessionId) ||
-      !this.sessionGenerations.matches(sourceSessionId, generationAtStart)
+      !canApplyCompactionResult({
+        abortSignal,
+        runOwned: this.isOrchestrationOwner(runMeta.runId) && !this.isRunAborted(runMeta.runId),
+        tombstoned: this.sessionTombstones.isTombstoned(sourceSessionId),
+        generationMatches: this.sessionGenerations.matches(sourceSessionId, generationAtStart),
+        sourceRevision,
+        currentRevision: contextTransactionStore.read(sourceSessionId).revision,
+      })
     ) {
       return null;
     }
@@ -3522,35 +3540,7 @@ class BackgroundService {
       preserved,
       trimmedCount: messagesToSummarize.length,
     });
-    const compactedUsage = estimateContextTokens(compaction.compacted);
-    const newSessionId = `session-${Date.now()}`;
-    const previousSessionId = sourceSessionId;
-    if (previousSessionId) resetCompactionHysteresis(String(previousSessionId));
-
-    runMeta.sessionId = newSessionId;
-    this.sessionGenerations.bump(newSessionId);
-    sessionContextStore.set(newSessionId, compaction.compacted);
-    if (previousSessionId && previousSessionId !== newSessionId) {
-      sessionContextStore.delete(previousSessionId);
-    }
-
-    this.sendRuntime(
-      { ...runMeta, sessionId: previousSessionId },
-      {
-        type: 'context_compacted',
-        summary: summaryText,
-        trimmedCount: messagesToSummarize.length,
-        preservedCount: compaction.preservedCount,
-        newSessionId,
-        contextMessages: compaction.compacted,
-        contextUsage: {
-          approxTokens: compactedUsage.tokens,
-          contextLimit,
-          percent: Math.min(100, Math.round((compactedUsage.tokens / contextLimit) * 100)),
-        },
-      },
-    );
-
+    resetCompactionHysteresis(sourceSessionId);
     return normalizeConversationHistory(compaction.compacted);
   }
 

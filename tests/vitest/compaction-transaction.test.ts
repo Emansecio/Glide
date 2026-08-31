@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canApplyCompactionResult } from '../../background/context-transaction.js';
+import { canApplyCompactionResult, shouldDiscardCompactionAttempt } from '../../background/context-transaction.js';
 
 async function simulatePendingCompaction(options: {
   abort?: boolean;
@@ -37,6 +37,37 @@ async function simulatePendingCompaction(options: {
 }
 
 describe('compaction transaction guard', () => {
+  it('silently discards run aborts before warning or fallback emission', () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    expect(
+      shouldDiscardCompactionAttempt({
+        abortSignal: controller.signal,
+        timedOut: false,
+        errorIsAbort: true,
+      }),
+    ).toBe(true);
+  });
+
+  it('silently discards non-timeout abort errors', () => {
+    expect(
+      shouldDiscardCompactionAttempt({
+        timedOut: false,
+        errorIsAbort: true,
+      }),
+    ).toBe(true);
+  });
+
+  it('retains timeout warning behavior for timeout-owned abort errors', () => {
+    expect(
+      shouldDiscardCompactionAttempt({
+        timedOut: true,
+        errorIsAbort: true,
+      }),
+    ).toBe(false);
+  });
+
   it('discards summary resolved after abort without storage or runtime effects', async () => {
     expect(await simulatePendingCompaction({ abort: true })).toEqual({
       deleted: 0,

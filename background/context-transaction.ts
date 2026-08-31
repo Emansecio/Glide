@@ -19,6 +19,14 @@ export type ContextCommit = {
 
 export type ContextCommitInput = Omit<ContextCommit, 'revision'> & { sourceRevision: number };
 
+export function shouldDiscardCompactionAttempt(input: {
+  abortSignal?: AbortSignal;
+  timedOut: boolean;
+  errorIsAbort: boolean;
+}): boolean {
+  return input.abortSignal?.aborted === true || (input.errorIsAbort && !input.timedOut);
+}
+
 export function canApplyCompactionResult(input: {
   abortSignal?: AbortSignal;
   runOwned: boolean;

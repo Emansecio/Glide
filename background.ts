@@ -56,7 +56,11 @@ import { extractRecoverableToolCalls, stripRecoverableToolCalls } from './ai/too
 import { buildToolTurnMessages } from './ai/tool-history.js';
 import { ensureFreshXaiToken, getXaiAuthHealth, readXaiOAuth } from './ai/xai-oauth.js';
 import { ModelActivityWatchdog } from './background/activity-timeout.js';
-import { canApplyCompactionResult, contextTransactionStore } from './background/context-transaction.js';
+import {
+  canApplyCompactionResult,
+  contextTransactionStore,
+  shouldDiscardCompactionAttempt,
+} from './background/context-transaction.js';
 import { shouldForceToolContinuation, textAwaitsUser } from './background/continuation-intent.js';
 import { DomCacheLru } from './background/dom-cache.js';
 import {
@@ -3505,7 +3509,16 @@ class BackgroundService {
         }),
       );
 
-      if (compactionRun.timedOut || (compactionRun.error && isAbortError(compactionRun.error))) {
+      if (
+        shouldDiscardCompactionAttempt({
+          abortSignal,
+          timedOut: compactionRun.timedOut,
+          errorIsAbort: Boolean(compactionRun.error && isAbortError(compactionRun.error)),
+        })
+      ) {
+        return null;
+      }
+      if (compactionRun.timedOut) {
         this.sendRuntime(runMeta, {
           type: 'run_warning',
           message: `A compactação do contexto excedeu ${compactionTimeoutMs}ms (tentativa ${attempt + 1}/${MAX_COMPACTION_RETRIES}).`,

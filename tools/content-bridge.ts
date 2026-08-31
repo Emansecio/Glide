@@ -13,6 +13,7 @@ export type GlideBridgeOp =
   | 'scroll'
   | 'findElement'
   | 'selectOption'
+  | 'setChecked'
   | 'highlightElement';
 
 export type GlideBridgeRequest = {
@@ -40,6 +41,7 @@ export const MUTATIVE_BRIDGE_OPS = new Set<GlideBridgeOp>([
   'type',
   'pressKey',
   'selectOption',
+  'setChecked',
   'mouse',
   'hover',
   'scroll',
@@ -56,15 +58,21 @@ export const sendGlideBridge = async (
   op: GlideBridgeOp,
   payload: Record<string, unknown> = {},
   timeoutMs = 8000,
+  options: { frameId?: number } = {},
 ): Promise<GlideBridgeResponse | null> => {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
   try {
+    const request = {
+      type: GLIDE_BRIDGE_MESSAGE_TYPE,
+      op,
+      payload,
+    } satisfies GlideBridgeRequest;
+    const sendPromise =
+      typeof options.frameId === 'number'
+        ? chrome.tabs.sendMessage(tabId, request, { frameId: options.frameId })
+        : chrome.tabs.sendMessage(tabId, request);
     const response = await Promise.race([
-      chrome.tabs.sendMessage(tabId, {
-        type: GLIDE_BRIDGE_MESSAGE_TYPE,
-        op,
-        payload,
-      } satisfies GlideBridgeRequest),
+      sendPromise,
       new Promise<null>((resolve) => {
         timeoutId = setTimeout(() => resolve(null), timeoutMs);
       }),

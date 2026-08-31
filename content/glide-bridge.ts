@@ -21,6 +21,7 @@ import {
   resolveReadPageRef,
   scrollPage,
   selectOptionOnTarget,
+  setCheckedOnTarget,
   sleep,
   waitForDialog,
   waitForNewDialog,
@@ -419,6 +420,12 @@ const handlePressKey = (payload: Record<string, unknown>) => {
   return pressKeyOnTarget(key, selector || undefined, modifiers);
 };
 
+const handleSetChecked = (payload: Record<string, unknown>) => {
+  const selector = String(payload.selector || '').trim();
+  if (!selector) return { success: false, code: 'INVALID_SELECTOR', error: 'Missing selector.' };
+  return setCheckedOnTarget(selector, payload.checked === true);
+};
+
 const handleSelectOption = async (payload: Record<string, unknown>) => {
   const selector = String(payload.selector || '').trim();
   if (!selector) return { success: false, code: 'INVALID_SELECTOR', error: 'Missing selector.' };
@@ -493,6 +500,7 @@ const bridgeHandlers: Record<GlideBridgeOp, (payload: Record<string, unknown>) =
   mouse: handleMouse,
   pressKey: handlePressKey,
   selectOption: handleSelectOption,
+  setChecked: handleSetChecked,
   highlightElement: handleHighlightElement,
   scroll: handleScroll,
   findElement: handleFindElement,

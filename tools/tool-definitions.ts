@@ -464,6 +464,7 @@ export const buildToolDefinitions = (_maxSessionTabs: number): ToolDefinition[] 
         description: 'Optional submit button selector clicked after all fields succeed.',
       },
       tabId: TAB_ID_PROP,
+      ...FRAME_TARGET_PROPS,
     },
     ['fields'],
   ),

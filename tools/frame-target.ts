@@ -19,6 +19,23 @@ export type ResolveTargetFrameFailure = {
 
 export type ResolveTargetFrameResult = ResolveTargetFrameSuccess | ResolveTargetFrameFailure;
 
+export type SelectorFrameProbe = { frameId: number; matched: boolean };
+
+export function resolveUniqueSelectorFrame(
+  probes: SelectorFrameProbe[],
+): { ok: true; frameId: number } | { ok: false; code: 'FRAME_AMBIGUOUS' | 'ELEMENT_NOT_FOUND'; error: string } {
+  const matches = probes.filter((probe) => probe.matched);
+  if (matches.length === 1) return { ok: true, frameId: matches[0].frameId };
+  if (matches.length > 1) {
+    return {
+      ok: false,
+      code: 'FRAME_AMBIGUOUS',
+      error: `Selector matched ${matches.length} frames; provide frameUrl or frameSelector.`,
+    };
+  }
+  return { ok: false, code: 'ELEMENT_NOT_FOUND', error: 'Selector did not match any reachable frame.' };
+}
+
 export const FRAME_TARGET_TOOLS = [
   'click',
   'type',
@@ -27,6 +44,7 @@ export const FRAME_TARGET_TOOLS = [
   'readPage',
   'pressKey',
   'selectOption',
+  'fillForm',
   'highlightElement',
   'annotatedScreenshot',
   'elementScreenshot',

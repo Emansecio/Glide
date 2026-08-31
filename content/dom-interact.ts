@@ -459,6 +459,42 @@ export const performRichClick = (
   };
 };
 
+export const setCheckedOnTarget = (selector: string, checked: boolean) => {
+  const element = deepQuerySelector<HTMLElement>(selector);
+  if (!element) return { success: false as const, code: 'ELEMENT_NOT_FOUND', error: `Checkbox not found: ${selector}` };
+  const isInput = element instanceof HTMLInputElement;
+  const inputType = isInput ? String(element.type || '').toLowerCase() : '';
+  const isRadio = (isInput && inputType === 'radio') || element.getAttribute('role') === 'radio';
+  const isCheckable =
+    (isInput && (inputType === 'checkbox' || inputType === 'radio')) ||
+    ['checkbox', 'switch', 'radio'].includes(element.getAttribute('role') || '');
+  if (!isCheckable) return { success: false as const, code: 'NOT_CHECKABLE', error: 'Target is not a checkbox or radio.' };
+  if (isRadio && !checked) {
+    return {
+      success: false as const,
+      code: 'RADIO_UNCHECK_UNSUPPORTED',
+      error: 'Cannot uncheck a radio without selecting another option in the group.',
+    };
+  }
+  const current = isInput
+    ? element.checked
+    : element.getAttribute('aria-checked') === 'true' || element.getAttribute('aria-pressed') === 'true';
+  if (current !== checked) {
+    try {
+      element.click();
+    } catch (error) {
+      return { success: false as const, code: 'CLICK_FAILED', error: String(error) };
+    }
+  }
+  const applied = isInput
+    ? element.checked
+    : element.getAttribute('aria-checked') === 'true' || element.getAttribute('aria-pressed') === 'true';
+  if (applied !== checked) {
+    return { success: false as const, code: 'VALUE_NOT_APPLIED', error: 'Control did not accept checked state.' };
+  }
+  return { success: true as const, checked: applied };
+};
+
 /**
  * Instagram / social profile stats: "154 seguindo", "174 seguidores", "following".
  * Prefer stable href targets over ephemeral classes (.x1i10hfl).

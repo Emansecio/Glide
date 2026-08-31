@@ -24,6 +24,7 @@ import {
   type ResolveTargetFrameResult,
   absoluteFrameUrl,
   resolveTargetFrameId,
+  resolveUniqueSelectorFrame,
 } from './frame-target.js';
 import { performHttpRequest, sanitizeHttpHeaders } from './http-request.js';
 import {
@@ -1108,6 +1109,26 @@ export class BrowserTools {
       return parseAllowedDomains(String(stored.allowedDomains || ''));
     } catch {
       return [];
+    }
+  }
+
+  private async findFramesWithSelector(tabId: number, selector: string) {
+    const trimmed = String(selector || '').trim();
+    if (!trimmed) return resolveUniqueSelectorFrame([]);
+    try {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId, allFrames: true },
+        func: probeSelectorInFrame,
+        args: [trimmed],
+        world: 'ISOLATED',
+      });
+      return resolveUniqueSelectorFrame(
+        results
+          .filter((entry): entry is chrome.scripting.InjectionResult<{ found: boolean }> => typeof entry.frameId === 'number')
+          .map((entry) => ({ frameId: entry.frameId as number, matched: entry.result?.found === true })),
+      );
+    } catch {
+      return resolveUniqueSelectorFrame([]);
     }
   }
 
@@ -7158,22 +7179,27 @@ export class BrowserTools {
   async fillForm(args: Record<string, unknown>) {
     const fields = Array.isArray(args.fields) ? args.fields : [];
     const tabIdArg = typeof args.tabId === 'number' ? args.tabId : undefined;
-    const results: Array<{ selector: string; ok: boolean; error?: string }> = [];
+    const results: Array<{ selector: string; ok: boolean; code?: string; error?: string }> = [];
 
     for (const rawField of fields) {
       const field = rawField as Record<string, unknown>;
       const selector = String(field.selector || '');
       let fieldResult: Record<string, unknown> = { success: false };
 
+      const frameTarget = {
+        ...(typeof args.frameUrl === 'string' ? { frameUrl: args.frameUrl } : {}),
+        ...(typeof args.frameSelector === 'string' ? { frameSelector: args.frameSelector } : {}),
+      };
       if (field.text !== undefined) {
-        fieldResult = await this.type({ selector, text: String(field.text), tabId: tabIdArg });
+        fieldResult = await this.type({ selector, text: String(field.text), tabId: tabIdArg, ...frameTarget });
       } else if (field.checked !== undefined) {
-        fieldResult = await this.runCheckedField(tabIdArg, selector, Boolean(field.checked));
+        fieldResult = await this.runCheckedField(tabIdArg, selector, Boolean(field.checked), frameTarget);
       } else if (field.option !== undefined) {
         const opt = field.option as Record<string, unknown>;
         fieldResult = await this.selectOption({
           selector,
           tabId: tabIdArg,
+          ...frameTarget,
           ...(opt.value !== undefined ? { value: String(opt.value) } : {}),
           ...(opt.label !== undefined ? { label: String(opt.label) } : {}),
           ...(opt.index !== undefined ? { index: Number(opt.index) } : {}),
@@ -7183,6 +7209,7 @@ export class BrowserTools {
       results.push({
         selector,
         ok: fieldResult.success === true,
+        ...(fieldResult.code ? { code: String(fieldResult.code) } : {}),
         ...(fieldResult.error ? { error: String(fieldResult.error) } : {}),
       });
     }
@@ -7194,66 +7221,61 @@ export class BrowserTools {
       const submitResult = await this.click({
         selector: String(args.submitSelector),
         tabId: tabIdArg,
+        ...(typeof args.frameUrl === 'string' ? { frameUrl: args.frameUrl } : {}),
+        ...(typeof args.frameSelector === 'string' ? { frameSelector: args.frameSelector } : {}),
       });
       submitOk = submitResult?.success === true;
     }
 
     return {
       success: results.every((entry) => entry.ok) && submitOk,
+      ...(results.find((entry) => !entry.ok)?.code ? { code: results.find((entry) => !entry.ok)?.code } : {}),
       results,
       ...(args.submitSelector ? { submitted: submitAttempted && submitOk } : {}),
     };
   }
 
-  private async runCheckedField(tabId: number | undefined, selector: string, wantChecked: boolean) {
-    const resolved = await this.resolveExecutableTab({ selector, tabId }, 'click');
+  private async runCheckedField(
+    tabId: number | undefined,
+    selector: string,
+    wantChecked: boolean,
+    frameTarget: { frameUrl?: unknown; frameSelector?: unknown },
+  ) {
+    const targetArgs = { selector, tabId, ...frameTarget } as Record<string, any>;
+    const resolved = await this.resolveExecutableTab(targetArgs, 'click');
     if (!resolved.ok) return resolved.result;
     const { resolution } = resolved;
-    const result = await this.runInTab(
+    let frameId: number;
+    let frameMeta: { targetFrameId: number; targetFrameUrl: string } | undefined;
+    if (this.hasFrameTarget(targetArgs)) {
+      const prepared = await this.prepareFrameInjection(resolution.tabId, targetArgs, resolution.tab.url || '');
+      if (!prepared.ok) return this.attachResolutionMeta(prepared.result, resolution);
+      frameId = prepared.runOptions?.frameId as number;
+      frameMeta = prepared.frameMeta;
+    } else {
+      const uniqueFrame = await this.findFramesWithSelector(resolution.tabId, selector);
+      if (!uniqueFrame.ok) {
+        return this.attachResolutionMeta(
+          { success: false, code: uniqueFrame.code, error: uniqueFrame.error },
+          resolution,
+        );
+      }
+      frameId = uniqueFrame.frameId;
+    }
+    const result = await sendGlideBridge(
       resolution.tabId,
-      (sel: string, checked: boolean) => {
-        const deepQuery = (query: string): HTMLElement | null => {
-          try {
-            return document.querySelector(query);
-          } catch {
-            return null;
-          }
-        };
-        const element = deepQuery(sel);
-        if (!element) {
-          return { success: false, code: 'ELEMENT_NOT_FOUND', error: `Checkbox not found: ${sel}` };
-        }
-        const isInput = element instanceof HTMLInputElement;
-        const inputType = isInput ? String(element.type || '').toLowerCase() : '';
-        const isCheckable =
-          (isInput && (inputType === 'checkbox' || inputType === 'radio')) ||
-          element.getAttribute('role') === 'checkbox' ||
-          element.getAttribute('role') === 'switch' ||
-          element.getAttribute('role') === 'radio';
-        if (!isCheckable) {
-          return { success: false, error: 'Target is not a checkbox or radio.' };
-        }
-        const isRadio = (isInput && inputType === 'radio') || element.getAttribute('role') === 'radio';
-        if (isRadio && !checked) {
-          return {
-            success: false,
-            code: 'RADIO_UNCHECK_UNSUPPORTED',
-            error: 'Cannot uncheck a radio without selecting another option in the group.',
-          };
-        }
-        const current = isInput
-          ? element.checked
-          : element.getAttribute('aria-checked') === 'true' || element.getAttribute('aria-pressed') === 'true';
-        if (current !== checked) {
-          element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-        }
-        return { success: true, checked };
-      },
-      [selector, wantChecked],
+      'setChecked',
+      { selector, checked: wantChecked },
       8000,
-      true,
+      { frameId },
     );
-    return this.attachResolutionMeta(result || { success: false, error: 'Script execution failed.' }, resolution);
+    const baseResult =
+      result || {
+        success: false,
+        code: 'BRIDGE_TIMEOUT',
+        error: 'Target frame bridge timed out; checked state was not retried.',
+      };
+    return this.attachResolutionMeta(this.attachFrameMeta({ ...baseResult, targetFrameId: frameId }, frameMeta), resolution);
   }
 
   async navigateHistory(args: Record<string, unknown>) {

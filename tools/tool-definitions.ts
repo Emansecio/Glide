@@ -43,6 +43,7 @@ export const buildToolDefinitions = (_maxSessionTabs: number): ToolDefinition[] 
       },
       ...FRAME_TARGET_PROPS,
     },
+    ['selector'],
   ),
   defineTool(
     'hover',
@@ -86,7 +87,7 @@ export const buildToolDefinitions = (_maxSessionTabs: number): ToolDefinition[] 
       retries: RETRIES_PROP,
       ...FRAME_TARGET_PROPS,
     },
-    ['text'],
+    ['selector', 'text'],
   ),
   defineTool(
     'pressKey',
@@ -454,6 +455,7 @@ export const buildToolDefinitions = (_maxSessionTabs: number): ToolDefinition[] 
       tabId: TAB_ID_PROP,
       ...FRAME_TARGET_PROPS,
     },
+    ['selector'],
   ),
   defineTool(
     'fillForm',

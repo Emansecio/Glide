@@ -28,14 +28,6 @@ import {
   resolveUniqueSelectorFrame,
 } from './frame-target.js';
 import { performHttpRequest, sanitizeHttpHeaders } from './http-request.js';
-import {
-  getInjectedFnId,
-  glideDispatchInjectedFn,
-  glideInstallAndRunInjectedFn,
-  isInjectedFnEvalBlocked,
-  isInjectedFnMissing,
-  isInjectedFnResult,
-} from './injected-fn-registry.js';
 import { highlightTargetOverlay, measureScreenshotTarget } from './ref-resolver.js';
 import { waitForHistoryTransition, waitForTabReadiness } from './tab-readiness.js';
 import { type TabResolution, withResolvedTab } from './tab-resolve.js';
@@ -137,7 +129,6 @@ export class BrowserTools {
     string,
     { at: number; value: Awaited<ReturnType<BrowserTools['resolveExecutableTab']>> }
   >();
-  private injectedFnRegistry: Map<string, { installed: Set<string>; blocked: boolean }>;
   private bridgeClient = new BrowserBridgeClient();
   currentToolContext: ToolExecutionContext | null = null;
 
@@ -147,7 +138,6 @@ export class BrowserTools {
     this.sessionTabGroupId = null;
     const toolNames = [...Object.keys(TOOL_HANDLER_REGISTRY), ...INLINE_TOOL_HANDLERS];
     this.tools = Object.fromEntries(toolNames.map((name) => [name, true as const]));
-    this.injectedFnRegistry = new Map();
     this.bindTabLifecycleListeners();
   }
 
@@ -851,7 +841,6 @@ export class BrowserTools {
     chrome.tabs.onRemoved.addListener((tabId) => {
       this.sessionTabs.delete(tabId);
       this.invalidateTabResolveMemo(tabId);
-      this.dropInjectedFnRegistryForTab(tabId);
       if (this.currentSessionTabId === tabId) {
         const nextId = this.sessionTabs.keys().next().value;
         this.currentSessionTabId = typeof nextId === 'number' ? nextId : null;
@@ -863,8 +852,6 @@ export class BrowserTools {
     chrome.tabs.onUpdated?.addListener?.((tabId, changeInfo) => {
       if (changeInfo.status === 'loading' || changeInfo.url) {
         this.invalidateTabResolveMemo(tabId);
-        // Navegação zera os globals da página — o registry instalado some junto.
-        this.dropInjectedFnRegistryForTab(tabId);
       }
     });
   }
@@ -1315,63 +1302,7 @@ export class BrowserTools {
     const { allFrames = false, frameId, world = 'ISOLATED' } = options;
     const target: chrome.scripting.InjectionTarget =
       typeof frameId === 'number' ? { tabId, frameIds: [frameId] } : allFrames ? { tabId, allFrames: true } : { tabId };
-    if (allFrames) {
-      // Registry não se aplica: o payload iria para N frames de uma vez.
-      return this.executeScriptWithTimeout(target, world, func, args, timeoutMs, { allFrames: true, frameId });
-    }
-    // Registry por tab/frame/world: instala a função UMA vez na página e
-    // despacha por id (~100 bytes) nas chamadas seguintes, em vez de
-    // re-serializar 9-26KB de source a cada tool call.
-    const registryKey = `${tabId}|${world}|${typeof frameId === 'number' ? frameId : 0}`;
-    const registryState = this.injectedFnRegistry.get(registryKey);
-    if (!registryState?.blocked) {
-      const fnId = getInjectedFnId(func);
-      const installed = registryState?.installed.has(fnId) === true;
-      const out = installed
-        ? await this.executeScriptWithTimeout(target, world, glideDispatchInjectedFn, [fnId, args], timeoutMs, {
-            frameId,
-          })
-        : await this.executeScriptWithTimeout(
-            target,
-            world,
-            glideInstallAndRunInjectedFn,
-            [fnId, String(func), args],
-            timeoutMs,
-            {
-              frameId,
-            },
-          );
-      if (isInjectedFnEvalBlocked(out)) {
-        // CSP da página bloqueou o eval do install (a tool ainda NÃO rodou, é
-        // seguro repetir): fallback permanente para injeção direta neste key.
-        const entry = registryState ?? { installed: new Set<string>(), blocked: false };
-        entry.blocked = true;
-        this.injectedFnRegistry.set(registryKey, entry);
-      } else if (isInjectedFnMissing(out)) {
-        // A página navegou desde o install e os globals zeraram: esquece o
-        // estado e reinstala (o shim de install já executa a tool na mesma ida).
-        this.injectedFnRegistry.delete(registryKey);
-        return this.runInTab(tabId, func, args, timeoutMs, { frameId, world });
-      } else if (isInjectedFnResult(out)) {
-        if (!installed) this.markInjectedFnInstalled(registryKey, fnId);
-        return out.value ?? null;
-      }
-      // Forma de resultado inesperada: cai no caminho direto (comportamento anterior).
-    }
-    return this.executeScriptWithTimeout(target, world, func, args, timeoutMs, { frameId });
-  }
-
-  private markInjectedFnInstalled(registryKey: string, fnId: string) {
-    const entry = this.injectedFnRegistry.get(registryKey) ?? { installed: new Set<string>(), blocked: false };
-    entry.installed.add(fnId);
-    this.injectedFnRegistry.set(registryKey, entry);
-  }
-
-  private dropInjectedFnRegistryForTab(tabId: number) {
-    const prefix = `${tabId}|`;
-    for (const key of Array.from(this.injectedFnRegistry.keys())) {
-      if (key.startsWith(prefix)) this.injectedFnRegistry.delete(key);
-    }
+    return this.executeScriptWithTimeout(target, world, func, args, timeoutMs, { allFrames, frameId });
   }
 
   private async executeScriptWithTimeout(

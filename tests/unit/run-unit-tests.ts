@@ -277,15 +277,10 @@ import {
   sanitizeHttpHeaders,
   stripSensitiveHeadersForRedirect,
 } from '../../tools/http-request.js';
-import {
-  getInjectedFnId,
-  glideDispatchInjectedFn,
-  glideInstallAndRunInjectedFn,
-  isInjectedFnEvalBlocked,
-  isInjectedFnMissing,
-  isInjectedFnResult,
-  resetInjectedFnIdsForTests,
-} from '../../tools/injected-fn-registry.js';
+import { actionOperations } from '../../content/operations/action.js';
+import { formOperations } from '../../content/operations/form.js';
+import { readOperations } from '../../content/operations/read.js';
+import { waitOperations } from '../../content/operations/wait.js';
 import { shouldAutoStopNetworkCapture, shouldDrainInflightBeforeStop } from '../../tools/network-capture.js';
 import { assignReadPageRefs } from '../../tools/ref-resolver.js';
 import { waitForHistoryTransition } from '../../tools/tab-readiness.js';
@@ -3287,53 +3282,25 @@ function testFixSwReviewFindings(runner: TestRunner) {
     runner.assertFalse(registry.isAborted('run-stop'));
   });
 
-  runner.test('injected fn ids are stable by function source', () => {
-    resetInjectedFnIdsForTests();
-    const makeFn = () => (a: number, b: number) => a + b;
-    const first = getInjectedFnId(makeFn());
-    const second = getInjectedFnId(makeFn());
-    runner.assertEqual(first, second);
-    const other = getInjectedFnId((a: number, b: number) => a * b);
-    runner.assertFalse(other === first);
-  });
-
-  // Um ÚNICO asyncTest: a suíte não aguarda asyncTest solto, então testes
-  // separados correriam em paralelo e brigariam pelo __glideFnRegistry global.
-  runner.asyncTest('injected fn registry installs once, dispatches by id, and degrades safely', async () => {
-    resetInjectedFnIdsForTests();
-    delete (globalThis as Record<string, unknown>).__glideFnRegistry;
-
-    const fn = (payload: { x: number }) => ({ doubled: payload.x * 2 });
-    const id = getInjectedFnId(fn);
-    const installed = (await glideInstallAndRunInjectedFn(id, String(fn), [{ x: 21 }])) as {
-      __glideFnResult?: boolean;
-      value?: { doubled: number };
-    };
-    runner.assertTrue(isInjectedFnResult(installed));
-    runner.assertEqual(installed.value?.doubled, 42);
-
-    const dispatched = (await glideDispatchInjectedFn(id, [{ x: 10 }])) as {
-      __glideFnResult?: boolean;
-      value?: { doubled: number };
-    };
-    runner.assertTrue(isInjectedFnResult(dispatched));
-    runner.assertEqual(dispatched.value?.doubled, 20);
-
-    const asyncFn = async (ms: number) => `waited-${ms}`;
-    const asyncId = getInjectedFnId(asyncFn);
-    const asyncOut = (await glideInstallAndRunInjectedFn(asyncId, String(asyncFn), [5])) as { value?: string };
-    runner.assertTrue(isInjectedFnResult(asyncOut));
-    runner.assertEqual(asyncOut.value, 'waited-5');
-
-    const missing = await glideDispatchInjectedFn('glide_fn_absent', []);
-    runner.assertTrue(isInjectedFnMissing(missing));
-    runner.assertFalse(isInjectedFnResult(missing));
-
-    const blocked = await glideInstallAndRunInjectedFn('glide_fn_broken', '() => { syntax error', []);
-    runner.assertTrue(isInjectedFnEvalBlocked(blocked));
-    runner.assertFalse(isInjectedFnResult(blocked));
-
-    delete (globalThis as Record<string, unknown>).__glideFnRegistry;
+  runner.test('content bridge exposes canonical source-normal DOM operations', () => {
+    const operations = { ...actionOperations, ...formOperations, ...readOperations, ...waitOperations };
+    for (const name of [
+      'click',
+      'hover',
+      'type',
+      'pressKey',
+      'scroll',
+      'findElement',
+      'getContent',
+      'readPage',
+      'wait',
+      'selectOption',
+      'setChecked',
+      'dismissModal',
+      'highlightElement',
+    ]) {
+      runner.assertEqual(typeof operations[name as keyof typeof operations], 'function');
+    }
   });
 
   runner.test('session generation blocks stale compaction commits', () => {

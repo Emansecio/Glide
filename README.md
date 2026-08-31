@@ -1,127 +1,194 @@
-# Glide
+<div align="center">
+  <img src="icons/glide-logo.svg" width="88" alt="Ícone do Glide" />
+  <h1>Glide</h1>
+  <p><strong>Diga o que precisa. Acompanhe cada ação.</strong></p>
+  <p>
+    Um agente de navegador com IA no painel lateral do Chrome.<br />
+    Ele navega, lê, preenche, coleta e organiza — sem esconder o que está fazendo.
+  </p>
+  <p>
+    <a href="#instalação-local"><strong>Instalar localmente</strong></a>
+    ·
+    <a href="#veja-o-glide-em-ação">Ver a interface</a>
+    ·
+    <a href="docs/ARCHITECTURE.md">Entender a arquitetura</a>
+  </p>
+  <p>
+    <a href="https://github.com/Emansecio/Glide/actions/workflows/ci.yml"><img src="https://github.com/Emansecio/Glide/actions/workflows/ci.yml/badge.svg" alt="Status do CI" /></a>
+    <img src="https://img.shields.io/badge/Chrome-Manifest_V3-4285F4?logo=googlechrome&logoColor=white" alt="Chrome Manifest V3" />
+    <img src="https://img.shields.io/badge/TypeScript-vanilla-3178C6?logo=typescript&logoColor=white" alt="TypeScript" />
+    <a href="LICENSE"><img src="https://img.shields.io/badge/licença-MIT-111111" alt="Licença MIT" /></a>
+  </p>
+</div>
 
-> Automação de navegador assistida por IA, direto no painel lateral do Chrome.
+<p align="center">
+  <img src="docs/v2-preview/v2-split.png" width="900" alt="Glide executando uma tarefa em temas claro e escuro" />
+</p>
 
-O Glide transforma instruções em linguagem natural em ações observáveis no navegador: navegar, ler páginas, interagir com elementos, coletar dados e trabalhar com várias abas mantendo o usuário no controle.
+> [!NOTE]
+> O Glide está disponível para instalação local e ainda não foi publicado na Chrome Web Store.
 
-**Estado atual:** projeto local em desenvolvimento. A extensão ainda não está publicada na Chrome Web Store.
+## O que você pode pedir
 
-![Glide — conversa e atividade](docs/v2-preview/v2-light-empty.png)
+Glide transforma instruções comuns em trabalho observável no navegador.
 
-## Por que Glide?
-
-Em vez de alternar entre scripts, DevTools e várias ferramentas, você conversa com um agente no painel lateral. Cada ação aparece em uma linha do tempo de atividade, com contexto, resultado e possibilidade de interromper a execução.
-
-## O que ele faz
-
-- Navega por URLs e histórico do navegador.
-- Abre, seleciona, agrupa e fecha abas de trabalho.
-- Encontra e interage com botões, links, formulários, diálogos e iframes.
-- Lê páginas, extrai tabelas, pesquisa texto e coleta listas com scroll infinito.
-- Captura screenshots, downloads, rede, console e métricas de performance.
-- Executa scripts no contexto isolado da extensão quando necessário.
-- Mantém histórico de sessões e reduz automaticamente contextos longos.
-- Permite escolher entre Anthropic/Claude, Codex/OpenAI, OpenCode, Command Code e Ollama local.
-
-## Interface
-
-| Tema claro | Tema escuro |
+| Você pede | Glide trabalha |
 | --- | --- |
-| ![Glide claro](docs/v2-preview/v2-light-settings.png) | ![Glide escuro](docs/v2-preview/v2-fonts-settings-dark.png) |
+| “Abra o painel de pedidos e me diga quantos envios estão atrasados.” | Navega, lê a página, filtra os dados e entrega o resumo. |
+| “Preencha este formulário com os dados da aba anterior, mas pare antes de enviar.” | Cruza abas, preenche campos e mantém a confirmação final com você. |
+| “Compare estes produtos e organize preço, prazo e avaliação em uma tabela.” | Visita páginas, extrai informações e estrutura o resultado. |
+| “Encontre os erros desta tela e mostre as requisições que falharam.” | Lê console, rede e estado da página sem exigir DevTools. |
 
-A interface V2 foi desenhada para priorizar contraste, espaço e legibilidade. O painel inclui composer compacto, seletor de modelo, atividade de ferramentas, histórico e três modos de tema.
+Você continua na mesma aba. O plano, as ações e os resultados aparecem no painel lateral enquanto a execução acontece.
+
+## Veja o Glide em ação
+
+<p align="center">
+  <img src="docs/v2-preview/v2-perf-check.png" width="420" alt="Resumo de execução, plano e composer do Glide" />
+</p>
+
+Uma execução reúne três camadas no mesmo lugar:
+
+1. **Resposta** — o resultado em linguagem clara.
+2. **Atividade** — cada navegação, leitura e transformação com duração e estado.
+3. **Plano** — o que já terminou, o que está acontecendo e o que falta.
+
+Nada vira uma caixa-preta. Você pode interromper uma execução pelo botão de parada ou com `Esc`.
+
+## Automação sob controle
+
+| Visível por padrão | Cauteloso com efeitos | Pronto para trabalho longo |
+| --- | --- | --- |
+| Ações, ferramentas e resultados aparecem durante a execução. | Se o Chrome interromper uma ação, Glide pede confirmação antes de tentar novamente. | Histórico e retomada segura ajudam em tarefas maiores. |
+
+Glide também oferece:
+
+- referências estáveis para evitar ações em elementos que mudaram;
+- suporte a páginas, diálogos, iframes e shadow DOM;
+- preenchimento de formulários, seleção de opções e upload de arquivos;
+- extração de tabelas, busca na página e coleta com scroll infinito;
+- screenshots, downloads, rede, console e métricas de performance;
+- automação entre várias abas sem mover o painel da aba onde você o abriu;
+- permissões separadas por leitura, interação, navegação, abas e screenshots.
+
+## Escolha onde a IA roda
+
+Use um provedor em nuvem ou mantenha o modelo na sua máquina:
+
+- **Anthropic / Claude**
+- **Codex / OpenAI**
+- **OpenCode**
+- **Command Code**
+- **Ollama local**
+
+Credenciais ficam separadas por provedor. Trocar de modelo não reutiliza a chave de outro serviço.
+
+## Instalação local
+
+### 1. Prepare o projeto
+
+Requer Node.js 18+ e Chrome, Edge ou outro navegador baseado em Chromium.
+
+```bash
+git clone https://github.com/Emansecio/Glide.git
+cd Glide
+npm install
+npm run build
+```
+
+### 2. Carregue a extensão
+
+1. Abra `chrome://extensions/`.
+2. Ative **Modo do desenvolvedor**.
+3. Clique em **Carregar sem compactação**.
+4. Selecione a pasta `dist/`.
+
+### 3. Escolha o provedor
+
+Abra **Configurações** no painel, selecione um provedor e informe a credencial ou endpoint necessário. Instalações locais mantêm configurações isoladas pelo ID da extensão.
 
 ## Como funciona
 
 ```mermaid
 flowchart LR
-  U[Usuário no painel lateral] -->|instrução| S[Service worker]
-  S -->|prompt e contexto| M[Provedor de IA]
-  M -->|chamadas de ferramenta| S
-  S -->|Chrome APIs e scripting| T[Abas do navegador]
-  S -->|eventos e resultados| U
+  U[Você escreve no painel] --> S[Glide planeja o run]
+  S --> M[Modelo escolhe ferramentas]
+  M --> B[Chrome executa na aba correta]
+  B --> V[Glide verifica o resultado]
+  V --> U
 ```
 
-O modelo decide a próxima ferramenta; o service worker valida permissões, executa a ação na aba correta e devolve o resultado ao painel. A sessão permanece visível e interrompível durante todo o fluxo.
+O service worker coordena modelo, permissões, abas e ferramentas. Operações DOM usam um bridge por padrão; CDP fica disponível como opção para interações nativas que exigem a permissão de debugger.
 
-## Contratos de execução
+Cada efeito recebe uma identidade própria. Se o Chrome interromper o worker entre despacho e confirmação, Glide registra a ação como ambígua e pede uma decisão — nunca repete automaticamente um efeito que pode já ter acontecido.
 
-- Cada efeito aceito recebe `actionId` e é despachado uma vez; efeito ambíguo após reinício pausa para confirmação e nunca é repetido automaticamente.
-- Operações DOM usam bridge por padrão e um `frameId` explícito. CDP continua opcional e exige permissão de debugger.
-- Handles estáveis falham fechados quando snapshot, frame, fingerprint ou revisão ficam obsoletos. Seletores e refs antigos continuam aceitos.
-- Cada turno terminal produz um commit de contexto versionado e um motivo terminal explícito.
-- Telemetria local mantém no máximo 200 eventos sem argumentos, texto digitado, prompts, credenciais, screenshots, corpos de resultado ou query de URL.
+## Privacidade e segurança operacional
 
-Armazenamento criado antes destes contratos (baseline `82772fc`) migra sem reset: configurações, sessões, planos, slots de provedor e propriedade tab-scoped do painel são preservados. Eventos sintéticos do bridge não são anunciados como input nativo confiável; isso exige CDP opt-in.
+- Telemetria fica local, limitada e sem prompts, credenciais, texto digitado, screenshots ou corpos de página.
+- Requisições HTTP feitas pela ferramenta bloqueiam hosts privados e endpoints de metadata.
+- Uma allowlist opcional restringe os domínios disponíveis para automação.
+- Screenshots podem usar retenção efêmera, curta para debug ou persistente.
+- CDP é opt-in; o caminho padrão usa APIs da extensão e scripts isolados.
 
-## Segurança por padrão
-
-- Permissões de ferramentas separadas por categoria: leitura, interação, navegação, abas e screenshots.
-- Allowlist opcional de domínios.
-- Validação de URLs com proteção contra hosts privados e metadata endpoints.
-- Credenciais armazenadas por provedor, sem reutilizar a chave de outro provedor.
-- Botão de parada e `Esc` para interromper uma execução ativa.
-- Retenção de screenshots configurável (`ephemeral`, `debug-short` ou `persistent`).
-
-## Instalação local
-
-### Requisitos
-
-- Node.js 18 ou superior.
-- Chrome, Edge ou outro navegador baseado em Chromium.
-
-### Build
-
-```bash
-npm install
-npm run build
-```
-
-Depois, abra `chrome://extensions/`, ative **Developer mode**, escolha **Load unpacked** e selecione a pasta `dist/`.
-
-As credenciais e configurações da extensão carregada localmente ficam isoladas pelo ID da instalação. Configure o provedor em **Configurações** antes do primeiro run.
-
-## Desenvolvimento e verificação
+<details>
+<summary><strong>Desenvolvimento e verificação</strong></summary>
 
 ```bash
 npm run check             # TypeScript + Biome
-npm run test:unit         # suíte unitária
+npm run test:frontier     # build + unitários + validator + E2E + evals
 npm run test:evals        # avaliações determinísticas locais
-npm run test:evals:live   # skip por padrão; requer GLIDE_LIVE_TESTS=1
-npm run validate          # validação do pacote da extensão
-npm run preview           # preview estático da interface
+npm run test:evals:live   # opcional; requer GLIDE_LIVE_TESTS=1
+npm run check:budgets     # bundles e schemas sob limites definidos
+npm run preview           # interface estática com dados de demonstração
 ```
 
-`test:evals` usa fixtures locais, é determinístico e integra o gate de desenvolvimento. `test:evals:live` acessa somente páginas públicas estáveis para navegação/leitura, não faz login nem mutações e fica fora do CI. Para executar: `GLIDE_LIVE_TESTS=1 npm run test:evals:live` (PowerShell: `$env:GLIDE_LIVE_TESTS='1'; npm run test:evals:live`). Falhas de rede ou mudanças nos sites retornam status não zero.
+As avaliações determinísticas usam fixtures locais e fazem parte do gate principal. A suíte live acessa apenas páginas públicas para navegação e leitura, não faz login nem mutações e permanece fora do CI.
 
-O preview usa os templates e estilos reais:
+O preview usa templates e estilos reais:
 
 - `dist/sidepanel/preview.html?theme=light|dark&view=chat|empty|sidebar|settings|history|menu`
 - `dist/sidepanel/preview-split.html`
 
-## Arquitetura
+</details>
 
-- `background.ts` — execução de runs, provedores e ciclo de ferramentas.
-- `tools/` — navegação, DOM, rede, screenshots, downloads e abas.
-- `sidepanel/` — interface, templates, estilos e estado da sessão.
-- `ai/` — adapters de modelos, autenticação, retries e compaction.
-- `types/` — contratos compartilhados entre painel e service worker.
-- `tests/` — testes unitários, integração, E2E e validação do pacote.
+<details>
+<summary><strong>Arquitetura e contratos</strong></summary>
 
-Documentação complementar:
+Glide é uma extensão Chrome Manifest V3 em TypeScript e CSS vanilla. A interface vive no painel lateral; o service worker coordena runs; módulos de IA adaptam provedores; ferramentas encapsulam navegador, DOM, rede e arquivos.
 
-- [Design visual](DESIGN.md)
+Contratos centrais:
+
+- um despacho para cada efeito aceito;
+- nenhuma repetição automática de ação ambígua;
+- handles obsoletos falham fechados;
+- um commit de contexto versionado por turno terminal;
+- motivos terminais explícitos para conclusão, parada, interrupção e ambiguidade;
+- estado de runtime e telemetria com retenção limitada.
+
+Armazenamento anterior ao programa de resiliência migra sem reset de configurações, sessões, planos, credenciais por provedor ou propriedade tab-scoped do painel.
+
+Documentação:
+
+- [Sistema visual](DESIGN.md)
 - [Arquitetura](docs/ARCHITECTURE.md)
 - [API de ferramentas e mensagens](docs/API.md)
-- [Contribuição](CONTRIBUTING.md)
+- [Como contribuir](CONTRIBUTING.md)
 - [Changelog](CHANGELOG.md)
 
-## Roadmap público
+</details>
 
-- Consolidar a experiência de instalação local e atualização.
-- Expandir os fluxos de teste em páginas reais.
-- Preparar materiais, políticas e empacotamento necessários para uma futura publicação na Chrome Web Store.
+## Roadmap
+
+- simplificar instalação e atualização local;
+- ampliar avaliações opcionais em páginas reais;
+- preparar políticas e empacotamento para uma futura publicação na Chrome Web Store.
+
+## Contribuição
+
+Issues e pull requests são bem-vindos. Antes de enviar mudanças, consulte o [guia de contribuição](CONTRIBUTING.md) e execute o gate de desenvolvimento.
 
 ## Licença
 
-MIT
+Distribuído sob a [licença MIT](LICENSE).
+
+<p align="center"><strong>Automação poderosa não precisa ser invisível.</strong></p>

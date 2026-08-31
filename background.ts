@@ -95,6 +95,7 @@ import { RunCoordinator } from './background/run-coordinator.js';
 import { buildRecoveryExecutionNote, recoverCheckpoint } from './background/run-recovery.js';
 import { RunEventSequencer } from './background/run-event-sequencer.js';
 import { RunPassCache } from './background/run-pass-cache.js';
+import { resolveRunTerminalReason } from './background/run-terminal-reason.js';
 import {
   RuntimeBatcher,
   type RuntimeDeltaPayload,
@@ -2427,11 +2428,16 @@ class BackgroundService {
           finalText,
         });
 
+        const passFinishReason = resolveRunTerminalReason({ awaitsUser: textAwaitsUser(finalText) });
         responseMessages = buildToolTurnMessages(
           finalText,
           reasoningText || null,
           this.buildToolResultMessageContent(toolResults),
           toolCalls,
+        ).map((message) =>
+          message.role === 'assistant'
+            ? { ...message, meta: { ...message.meta, finishReason: passFinishReason } }
+            : message,
         );
 
         break;
@@ -2511,6 +2517,7 @@ class BackgroundService {
         compacted: contextCommit.compacted,
         contextUsage: contextCommit.contextUsage,
       });
+      const finishReason = resolveRunTerminalReason({ awaitsUser: textAwaitsUser(finalText) });
       this.sendRuntime(runMeta, {
         type: 'assistant_final',
         content: finalText,
@@ -2529,10 +2536,11 @@ class BackgroundService {
         responseMessages,
         contextRevision: contextCommit.revision,
         qualityReport,
+        finishReason,
       });
       // Turn terminal: libera o lock após assistant_final. Compaction/warnings
       // terminam antes do evento terminal para o painel não descartá-los.
-      this.runCoordinator.terminal(runMeta.runId, textAwaitsUser(finalText) ? 'awaiting_user' : 'completed');
+      this.runCoordinator.terminal(runMeta.runId, finishReason);
       await this.runCoordinator.clear(runMeta.runId);
       this.releaseRunExclusiveLock(runMeta.runId);
     } catch (error) {

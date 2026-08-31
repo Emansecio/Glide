@@ -10,13 +10,15 @@ export type RunPhase =
   | 'stopped'
   | 'ambiguous';
 
-export type RunTerminalReason =
-  | 'completed'
-  | 'awaiting_user'
-  | 'stopped'
-  | 'failed'
-  | 'interrupted'
-  | 'ambiguous_action';
+export const RUN_TERMINAL_REASONS = [
+  'completed',
+  'awaiting_user',
+  'stopped',
+  'failed',
+  'interrupted',
+  'ambiguous_action',
+] as const;
+export type RunTerminalReason = (typeof RUN_TERMINAL_REASONS)[number];
 
 export type RunMeta = {
   runId: string;

@@ -1,4 +1,4 @@
-import type { RunTerminalReason } from '../background/run-types.js';
+import { RUN_TERMINAL_REASONS, type RunTerminalReason } from '../background/run-types.js';
 import type { RunPlan } from './plan.js';
 
 export const RUNTIME_MESSAGE_SCHEMA_VERSION = 2 as const;
@@ -88,6 +88,7 @@ export type AssistantFinal = RuntimeMessageBase & {
   responseMessages?: Array<Record<string, unknown>>;
   contextRevision?: number;
   qualityReport?: Record<string, unknown> | null;
+  finishReason?: RunTerminalReason;
 };
 
 export type RunQualityGate = RuntimeMessageBase & {
@@ -384,6 +385,12 @@ const validateRuntimeMessageShape = (message: GenericRecord): RuntimeMessageVali
       }
       if (!isOptionalRecord(message.qualityReport)) {
         return { ok: false, reason: 'assistant_final.qualityReport must be object|null.' };
+      }
+      if (
+        message.finishReason !== undefined &&
+        !RUN_TERMINAL_REASONS.includes(message.finishReason as RunTerminalReason)
+      ) {
+        return { ok: false, reason: 'assistant_final.finishReason is invalid.' };
       }
       return { ok: true, message: message as RuntimeMessage };
     case 'run_quality_gate':

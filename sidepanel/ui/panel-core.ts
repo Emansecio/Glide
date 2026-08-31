@@ -26,6 +26,18 @@ function parseRetryStatusFromWarning(message: string): string | null {
   return 'Tentando novamente…';
 }
 
+function preservePartialAssistantOutput(
+  ui: SidePanelUI,
+  finishReason: 'stopped' | 'failed' | 'interrupted' | 'ambiguous_action',
+) {
+  const partial = ui.finishStreamingMessage?.();
+  const content = String(partial?.renderedContent || '').trim();
+  if (!content) return;
+  const entry = createMessage({ role: 'assistant', content, meta: { finishReason } });
+  if (entry) ui.displayHistory.push(entry);
+  ui.persistHistory?.();
+}
+
 function applyRunTransientNoticesClear(ui: SidePanelUI, options: { sweepTools?: boolean; toolError?: boolean } = {}) {
   ui.stopToolDurationTimer?.();
   if (options.sweepTools) {
@@ -483,7 +495,10 @@ SidePanelUI.prototype.handleRuntimeMessage = function handleRuntimeMessage(messa
     this.pendingToolCount = 0;
     this.isStreaming = false;
     this.activeToolName = null;
-    this.finishStreamingMessage?.();
+    preservePartialAssistantOutput(
+      this,
+      message.type === 'run_resume_required' ? 'ambiguous_action' : 'interrupted',
+    );
     this.setComposerBusy(false);
     applyRunTransientNoticesClear(this, { sweepTools: true });
     if (message.type === 'run_resume_required') {
@@ -618,7 +633,7 @@ SidePanelUI.prototype.handleRuntimeMessage = function handleRuntimeMessage(messa
     this.isStreaming = false;
     this.activeToolName = null;
     this.updateActivityState();
-    this.finishStreamingMessage();
+    preservePartialAssistantOutput(this, stopped ? 'stopped' : 'failed');
     applyRunTransientNoticesClear(this, { sweepTools: true, toolError: !stopped });
     if (stopped) {
       this.showWarningBanner(message.message || 'Execução interrompida.');

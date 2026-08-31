@@ -1,3 +1,4 @@
+import type { RunTerminalReason } from '../../background/run-types.js';
 import {
   MODEL_DISPLAY_LABELS,
   PROVIDER_DEFAULT_MODELS,
@@ -49,6 +50,17 @@ type ModelProbeSessionCache = DetectedModelsCache & {
 
 const MODEL_PROBE_CACHE_TTL_MS = 10 * 60 * 1000;
 const OLLAMA_OFFLINE_CACHE_TTL_MS = 60 * 1000;
+
+export function getTerminalStatusPresentation(reason: RunTerminalReason | undefined): {
+  text: string;
+  tone: string;
+} {
+  if (reason === 'awaiting_user') return { text: 'Aguardando você', tone: 'warning' };
+  if (reason === 'stopped' || reason === 'interrupted') return { text: 'Interrompida', tone: 'warning' };
+  if (reason === 'ambiguous_action') return { text: 'Ação precisa de confirmação', tone: 'warning' };
+  if (reason === 'failed') return { text: 'Erro', tone: 'error' };
+  return { text: 'Pronto', tone: 'success' };
+}
 
 function getModelProbeCacheTtlMs(entry: ModelProbeSessionCache): number {
   if (entry.provider === 'ollama' && entry.online === false) {

@@ -3,6 +3,7 @@ import type { Message } from '../../ai/message-schema.js';
 import { dedupeThinking, extractThinking } from '../../ai/message-utils.js';
 import { resolvePanelTabId } from './panel-tab-id.js';
 import type { UsagePayload } from './panel-types.js';
+import { getTerminalStatusPresentation } from './panel-status.js';
 import { SidePanelUI } from './panel-ui.js';
 
 SidePanelUI.prototype.sendMessage = async function sendMessage() {
@@ -399,7 +400,11 @@ SidePanelUI.prototype.displayAssistantMessage = function displayAssistantMessage
   thinking: string | null = null,
   usage: UsagePayload | null = null,
   model: string | null = null,
-  runtimeMeta: { runId?: string; turnId?: string } | null = null,
+  runtimeMeta: {
+    runId?: string;
+    turnId?: string;
+    finishReason?: import('../../background/run-types.js').RunTerminalReason;
+  } | null = null,
 ) {
   this.stopThinkingTimer?.();
   const streamResult = this.finishStreamingMessage();
@@ -416,7 +421,8 @@ SidePanelUI.prototype.displayAssistantMessage = function displayAssistantMessage
     if (streamedContainer) {
       streamedContainer.remove();
     }
-    this.updateStatus('Pronto', 'success');
+    const emptyStatus = getTerminalStatusPresentation(runtimeMeta?.finishReason);
+    this.updateStatus(emptyStatus.text, emptyStatus.tone);
     this.stopRunLiveness();
     this.setComposerBusy(false);
     this.pendingToolCount = 0;
@@ -436,11 +442,13 @@ SidePanelUI.prototype.displayAssistantMessage = function displayAssistantMessage
     this.updateUsageStats(normalizedUsage);
   }
   const messageMeta = this.buildMessageMeta(normalizedUsage, modelLabel);
+  const terminalStatus = getTerminalStatusPresentation(runtimeMeta?.finishReason);
 
   const assistantEntry = createMessage({
     role: 'assistant',
     content,
     thinking,
+    ...(runtimeMeta?.finishReason ? { meta: { finishReason: runtimeMeta.finishReason } } : {}),
   });
   if (assistantEntry) {
     this.displayHistory.push(assistantEntry);
@@ -470,7 +478,7 @@ SidePanelUI.prototype.displayAssistantMessage = function displayAssistantMessage
     this.finalizeExecutionDetails?.(executionSummary, streamedContainer);
 
     this.scrollToBottom();
-    this.updateStatus('Pronto', 'success');
+    this.updateStatus(terminalStatus.text, terminalStatus.tone);
     this.stopRunLiveness();
     this.setComposerBusy(false);
     this.pendingToolCount = 0;
@@ -530,7 +538,7 @@ SidePanelUI.prototype.displayAssistantMessage = function displayAssistantMessage
     this.elements.chatMessages.appendChild(messageDiv);
   }
   this.scrollToBottom();
-  this.updateStatus('Pronto', 'success');
+  this.updateStatus(terminalStatus.text, terminalStatus.tone);
   this.stopRunLiveness();
   this.setComposerBusy(false);
   this.pendingToolCount = 0;

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright';
+import { emitFrontierTrace } from '../evals/frontier-trace.js';
 import { startFixtureServer } from './fixture-server.js';
 
 const extensionPath = path.resolve(process.cwd(), 'dist');
@@ -38,7 +39,7 @@ try {
   if (!handle) throw new Error(`findElement did not return handle: ${JSON.stringify(found)}`);
 
   await page.locator('#action-button').evaluate((button) => {
-    button.parentElement?.insertAdjacentHTML('afterbegin', '<button id="inserted">Inserted</button>');
+    button.outerHTML = '<button id="action-button">Replacement</button>';
   });
   const acted = await panel.evaluate(
     async ({ tabId, handle }) => {
@@ -50,12 +51,22 @@ try {
     },
     { tabId, handle },
   );
-  if (acted?.success !== true && acted?.code !== 'STALE_ELEMENT_HANDLE') {
-    throw new Error(`unexpected stable handle result: ${JSON.stringify(acted)}`);
+  if (acted?.code !== 'STALE_ELEMENT_HANDLE') {
+    throw new Error(`expected stale element handle rejection: ${JSON.stringify(acted)}`);
   }
   const state = await page.evaluate(() => (window as any).__actionLab.click);
-  if (acted.success === true && state !== 1) throw new Error(`intended target not clicked: ${state}`);
-  if (acted.code === 'STALE_ELEMENT_HANDLE' && state !== 0) throw new Error(`stale handle mutated page: ${state}`);
+  if (state !== 0) throw new Error(`stale handle mutated page: ${state}`);
+  if (process.env.GLIDE_FRONTIER_EVAL_CASE === 'stale-handle') {
+    const actionId = `${handle.snapshotId}:${handle.ref}`;
+    emitFrontierTrace('stale-handle', {
+      events: [{ id: `${actionId}:${acted.code}`, actionId, kind: acted.code, frameId: 0 }],
+      mutations: [],
+      actionAttempts: [{ actionId, state: 'prepared' }],
+      contextRevisions: [Number(handle.domRevision ?? 0)],
+      terminalReason: acted.code === 'STALE_ELEMENT_HANDLE' ? 'completed' : 'failed',
+      expectedTerminalReason: 'completed',
+    });
+  }
   console.log('PASS stable element handles');
 } finally {
   await context?.close();

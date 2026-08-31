@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { ContextTransactionStore } from '../../background/context-transaction.js';
 import { fitSessionToBudget, measureStoredBytes } from '../../sidepanel/ui/history-budget.js';
 import type { ChatSessionPayload } from '../../sidepanel/ui/history-storage.js';
+import { emitFrontierTrace } from '../evals/frontier-trace.js';
 
 function session(transcript: unknown[], contextTranscript?: unknown[]): ChatSessionPayload {
   return {
@@ -66,6 +68,33 @@ describe('history byte budgets', () => {
     expect((fitted.transcript[0] as any).content).toBe(display);
     expect((fitted.contextTranscript?.[0] as any).content).toBe(context);
     expect((fitted.contextTranscript?.[0] as any).meta?.truncation).toBeUndefined();
+  });
+
+  it('emits history-restart eval trace from hydrated and committed context', () => {
+    const stored = session([{ role: 'assistant', content: 'restored report' }]);
+    const fitted = fitSessionToBudget(stored, 200 * 1024);
+    const store = new ContextTransactionStore();
+    store.hydrate('session-1', 6, fitted.transcript as any[]);
+    const restored = store.read('session-1');
+    const commit = store.commit({
+      sessionId: 'session-1',
+      runId: 'history-restart-run',
+      turnId: 'history-restart-turn',
+      sourceRevision: restored.revision,
+      messages: [...restored.messages, { role: 'user', content: 'continue' }],
+      compacted: false,
+      contextUsage: {},
+    });
+    expect(restored.messages).toHaveLength(1);
+    expect(commit.revision).toBe(7);
+    emitFrontierTrace('history-restart', {
+      events: [{ id: `${commit.runId}:${commit.turnId}`, kind: 'context_commit' }],
+      mutations: [],
+      actionAttempts: [],
+      contextRevisions: [restored.revision, commit.revision],
+      terminalReason: 'completed',
+      expectedTerminalReason: 'completed',
+    });
   });
 
   it('budgets display and distinct context transcripts independently', () => {

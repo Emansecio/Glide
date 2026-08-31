@@ -4,6 +4,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { type BrowserContext, type Page, type Worker, chromium } from 'playwright';
+import { emitFrontierTrace } from '../evals/frontier-trace.js';
 import { getExtensionId, waitForPanelReady } from './test-helpers.js';
 
 const root = path.resolve(process.cwd());
@@ -130,6 +131,20 @@ try {
       ),
     { timeout: 20_000 },
   );
+  const safeMessages = await panel.evaluate(
+    () => (window as unknown as { __workerRecoveryMessages: Array<{ type?: string }> }).__workerRecoveryMessages,
+  );
+  if (process.env.GLIDE_FRONTIER_EVAL_CASE === 'worker-safe-resume') {
+    const resume = safeMessages.find((message) => message.type === 'run_resume_started');
+    emitFrontierTrace('worker-safe-resume', {
+      events: resume ? [{ id: 'safe-run:run_resume_started', kind: String(resume.type) }] : [],
+      mutations: [],
+      actionAttempts: [],
+      contextRevisions: [0],
+      terminalReason: resume ? 'completed' : 'failed',
+      expectedTerminalReason: 'completed',
+    });
+  }
   console.log('PASS safe checkpoint emitted run_resume_started');
 
   await panel.evaluate(() => {
@@ -172,6 +187,18 @@ try {
     !messages.some((message) => message.type === 'tool_execution_start'),
     'Ambiguous checkpoint replayed browser tool.',
   );
+  if (process.env.GLIDE_FRONTIER_EVAL_CASE === 'worker-ambiguous-action') {
+    const required = messages.find((message) => message.type === 'run_resume_required');
+    const actionId = 'ambiguous-run:action:1';
+    emitFrontierTrace('worker-ambiguous-action', {
+      events: required ? [{ id: `${actionId}:run_resume_required`, actionId, kind: String(required.type) }] : [],
+      mutations: [],
+      actionAttempts: [{ actionId, state: 'ambiguous' }],
+      contextRevisions: [0],
+      terminalReason: required ? 'ambiguous_action' : 'failed',
+      expectedTerminalReason: 'ambiguous_action',
+    });
+  }
   console.log('PASS ambiguous action required confirmation with zero replay');
   void workerTarget;
 } catch (error) {

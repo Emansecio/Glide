@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { ContextTransactionStore } from '../../background/context-transaction.js';
 import { renderMarkdownToHtml } from '../../sidepanel/ui/markdown-renderer.js';
+import { emitFrontierTrace } from '../evals/frontier-trace.js';
 
 describe('renderMarkdownToHtml', () => {
   it('renders CommonMark and GFM structures', () => {
@@ -60,6 +62,32 @@ describe('renderMarkdownToHtml', () => {
     const result = renderMarkdownToHtml('<script>alert(1)</script>');
     expect(result.html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
     expect(result.html).not.toContain('<script>');
+  });
+
+  it('emits long-markdown eval trace from render and context commit', () => {
+    const source = `# Report\n\n${'evidence '.repeat(3_000)}`;
+    const rendered = renderMarkdownToHtml(source);
+    const store = new ContextTransactionStore();
+    const commit = store.commit({
+      sessionId: 'long-markdown-session',
+      runId: 'long-markdown-run',
+      turnId: 'long-markdown-turn',
+      sourceRevision: 0,
+      messages: [{ role: 'assistant', content: source }],
+      compacted: false,
+      contextUsage: {},
+    });
+    expect(rendered.fallback).toBe(false);
+    expect(rendered.html.length).toBeGreaterThan(source.length);
+    const eventId = `${commit.runId}:${commit.turnId}`;
+    emitFrontierTrace('long-markdown', {
+      events: [{ id: eventId, kind: 'context_commit' }],
+      mutations: [],
+      actionAttempts: [],
+      contextRevisions: [commit.revision],
+      terminalReason: rendered.fallback ? 'failed' : 'completed',
+      expectedTerminalReason: 'completed',
+    });
   });
 
   it('falls back to escaped plain text for malformed runtime input', () => {

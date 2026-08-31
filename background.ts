@@ -158,6 +158,7 @@ import {
 } from './background/session-lifecycle.js';
 import { buildSessionTools } from './background/session-tools.js';
 import { bindRuntimeSettingsCacheInvalidation, loadCachedRuntimeSettings } from './background/settings-cache.js';
+import { hydrateSidePanelOwnership } from './background/side-panel-ownership.js';
 import { restrictLocalStorageToTrustedContexts } from './background/storage-access.js';
 import { resolveBrowserToolPassState } from './background/tool-pack-state.js';
 import {
@@ -985,16 +986,7 @@ class BackgroundService {
       });
     }
 
-    void (async () => {
-      try {
-        const stored = await chrome.storage.session.get(['glideSidePanelTabId']);
-        if (typeof stored?.glideSidePanelTabId === 'number') {
-          this.sidePanelTabId = stored.glideSidePanelTabId;
-        }
-      } catch {
-        // storage.session may be unavailable in some environments
-      }
-    })();
+    void hydrateSidePanelOwnership(chrome.storage.session, this);
 
     // Non-critical boot work — deferred so the first panel message is not blocked.
     setTimeout(() => {

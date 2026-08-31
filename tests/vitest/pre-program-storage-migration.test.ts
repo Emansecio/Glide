@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { normalizeRuntimeSettings } from '../../background/settings-cache.js';
+import { hydrateSidePanelOwnership } from '../../background/side-panel-ownership.js';
 import {
   CHAT_SESSIONS_INDEX_KEY,
   buildLegacyMigrationStorageUpdates,
@@ -15,7 +16,7 @@ type StorageFixture = {
 };
 
 describe('pre-program storage migration', () => {
-  it('loads checkpoint 82772fc settings, sessions, plans, provider slots, and panel ownership without reset', () => {
+  it('loads checkpoint 82772fc settings, sessions, plans, provider slots, and panel ownership without reset', async () => {
     const fixture = JSON.parse(
       fs.readFileSync('tests/fixtures/pre-program-storage-82772fc.json', 'utf8'),
     ) as StorageFixture;
@@ -50,6 +51,19 @@ describe('pre-program storage migration', () => {
       ],
     });
     expect(migratedLocal.currentPlan).toEqual(fixture.local.currentPlan);
-    expect(fixture.session.glideSidePanelTabId).toBe(17);
+
+    const sessionState = { ...fixture.session };
+    const writes: Array<Record<string, unknown>> = [];
+    const storage = {
+      get: async (keys: string[]) => Object.fromEntries(keys.map((key) => [key, sessionState[key]])),
+      set: async (value: Record<string, unknown>) => {
+        writes.push(value);
+        Object.assign(sessionState, value);
+      },
+    };
+    const ownership = { sidePanelTabId: null as number | null };
+    await hydrateSidePanelOwnership(storage, ownership);
+    expect(ownership.sidePanelTabId).toBe(17);
+    expect(writes).toEqual([]);
   });
 });

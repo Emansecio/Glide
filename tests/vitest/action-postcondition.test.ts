@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { verifyActionPostcondition } from '../../tools/action-postcondition.js';
+import { emitFrontierTrace } from '../evals/frontier-trace.js';
 
 describe('action postconditions', () => {
   it('returns matching evidence as verified', async () => {
@@ -26,6 +27,28 @@ describe('action postconditions', () => {
       observed: { url: 'https://example.test/start' },
     });
     vi.useRealTimers();
+  });
+
+  it('emits spa-navigation eval trace from verified URL transition', async () => {
+    let revision = 8;
+    const result = await verifyActionPostcondition(
+      { kind: 'url_changed' },
+      async () => {
+        revision += 1;
+        return { url: 'https://example.test/next' };
+      },
+      { baselineUrl: 'https://example.test/start', timeoutMs: 100 },
+    );
+    expect(result.verified).toBe(true);
+    const actionId = 'spa-navigation-action';
+    emitFrontierTrace('spa-navigation', {
+      events: result.verified ? [{ id: `${actionId}:${revision}`, actionId, kind: 'url_changed', frameId: 0 }] : [],
+      mutations: result.verified ? [{ actionId, requestedFrameId: 0, actualFrameId: 0, handleState: 'none' }] : [],
+      actionAttempts: [{ actionId, state: 'committed' }],
+      contextRevisions: [revision],
+      terminalReason: result.verified ? 'completed' : 'failed',
+      expectedTerminalReason: 'completed',
+    });
   });
 
   it('returns observed state on timeout without replaying action', async () => {

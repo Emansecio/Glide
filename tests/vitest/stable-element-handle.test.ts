@@ -7,6 +7,7 @@ import {
   resolveElementHandle,
   verifyElementHandle,
 } from '../../tools/stable-element-handle.js';
+import { emitFrontierTrace } from '../evals/frontier-trace.js';
 
 const makeHandle = (element: Element, selector: string): StableElementHandle => ({
   version: 1,
@@ -69,6 +70,35 @@ describe('stable element handles', () => {
 
     expect(resolved).toMatchObject({ ok: true });
     if (resolved.ok) expect(resolved.element).toBe(target);
+  });
+
+  it('emits shadow-dialog eval trace from resolved handle and click', () => {
+    document.body.innerHTML = '<div id="host"></div>';
+    const host = document.querySelector<HTMLElement>('#host');
+    const shadow = host?.attachShadow({ mode: 'open' });
+    if (!shadow) throw new Error('Shadow root fixture unavailable.');
+    shadow.innerHTML = '<button id="close">Close</button>';
+    const target = shadow.querySelector<HTMLButtonElement>('#close');
+    if (!target) throw new Error('Shadow target fixture unavailable.');
+    let clicks = 0;
+    target.addEventListener('click', () => {
+      clicks += 1;
+    });
+    const handle = makeHandle(target, '#host >>> #close');
+    const resolved = resolveElementHandle(handle, document, 4, { tabId: 9, frameId: 2 });
+    if (!resolved.ok) throw new Error(resolved.error);
+    (resolved.element as HTMLButtonElement).click();
+    expect(clicks).toBe(1);
+
+    emitFrontierTrace('shadow-dialog', {
+      events: [{ id: `${handle.snapshotId}:${handle.ref}:click`, actionId: handle.ref, kind: 'mutation', frameId: 2 }],
+      mutations:
+        clicks === 1 ? [{ actionId: handle.ref, requestedFrameId: 2, actualFrameId: 2, handleState: 'fresh' }] : [],
+      actionAttempts: [{ actionId: handle.ref, state: 'committed' }],
+      contextRevisions: [handle.domRevision],
+      terminalReason: clicks === 1 ? 'completed' : 'failed',
+      expectedTerminalReason: 'completed',
+    });
   });
 
   it('returns refreshed candidates when snapshot expires', () => {

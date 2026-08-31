@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { FrontierCase } from '../evals/frontier-cases.js';
 import { type FrontierEvalTrace, gradeFrontierCase } from '../evals/frontier-graders.js';
+import { FRONTIER_TRACE_PREFIX, parseFrontierTraceOutput } from '../evals/frontier-trace.js';
 
 const evalCase: FrontierCase = {
   id: 'test-case',
@@ -15,12 +16,22 @@ const evalCase: FrontierCase = {
     'terminal_reason',
   ],
   timeoutMs: 1_000,
+  expectedEffects: {
+    events: 1,
+    mutations: 1,
+    committedAttempts: 1,
+    allowedActionTransitions: [['prepared', 'in_flight', 'committed']],
+  },
 };
 
 const trace = (overrides: Partial<FrontierEvalTrace> = {}): FrontierEvalTrace => ({
   events: [{ id: 'event-1', actionId: 'action-1', kind: 'mutation', frameId: 2 }],
   mutations: [{ actionId: 'action-1', requestedFrameId: 2, actualFrameId: 2, handleState: 'fresh' }],
-  actionAttempts: [{ actionId: 'action-1', state: 'committed' }],
+  actionAttempts: [
+    { actionId: 'action-1', state: 'prepared' },
+    { actionId: 'action-1', state: 'in_flight' },
+    { actionId: 'action-1', state: 'committed' },
+  ],
   contextRevisions: [4],
   terminalReason: 'completed',
   expectedTerminalReason: 'completed',
@@ -28,13 +39,13 @@ const trace = (overrides: Partial<FrontierEvalTrace> = {}): FrontierEvalTrace =>
 });
 
 describe('frontier invariant grader', () => {
-  it('passes a trace satisfying every declared invariant', () => {
+  it('passes exact effect counts and allowed action transition', () => {
     expect(gradeFrontierCase(evalCase, trace())).toEqual({
       caseId: 'test-case',
       passed: true,
       failures: [],
       metrics: {
-        actionAttempts: 1,
+        actionAttempts: 3,
         contextCommits: 1,
         events: 1,
         mutations: 1,
@@ -44,14 +55,46 @@ describe('frontier invariant grader', () => {
 
   it.each([
     [
-      'duplicate events',
+      'multiple unique events',
       trace({
         events: [
-          { id: 'same', kind: 'mutation' },
-          { id: 'same', kind: 'mutation' },
+          { id: 'first', kind: 'mutation' },
+          { id: 'second', kind: 'mutation' },
         ],
       }),
-      'duplicate event',
+      'event count 2; expected 1',
+    ],
+    [
+      'multiple mutations',
+      trace({
+        mutations: [
+          { actionId: 'action-1', requestedFrameId: 2, actualFrameId: 2, handleState: 'fresh' },
+          { actionId: 'action-2', requestedFrameId: 2, actualFrameId: 2, handleState: 'fresh' },
+        ],
+      }),
+      'mutation count 2; expected 1',
+    ],
+    [
+      'multiple committed attempts',
+      trace({
+        actionAttempts: [
+          { actionId: 'action-1', state: 'prepared' },
+          { actionId: 'action-1', state: 'in_flight' },
+          { actionId: 'action-1', state: 'committed' },
+          { actionId: 'action-2', state: 'committed' },
+        ],
+      }),
+      'committed attempt count 2; expected 1',
+    ],
+    [
+      'invalid transition',
+      trace({
+        actionAttempts: [
+          { actionId: 'action-1', state: 'prepared' },
+          { actionId: 'action-1', state: 'committed' },
+        ],
+      }),
+      'invalid action transition action-1: prepared -> committed',
     ],
     [
       'cross-frame mutation',
@@ -64,11 +107,11 @@ describe('frontier invariant grader', () => {
       'stale handle mutated',
     ],
     [
-      'repeated ambiguous action',
+      'post-ambiguous replay',
       trace({
         actionAttempts: [
-          { actionId: 'ambiguous-1', state: 'ambiguous' },
-          { actionId: 'ambiguous-1', state: 'committed' },
+          { actionId: 'action-1', state: 'ambiguous' },
+          { actionId: 'action-1', state: 'committed' },
         ],
       }),
       'ambiguous action replayed',
@@ -83,5 +126,19 @@ describe('frontier invariant grader', () => {
     const grade = gradeFrontierCase(evalCase, input);
     expect(grade.passed).toBe(false);
     expect(grade.failures).toContain(expectedFailure);
+  });
+
+  it('parses emitted fixture trace and rejects missing required trace fields', () => {
+    const encoded = `${FRONTIER_TRACE_PREFIX}${JSON.stringify({ caseId: 'test-case', trace: trace() })}`;
+    expect(parseFrontierTraceOutput(encoded, 'test-case')).toEqual(trace());
+    expect(() =>
+      parseFrontierTraceOutput(
+        `${FRONTIER_TRACE_PREFIX}${JSON.stringify({ caseId: 'test-case', trace: { events: [] } })}`,
+        'test-case',
+      ),
+    ).toThrow('fixture trace missing required fields for test-case');
+    expect(() => parseFrontierTraceOutput('PASS without trace', 'test-case')).toThrow(
+      'fixture emitted no machine-readable trace for test-case',
+    );
   });
 });

@@ -1,4 +1,4 @@
-import type { FrontierCase } from './frontier-cases.js';
+import type { ActionAttemptState, FrontierCase } from './frontier-cases.js';
 
 export type FrontierGrade = {
   caseId: string;
@@ -15,13 +15,15 @@ export type FrontierEvalTrace = {
     actualFrameId: number;
     handleState: 'fresh' | 'stale' | 'none';
   }>;
-  actionAttempts: Array<{ actionId: string; state: 'prepared' | 'in_flight' | 'committed' | 'ambiguous' }>;
+  actionAttempts: Array<{ actionId: string; state: ActionAttemptState }>;
   contextRevisions: number[];
   terminalReason: string;
   expectedTerminalReason: string;
 };
 
 const hasInvariant = (evalCase: FrontierCase, invariant: string) => evalCase.invariants.includes(invariant);
+const sameTransition = (left: ActionAttemptState[], right: ActionAttemptState[]) =>
+  left.length === right.length && left.every((state, index) => state === right[index]);
 
 export const gradeFrontierCase = (evalCase: FrontierCase, trace: FrontierEvalTrace): FrontierGrade => {
   const failures: string[] = [];
@@ -31,6 +33,32 @@ export const gradeFrontierCase = (evalCase: FrontierCase, trace: FrontierEvalTra
     for (const event of trace.events) {
       if (seen.has(event.id)) failures.push('duplicate event');
       seen.add(event.id);
+    }
+  }
+
+  if (evalCase.expectedEffects) {
+    const expected = evalCase.expectedEffects;
+    const committedAttempts = trace.actionAttempts.filter((attempt) => attempt.state === 'committed').length;
+    if (trace.events.length !== expected.events) {
+      failures.push(`event count ${trace.events.length}; expected ${expected.events}`);
+    }
+    if (trace.mutations.length !== expected.mutations) {
+      failures.push(`mutation count ${trace.mutations.length}; expected ${expected.mutations}`);
+    }
+    if (committedAttempts !== expected.committedAttempts) {
+      failures.push(`committed attempt count ${committedAttempts}; expected ${expected.committedAttempts}`);
+    }
+
+    const transitions = new Map<string, ActionAttemptState[]>();
+    for (const attempt of trace.actionAttempts) {
+      const states = transitions.get(attempt.actionId) || [];
+      states.push(attempt.state);
+      transitions.set(attempt.actionId, states);
+    }
+    for (const [actionId, states] of transitions) {
+      if (!expected.allowedActionTransitions.some((allowed) => sameTransition(states, allowed))) {
+        failures.push(`invalid action transition ${actionId}: ${states.join(' -> ')}`);
+      }
     }
   }
 
@@ -46,10 +74,18 @@ export const gradeFrontierCase = (evalCase: FrontierCase, trace: FrontierEvalTra
   }
 
   if (hasInvariant(evalCase, 'no_ambiguous_replay')) {
-    const ambiguous = new Set(
-      trace.actionAttempts.filter((attempt) => attempt.state === 'ambiguous').map((attempt) => attempt.actionId),
-    );
-    if (trace.actionAttempts.some((attempt) => ambiguous.has(attempt.actionId) && attempt.state !== 'ambiguous')) {
+    const attemptsByAction = new Map<string, ActionAttemptState[]>();
+    for (const attempt of trace.actionAttempts) {
+      const states = attemptsByAction.get(attempt.actionId) || [];
+      states.push(attempt.state);
+      attemptsByAction.set(attempt.actionId, states);
+    }
+    if (
+      [...attemptsByAction.values()].some((states) => {
+        const ambiguousIndex = states.indexOf('ambiguous');
+        return ambiguousIndex >= 0 && ambiguousIndex < states.length - 1;
+      })
+    ) {
       failures.push('ambiguous action replayed');
     }
   }

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { type BrowserContext, type Page, type Worker, chromium } from 'playwright';
+import { emitFrontierTrace } from '../evals/frontier-trace.js';
 import { startFixtureServer } from './fixture-server.js';
 
 const requestedCase = process.argv.includes('--case') ? process.argv[process.argv.indexOf('--case') + 1] : '';
@@ -43,17 +44,37 @@ async function sendBridge(panel: Page, tabId: number, op: string, payload: Recor
   );
 }
 
-async function sendManualTool(panel: Page, tabId: number, tool: string, args: Record<string, unknown>) {
+async function sendManualTool(
+  panel: Page,
+  tabId: number,
+  tool: string,
+  args: Record<string, unknown>,
+  sessionId = `frontier-actions-${Date.now()}`,
+) {
   return panel.evaluate(
-    async ({ targetTabId, toolName, toolArgs }) =>
+    async ({ targetTabId, toolName, toolArgs, targetSessionId }) =>
       chrome.runtime.sendMessage({
         type: 'execute_tool',
         tool: toolName,
         args: { ...toolArgs, tabId: targetTabId, _strictTabId: true },
-        sessionId: `frontier-actions-${Date.now()}`,
+        sessionId: targetSessionId,
       }),
-    { targetTabId: tabId, toolName: tool, toolArgs: args },
+    { targetTabId: tabId, toolName: tool, toolArgs: args, targetSessionId: sessionId },
   );
+}
+
+async function readSessionExecutionEvent(panel: Page, sessionId: string) {
+  const response = (await panel.evaluate(() => chrome.runtime.sendMessage({ type: 'get_execution_events' }))) as {
+    events?: Array<{
+      id: string;
+      actionId?: string;
+      frameId?: number;
+      contextRevision?: number;
+      sessionId?: string;
+      success?: boolean;
+    }>;
+  };
+  return response.events?.filter((event) => event.sessionId === sessionId).at(-1);
 }
 
 async function clickOnce(context: BrowserContext, worker: Worker, panel: Page, baseUrl: string) {
@@ -63,12 +84,39 @@ async function clickOnce(context: BrowserContext, worker: Worker, panel: Page, b
   assert(typeof tabId === 'number', 'Fixture tab not found.');
   await waitForBridge(worker, tabId);
 
-  for (const selector of ['#action-button', '#action-checkbox', '#action-submit']) {
-    const result = (await sendBridge(panel, tabId, 'click', { selector, waitForDialog: false })) as {
-      success?: boolean;
-      error?: string;
-    };
-    assert(result?.success, `click ${selector} failed: ${result?.error || JSON.stringify(result)}`);
+  const isEval = process.env.GLIDE_FRONTIER_EVAL_CASE === 'click-once';
+  if (isEval) {
+    const sessionId = 'frontier-eval-click-once';
+    const response = (await sendManualTool(
+      panel,
+      tabId,
+      'click',
+      { selector: '#action-button', waitForDialog: false },
+      sessionId,
+    )) as { success?: boolean; result?: { success?: boolean } };
+    assert(response.success && response.result?.success, `eval click failed: ${JSON.stringify(response)}`);
+    const event = await readSessionExecutionEvent(panel, sessionId);
+    assert(event?.actionId, `eval click execution event missing actionId: ${JSON.stringify(event)}`);
+    const clickCount = await page.evaluate(() => (window as any).__actionLab.click as number);
+    emitFrontierTrace('click-once', {
+      events: [{ id: event.id, actionId: event.actionId, kind: 'mutation', frameId: event.frameId ?? 0 }],
+      mutations:
+        clickCount === 1
+          ? [{ actionId: event.actionId, requestedFrameId: 0, actualFrameId: event.frameId ?? 0, handleState: 'fresh' }]
+          : [],
+      actionAttempts: [{ actionId: event.actionId, state: 'committed' }],
+      contextRevisions: [event.contextRevision ?? 0],
+      terminalReason: response.success ? 'completed' : 'failed',
+      expectedTerminalReason: 'completed',
+    });
+  } else {
+    for (const selector of ['#action-button', '#action-checkbox', '#action-submit']) {
+      const result = (await sendBridge(panel, tabId, 'click', { selector, waitForDialog: false })) as {
+        success?: boolean;
+        error?: string;
+      };
+      assert(result?.success, `click ${selector} failed: ${result?.error || JSON.stringify(result)}`);
+    }
   }
 
   const state = await page.evaluate(
@@ -80,10 +128,12 @@ async function clickOnce(context: BrowserContext, worker: Worker, panel: Page, b
       ).__actionLab,
   );
   assert(state.click === 1, `button click count expected 1, got ${state.click}`);
-  assert(state.checkboxClick === 1, `checkbox click count expected 1, got ${state.checkboxClick}`);
-  assert(state.change === 1, `checkbox change count expected 1, got ${state.change}`);
-  assert(state.checkbox === true, `checkbox expected checked, got ${state.checkbox}`);
-  assert(state.submit === 1, `submit count expected 1, got ${state.submit}`);
+  if (!isEval) {
+    assert(state.checkboxClick === 1, `checkbox click count expected 1, got ${state.checkboxClick}`);
+    assert(state.change === 1, `checkbox change count expected 1, got ${state.change}`);
+    assert(state.checkbox === true, `checkbox expected checked, got ${state.checkbox}`);
+    assert(state.submit === 1, `submit count expected 1, got ${state.submit}`);
+  }
   await page.close();
 }
 
@@ -130,30 +180,67 @@ async function checkboxFrame(context: BrowserContext, worker: Worker, panel: Pag
   assert(typeof tabId === 'number', 'Fixture tab not found.');
   await waitForBridge(worker, tabId);
 
-  const ambiguousResponse = (await sendManualTool(panel, tabId, 'fillForm', {
-    fields: [{ selector: '#shared-checkbox', checked: true }],
-  })) as { result?: { success?: boolean; code?: string; results?: Array<{ code?: string }> } };
-  const ambiguous = (ambiguousResponse.result || ambiguousResponse) as {
-    success?: boolean;
-    code?: string;
-    results?: Array<{ code?: string }>;
-  };
-  assert(ambiguous.success === false, `ambiguous fill must fail: ${JSON.stringify(ambiguousResponse)}`);
-  assert(
-    ambiguous.code === 'FRAME_AMBIGUOUS' || ambiguous.results?.[0]?.code === 'FRAME_AMBIGUOUS',
-    `expected FRAME_AMBIGUOUS: ${JSON.stringify(ambiguous)}`,
-  );
+  const isEval = process.env.GLIDE_FRONTIER_EVAL_CASE === 'form-frame';
+  if (!isEval) {
+    const ambiguousResponse = (await sendManualTool(panel, tabId, 'fillForm', {
+      fields: [{ selector: '#shared-checkbox', checked: true }],
+    })) as { result?: { success?: boolean; code?: string; results?: Array<{ code?: string }> } };
+    const ambiguous = (ambiguousResponse.result || ambiguousResponse) as {
+      success?: boolean;
+      code?: string;
+      results?: Array<{ code?: string }>;
+    };
+    assert(ambiguous.success === false, `ambiguous fill must fail: ${JSON.stringify(ambiguousResponse)}`);
+    assert(
+      ambiguous.code === 'FRAME_AMBIGUOUS' || ambiguous.results?.[0]?.code === 'FRAME_AMBIGUOUS',
+      `expected FRAME_AMBIGUOUS: ${JSON.stringify(ambiguous)}`,
+    );
+  }
 
-  const explicitResponse = (await sendManualTool(panel, tabId, 'fillForm', {
-    frameUrl: 'child-frame.html',
-    fields: [{ selector: '#shared-checkbox', checked: true }],
-  })) as { result?: { success?: boolean; error?: string } };
+  const childFrameId = await worker.evaluate(async (targetTabId) => {
+    const frames = await chrome.webNavigation.getAllFrames({ tabId: targetTabId });
+    return (frames || []).find((frame) => frame.url.includes('/child-frame.html'))?.frameId;
+  }, tabId);
+  assert(typeof childFrameId === 'number', 'child frame id not found');
+  const sessionId = 'frontier-eval-form-frame';
+  const explicitResponse = (await sendManualTool(
+    panel,
+    tabId,
+    'fillForm',
+    {
+      frameUrl: 'child-frame.html',
+      fields: [{ selector: '#shared-checkbox', checked: true }],
+    },
+    isEval ? sessionId : undefined,
+  )) as { success?: boolean; result?: { success?: boolean; error?: string } };
   const explicit = (explicitResponse.result || explicitResponse) as { success?: boolean; error?: string };
   assert(explicit.success, `explicit child fill failed: ${explicit.error || JSON.stringify(explicitResponse)}`);
   const topChecked = await page.locator('#shared-checkbox').isChecked();
   const childChecked = await page.frameLocator('#child-frame').locator('#shared-checkbox').isChecked();
   assert(topChecked === false, 'top checkbox mutated during child-targeted fill');
   assert(childChecked === true, 'child checkbox was not checked');
+  if (isEval) {
+    const event = await readSessionExecutionEvent(panel, sessionId);
+    assert(event?.actionId, `eval form execution event missing actionId: ${JSON.stringify(event)}`);
+    emitFrontierTrace('form-frame', {
+      events: [{ id: event.id, actionId: event.actionId, kind: 'mutation', frameId: event.frameId }],
+      mutations:
+        childChecked && !topChecked
+          ? [
+              {
+                actionId: event.actionId,
+                requestedFrameId: childFrameId,
+                actualFrameId: childFrameId,
+                handleState: 'fresh',
+              },
+            ]
+          : [],
+      actionAttempts: [{ actionId: event.actionId, state: 'committed' }],
+      contextRevisions: [event.contextRevision ?? 0],
+      terminalReason: explicitResponse.success ? 'completed' : 'failed',
+      expectedTerminalReason: 'completed',
+    });
+  }
   await page.close();
 }
 

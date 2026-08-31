@@ -386,13 +386,15 @@ export const getPreferredSearchRoot = (scope: 'auto' | 'page' | 'dialog' = 'auto
 
 export const performRichClick = (
   element: HTMLElement,
-): {
-  success: true;
-  strategy: string;
-  coordinates: { x: number; y: number };
-  targetTag: string;
-  matched: string;
-} => {
+):
+  | {
+      success: true;
+      strategy: string;
+      coordinates: { x: number; y: number };
+      targetTag: string;
+      matched: string;
+    }
+  | { success: false; code: 'CLICK_FAILED'; error: string } => {
   element.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' as ScrollBehavior });
   const rect = element.getBoundingClientRect();
   const clientX = Math.round(rect.left + Math.min(rect.width / 2, Math.max(4, rect.width - 4)));
@@ -438,12 +440,10 @@ export const performRichClick = (
     );
   }
   eventTarget.dispatchEvent(new MouseEvent('mouseup', { ...eventInit, buttons: 0 }));
-  eventTarget.dispatchEvent(new MouseEvent('click', { ...eventInit, buttons: 0 }));
-  // Native click as last resort for non-React handlers
   try {
     eventTarget.click();
-  } catch {
-    // ignore
+  } catch (error) {
+    return { success: false, code: 'CLICK_FAILED', error: String(error) };
   }
 
   return {

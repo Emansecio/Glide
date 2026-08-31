@@ -23,6 +23,7 @@
         change: 0,
         submit: 0,
         hover: 0,
+        checkboxClick: 0,
         checkbox: false,
       };
 
@@ -42,7 +43,11 @@
       document.getElementById('action-hover').addEventListener('mouseenter', () => {
         window.__actionLab.hover += 1;
       });
+      document.getElementById('action-checkbox').addEventListener('click', () => {
+        window.__actionLab.checkboxClick += 1;
+      });
       document.getElementById('action-checkbox').addEventListener('change', (event) => {
+        window.__actionLab.change += 1;
         window.__actionLab.checkbox = event.currentTarget.checked;
       });
     </script>

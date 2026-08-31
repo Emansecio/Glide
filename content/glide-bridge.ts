@@ -102,6 +102,7 @@ const handleClick = async (payload: Record<string, unknown>) => {
       // Count dialogs BEFORE click so we only wait for a *new* modal (no 900ms tax on every click).
       const dialogsBefore = listOpenDialogs().length;
       const result = performRichClick(element);
+      if (!result.success) return result;
       let openedDialog: ReturnType<typeof listOpenDialogs>[number] | null = null;
       if (waitForModal) {
         // Short progressive poll (~320ms max) — exits early if nothing opens / if dialog already there.

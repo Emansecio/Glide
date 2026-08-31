@@ -483,6 +483,7 @@ export interface SidePanelUI {
   fetchAvailableModels(...args: any[]): any;
   fetchExecutionEvents(...args: any[]): any;
   finalizeExecutionDetails(...args: any[]): any;
+  finalizePartialStreamingMessage(...args: any[]): any;
   finishActiveRun(...args: any[]): any;
   finishStreamingMessage(...args: any[]): any;
   flushStreamingReasoningRender(...args: any[]): any;

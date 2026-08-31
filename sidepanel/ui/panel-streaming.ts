@@ -1,3 +1,4 @@
+import { createMessage } from '../../ai/message-schema.js';
 import type { RunPlan } from '../../types/plan.js';
 import { shouldWriteThinkingTimerLabel } from './history-storage.js';
 import {
@@ -420,6 +421,38 @@ SidePanelUI.prototype.abortActiveStreaming = function abortActiveStreaming() {
   this.setComposerBusy?.(false);
   this.stopRunLiveness?.();
   this.updateActivityState?.();
+};
+
+SidePanelUI.prototype.finalizePartialStreamingMessage = function finalizePartialStreamingMessage(
+  reason: 'stopped' | 'failed' | 'interrupted' | 'ambiguous_action',
+) {
+  const partial = this.finishStreamingMessage?.();
+  const content = String(partial?.renderedContent || '').trim();
+  if (!content) return false;
+
+  const entry = createMessage({
+    role: 'assistant',
+    content,
+    meta: { finishReason: reason, partial: true },
+  });
+  if (!entry) return false;
+  this.displayHistory.push(entry);
+
+  const container = partial?.container;
+  if (container) {
+    container.classList.add('partial');
+    let header = container.querySelector('.message-header') as HTMLElement | null;
+    if (!header) {
+      header = document.createElement('div');
+      header.className = 'message-header assistant-header';
+      container.prepend(header);
+    }
+    header.innerHTML = this.buildAssistantHeaderHtml('Interrompida');
+    this.bindAssistantActions(header, content, this.getLastUserMessageText?.() || '');
+  }
+  this.persistHistory?.();
+  this.updateChatEmptyState?.();
+  return true;
 };
 
 SidePanelUI.prototype.finishStreamingMessage = function finishStreamingMessage() {

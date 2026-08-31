@@ -31,12 +31,7 @@ function preservePartialAssistantOutput(
   ui: SidePanelUI,
   finishReason: 'stopped' | 'failed' | 'interrupted' | 'ambiguous_action',
 ) {
-  const partial = ui.finishStreamingMessage?.();
-  const content = String(partial?.renderedContent || '').trim();
-  if (!content) return;
-  const entry = createMessage({ role: 'assistant', content, meta: { finishReason } });
-  if (entry) ui.displayHistory.push(entry);
-  ui.persistHistory?.();
+  ui.finalizePartialStreamingMessage?.(finishReason);
 }
 
 function applyRunTransientNoticesClear(ui: SidePanelUI, options: { sweepTools?: boolean; toolError?: boolean } = {}) {

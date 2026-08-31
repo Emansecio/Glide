@@ -576,9 +576,10 @@ SidePanelUI.prototype.renderConversationHistory = function renderConversationHis
       const rawContent = typeof msg.content === 'string' ? msg.content : this.safeJsonStringify(msg.content);
       const parsed = extractThinking(rawContent, msg.thinking || null);
       const messageDiv = document.createElement('div');
-      messageDiv.className = 'message assistant';
+      const isPartial = msg.meta?.partial === true;
+      messageDiv.className = `message assistant${isPartial ? ' partial' : ''}`;
       const htmlParts: string[] = [
-        `<div class="message-header assistant-header">${this.buildAssistantHeaderHtml(null)}</div>`,
+        `<div class="message-header assistant-header">${this.buildAssistantHeaderHtml(isPartial ? 'Interrompida' : null)}</div>`,
       ];
       if (parsed.thinking) {
         const cleanedThinking = dedupeThinking(parsed.thinking);

@@ -196,6 +196,8 @@ export function sanitizeMessageForPersistence(
       ...(message.meta.kind ? { kind: message.meta.kind } : {}),
       ...(message.meta.source ? { source: trimText(String(message.meta.source), 120) } : {}),
       ...(message.meta.summaryOfCount != null ? { summaryOfCount: message.meta.summaryOfCount } : {}),
+      ...(message.meta.finishReason ? { finishReason: message.meta.finishReason } : {}),
+      ...(message.meta.partial === true ? { partial: true } : {}),
     };
   }
   if (message.usage) {

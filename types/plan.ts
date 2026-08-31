@@ -12,6 +12,10 @@ export type PlanStep = {
 };
 
 export type RunPlan = {
+  /** Stable identity for versioned panel acknowledgements. Optional on legacy payloads. */
+  planId?: string;
+  /** Monotonic authoritative revision. Legacy payloads begin at version 1. */
+  version?: number;
   steps: PlanStep[];
   createdAt: number;
   updatedAt: number;
@@ -68,12 +72,21 @@ export function normalizePlanSteps(input: unknown, options: { maxSteps?: number 
 
 export function buildRunPlan(
   stepsInput: unknown,
-  options: { existingPlan?: RunPlan | null; now?: number; maxSteps?: number } = {},
+  options: { existingPlan?: RunPlan | null; now?: number; maxSteps?: number; planId?: string } = {},
 ): RunPlan {
   const now = options.now ?? Date.now();
+  const existing = options.existingPlan;
   const steps = normalizePlanSteps(stepsInput, { maxSteps: options.maxSteps });
-  const createdAt = options.existingPlan?.createdAt ?? now;
+  if (existing) {
+    for (const step of steps) {
+      const prior = existing.steps.find((candidate) => candidate.id === step.id && candidate.title === step.title);
+      if (prior?.status === 'done') step.status = 'done';
+    }
+  }
+  const createdAt = existing?.createdAt ?? now;
   return {
+    planId: existing?.planId || options.planId || `plan-${now}-${Math.random().toString(36).slice(2, 8)}`,
+    version: Math.max(1, Number(existing?.version || 0) + (existing ? 1 : 1)),
     steps,
     createdAt,
     updatedAt: now,

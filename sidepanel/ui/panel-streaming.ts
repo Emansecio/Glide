@@ -372,6 +372,14 @@ SidePanelUI.prototype.updateStreamReasoning = function updateStreamReasoning(del
 
 SidePanelUI.prototype.applyPlanUpdate = function applyPlanUpdate(plan: RunPlan) {
   if (!plan) return;
+  const current = this.currentPlan;
+  if (
+    current?.planId &&
+    plan.planId === current.planId &&
+    Number(plan.version || 0) < Number(current.version || 0)
+  ) {
+    return;
+  }
   this.currentPlan = plan;
   this.renderPlanDrawer(plan);
 };

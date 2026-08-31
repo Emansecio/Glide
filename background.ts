@@ -57,6 +57,7 @@ import { buildToolTurnMessages } from './ai/tool-history.js';
 import { ensureFreshXaiToken, getXaiAuthHealth, readXaiOAuth } from './ai/xai-oauth.js';
 import { ActionJournal, MUTATIVE_BROWSER_EFFECT_TOOLS } from './background/action-journal.js';
 import { ModelActivityWatchdog } from './background/activity-timeout.js';
+import { applyManualPlanUpdate } from './background/plan-controller.js';
 import {
   canApplyCompactionResult,
   contextTransactionStore,
@@ -1017,6 +1018,7 @@ class BackgroundService {
       const privilegedTypes = new Set([
         'user_message',
         'execute_tool',
+        'manual_plan_update',
         'stop_run',
         'run_status_query',
         'codex_oauth',
@@ -1030,6 +1032,46 @@ class BackgroundService {
         return false;
       }
       switch (message.type) {
+        case 'manual_plan_update': {
+          if (!this.currentPlan) {
+            sendResponse?.({
+              accepted: false,
+              planId: String(message.planId || ''),
+              version: 0,
+              error: 'Nenhum plano ativo.',
+            });
+            return false;
+          }
+          const decision = applyManualPlanUpdate(this.currentPlan, {
+            planId: String(message.planId || ''),
+            version: Number(message.version),
+            stepId: String(message.stepId || ''),
+            status: message.status,
+          });
+          if (decision.accepted) {
+            this.currentPlan = decision.plan;
+            this._planPromptCache = null;
+          }
+          const runMeta: RunMeta = this.activeRunMeta || {
+            runId: String(message.runId || `manual-plan-${decision.planId}`),
+            turnId: `manual-plan-turn-${Date.now()}`,
+            sessionId: String(message.sessionId || 'manual-plan-session'),
+          };
+          this.sendRuntime(runMeta, {
+            type: 'plan_update_ack',
+            planId: decision.planId,
+            version: decision.version,
+            accepted: decision.accepted,
+            plan: decision.plan,
+            error: decision.error,
+          });
+          if (decision.accepted) {
+            this.sendRuntime(runMeta, { type: 'plan_update', plan: decision.plan });
+          }
+          sendResponse?.(decision);
+          return false;
+        }
+
         // Parada explícita pedida pelo usuário. Antes disto, um run em curso só
         // podia ser encerrado fechando a aba travada ou esperando o watchdog de
         // inatividade (120s) — para um agente que clica e digita em páginas
@@ -2863,6 +2905,7 @@ class BackgroundService {
           return errorResult;
         }
         this.currentPlan.steps[stepIndex].status = status;
+        this.currentPlan.version = Math.max(1, Number(this.currentPlan.version || 1)) + 1;
         this.currentPlan.updatedAt = Date.now();
         this._planPromptCache = null;
         this.sendRuntime(options.runMeta, { type: 'plan_update', plan: this.currentPlan });

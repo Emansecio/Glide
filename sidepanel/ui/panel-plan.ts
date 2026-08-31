@@ -126,6 +126,7 @@ SidePanelUI.prototype.hidePlanDrawer = function hidePlanDrawer() {
  */
 SidePanelUI.prototype.clearPlan = function clearPlan() {
   this.currentPlan = null;
+  this.pendingPlanStepIds.clear();
   this.hidePlanDrawer();
   if (this.elements.planChecklist) {
     this.elements.planChecklist.innerHTML = '';
@@ -172,6 +173,13 @@ SidePanelUI.prototype.renderPlanDrawer = function renderPlanDrawer(plan: RunPlan
       } else {
         syncPlanStepItem(li, step, index, steps);
       }
+      const pending = this.pendingPlanStepIds.has(step.id);
+      li.classList.toggle('pending', pending);
+      const button = li.querySelector('[data-action="toggle-step"]') as HTMLButtonElement | null;
+      if (button) {
+        button.disabled = button.disabled || pending;
+        button.toggleAttribute('aria-busy', pending);
+      }
       checklist.appendChild(li);
     }
 
@@ -187,7 +195,7 @@ SidePanelUI.prototype.renderPlanDrawer = function renderPlanDrawer(plan: RunPlan
         if (!target) return;
         e.stopPropagation();
         const index = Number.parseInt((target as HTMLElement).dataset.stepIndex || '0', 10);
-        this.togglePlanStep(index);
+        void this.togglePlanStep(index);
       });
       this._planChecklistClickBound = true;
     }
@@ -199,32 +207,60 @@ SidePanelUI.prototype.renderPlanDrawer = function renderPlanDrawer(plan: RunPlan
 /**
  * Toggle a plan step's completion status
  */
-SidePanelUI.prototype.togglePlanStep = function togglePlanStep(index: number) {
-  if (!this.currentPlan || !this.currentPlan.steps[index]) return;
+SidePanelUI.prototype.applyPlanUpdateAck = function applyPlanUpdateAck(ack: {
+  planId: string;
+  version: number;
+  accepted: boolean;
+  plan?: RunPlan;
+  error?: string;
+}) {
+  if (ack.plan) {
+    for (const step of ack.plan.steps) this.pendingPlanStepIds.delete(step.id);
+    this.applyPlanUpdate(ack.plan);
+  } else {
+    this.pendingPlanStepIds.clear();
+    if (this.currentPlan) this.renderPlanDrawer(this.currentPlan);
+  }
+  if (!ack.accepted) {
+    this.updateStatus(ack.error || 'Atualização do plano rejeitada', 'warning');
+  }
+};
 
-  const step = this.currentPlan.steps[index];
-  const previousStepsDone = this.currentPlan.steps
-    .slice(0, index)
-    .every((s: { status: string }) => s.status === 'done');
+SidePanelUI.prototype.togglePlanStep = async function togglePlanStep(index: number) {
+  const plan = this.currentPlan;
+  if (!plan || !plan.steps[index] || !plan.planId || !plan.version) return;
 
-  // Can only toggle if previous steps are done
+  const step = plan.steps[index];
+  const previousStepsDone = plan.steps.slice(0, index).every((item) => item.status === 'done');
   if (!previousStepsDone && step.status !== 'done') {
     this.updateStatus('Conclua as etapas anteriores primeiro', 'warning');
     return;
   }
+  if (this.pendingPlanStepIds.has(step.id)) return;
 
-  // Toggle the step
-  if (step.status === 'done') {
-    // Unchecking - also uncheck all subsequent steps
-    for (let i = index; i < this.currentPlan.steps.length; i++) {
-      if (this.currentPlan.steps[i].status === 'done') {
-        this.currentPlan.steps[i].status = 'pending';
-      }
+  this.pendingPlanStepIds.add(step.id);
+  this.renderPlanDrawer(plan);
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: 'manual_plan_update',
+      planId: plan.planId,
+      version: plan.version,
+      stepId: step.id,
+      status: step.status === 'done' ? 'pending' : 'done',
+      sessionId: this.sessionId,
+      runId: this.activeRunId || undefined,
+    });
+    if (this.pendingPlanStepIds.has(step.id)) {
+      this.applyPlanUpdateAck(response || {
+        planId: plan.planId,
+        version: plan.version,
+        accepted: false,
+        error: 'Sem confirmação do plano.',
+      });
     }
-  } else {
-    step.status = 'done';
+  } catch {
+    this.pendingPlanStepIds.delete(step.id);
+    this.renderPlanDrawer(plan);
+    this.updateStatus('Falha ao atualizar o plano', 'warning');
   }
-
-  this.currentPlan.updatedAt = Date.now();
-  this.renderPlanDrawer(this.currentPlan);
 };

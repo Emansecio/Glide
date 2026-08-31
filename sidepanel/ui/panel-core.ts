@@ -529,6 +529,11 @@ SidePanelUI.prototype.handleRuntimeMessage = function handleRuntimeMessage(messa
     return;
   }
 
+  if (message.type === 'plan_update_ack') {
+    this.applyPlanUpdateAck(message);
+    return;
+  }
+
   if (message.type === 'plan_update') {
     this.applyPlanUpdate(message.plan);
     return;

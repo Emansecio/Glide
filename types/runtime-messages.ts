@@ -70,6 +70,15 @@ export type PlanUpdate = RuntimeMessageBase & {
   plan: RunPlan;
 };
 
+export type PlanUpdateAck = RuntimeMessageBase & {
+  type: 'plan_update_ack';
+  planId: string;
+  version: number;
+  accepted: boolean;
+  plan?: RunPlan;
+  error?: string;
+};
+
 export type AssistantFinal = RuntimeMessageBase & {
   type: 'assistant_final';
   content: string;
@@ -180,6 +189,7 @@ export type RuntimeMessage =
   | ToolExecutionResult
   | ToolEventsBatch
   | PlanUpdate
+  | PlanUpdateAck
   | AssistantFinal
   | RunQualityGate
   | RunError
@@ -200,6 +210,7 @@ export const runtimeMessageTypes = [
   'tool_execution_result',
   'tool_events_batch',
   'plan_update',
+  'plan_update_ack',
   'assistant_final',
   'run_quality_gate',
   'run_error',
@@ -363,6 +374,20 @@ const validateRuntimeMessageShape = (message: GenericRecord): RuntimeMessageVali
       return isRunPlanLike(message.plan)
         ? { ok: true, message: message as RuntimeMessage }
         : { ok: false, reason: 'plan_update.plan is invalid.' };
+    case 'plan_update_ack':
+      if (!isNonEmptyString(message.planId) || !Number.isInteger(message.version) || Number(message.version) < 1) {
+        return { ok: false, reason: 'plan_update_ack identity/version is invalid.' };
+      }
+      if (typeof message.accepted !== 'boolean') {
+        return { ok: false, reason: 'plan_update_ack.accepted must be boolean.' };
+      }
+      if (message.plan !== undefined && !isRunPlanLike(message.plan)) {
+        return { ok: false, reason: 'plan_update_ack.plan is invalid.' };
+      }
+      if (message.error !== undefined && !isString(message.error)) {
+        return { ok: false, reason: 'plan_update_ack.error must be a string.' };
+      }
+      return { ok: true, message: message as RuntimeMessage };
     case 'assistant_final':
       if (!isString(message.content)) return { ok: false, reason: 'assistant_final.content must be a string.' };
       if (!isOptionalString(message.thinking))
@@ -490,6 +515,17 @@ export function validateRuntimeMessage(value: unknown): RuntimeMessageValidation
 export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
   return validateRuntimeMessage(value).ok;
 }
+
+/** Panel → service worker: one acknowledged checklist mutation. */
+export type ManualPlanUpdatePanel = {
+  type: 'manual_plan_update';
+  planId: string;
+  version: number;
+  stepId: string;
+  status: 'done' | 'pending';
+  sessionId?: string;
+  runId?: string;
+};
 
 /** Panel → service worker: start or continue a chat turn. */
 export type UserMessagePanel = {

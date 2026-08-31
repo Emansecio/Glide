@@ -178,6 +178,7 @@ export class SidePanelUI {
   activeToolName: string | null;
   streamingReasoning: string;
   currentPlan: RunPlan | null;
+  pendingPlanStepIds: Set<string>;
   executionTurnSummaries: Map<string, unknown>;
   activeExecutionTurnKey: string | null;
   // Document-level event handlers for cleanup
@@ -284,6 +285,7 @@ export class SidePanelUI {
     this._runTargetTabLabel = null;
     this.clearRunTargetTab?.();
     this.currentPlan = null;
+    this.pendingPlanStepIds.clear();
     this.executionTurnSummaries = new Map();
     this.activeExecutionTurnKey = null;
     this.invalidateContextUsageCache?.();
@@ -394,6 +396,7 @@ export class SidePanelUI {
     this.activeToolName = null;
     this.streamingReasoning = '';
     this.currentPlan = null;
+    this.pendingPlanStepIds = new Set();
     this.executionTurnSummaries = new Map();
     this.activeExecutionTurnKey = null;
     this._documentClickHandler = null;
@@ -419,6 +422,7 @@ export interface SidePanelUI {
   applyContextUsageSnapshot(...args: any[]): any;
   applyDetectedModels(...args: any[]): any;
   applyPlanUpdate(...args: any[]): any;
+  applyPlanUpdateAck(...args: any[]): any;
   bindHistoryPersistenceControl(...args: any[]): any;
   bindHistoryStorageSync(...args: any[]): any;
   bindThinkingToggle(...args: any[]): any;

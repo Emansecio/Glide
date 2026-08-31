@@ -8,7 +8,6 @@ import {
   resolveElementHandle,
   verifyElementHandle,
 } from '../../tools/stable-element-handle.js';
-import { emitFrontierTrace } from '../evals/frontier-trace.js';
 
 const makeHandle = (element: Element, selector: string): StableElementHandle => ({
   version: 1,
@@ -73,7 +72,7 @@ describe('stable element handles', () => {
     if (resolved.ok) expect(resolved.element).toBe(target);
   });
 
-  it('emits shadow-dialog eval trace from resolved handle and click', () => {
+  it('resolves and clicks a shadow handle once', () => {
     document.body.innerHTML = '<div id="host"></div>';
     const host = document.querySelector<HTMLElement>('#host');
     const shadow = host?.attachShadow({ mode: 'open' });
@@ -90,16 +89,6 @@ describe('stable element handles', () => {
     if (!resolved.ok) throw new Error(resolved.error);
     (resolved.element as HTMLButtonElement).click();
     expect(clicks).toBe(1);
-
-    emitFrontierTrace('shadow-dialog', {
-      events: [{ id: `${handle.snapshotId}:${handle.ref}:click`, actionId: handle.ref, kind: 'mutation', frameId: 2 }],
-      mutations:
-        clicks === 1 ? [{ actionId: handle.ref, requestedFrameId: 2, actualFrameId: 2, handleState: 'fresh' }] : [],
-      actionAttempts: [{ actionId: handle.ref, state: 'committed' }],
-      contextRevisions: [handle.domRevision],
-      terminalReason: clicks === 1 ? 'completed' : 'failed',
-      expectedTerminalReason: 'completed',
-    });
   });
 
   it('returns refreshed candidates when snapshot expires', () => {

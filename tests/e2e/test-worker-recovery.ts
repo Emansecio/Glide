@@ -5,11 +5,14 @@ import http from 'node:http';
 import os from 'os';
 import path from 'path';
 import { type BrowserContext, type Page, type Worker, chromium } from 'playwright';
+import type { FrontierTerminalReason } from '../evals/frontier-cases.js';
 import { emitFrontierTrace } from '../evals/frontier-trace.js';
 import { getExtensionId, waitForPanelReady } from './test-helpers.js';
 
 const root = path.resolve(process.cwd());
 const extensionPath = path.join(root, 'dist');
+const requestedEvalCase = process.argv.includes('--case') ? process.argv[process.argv.indexOf('--case') + 1] : '';
+class EvalCaseComplete extends Error {}
 const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'glide-worker-recovery-'));
 
 const assert = (condition: unknown, message: string) => {
@@ -350,18 +353,47 @@ try {
   const safeMessages = await panel.evaluate(
     () => (window as unknown as { __workerRecoveryMessages: Array<{ type?: string }> }).__workerRecoveryMessages,
   );
+  const safeResumeRunId = (safeMessages.find((message) => message.type === 'run_resume_started') as { runId?: string })
+    ?.runId;
+  assert(safeResumeRunId, 'Safe resume runtime message missing resumed run id.');
+  await panel.waitForFunction(
+    (runId) =>
+      (
+        window as unknown as { __workerRecoveryMessages: Array<{ type?: string; runId?: string }> }
+      ).__workerRecoveryMessages.some((message) => message.type === 'assistant_final' && message.runId === runId),
+    safeResumeRunId,
+    { timeout: 20_000 },
+  );
   if (process.env.GLIDE_FRONTIER_EVAL_CASE === 'worker-safe-resume') {
-    const resume = safeMessages.find((message) => message.type === 'run_resume_started');
+    const completedMessages = await panel.evaluate(
+      () => (window as unknown as { __workerRecoveryMessages: Array<Record<string, any>> }).__workerRecoveryMessages,
+    );
+    const resume = completedMessages.find((message) => message.type === 'run_resume_started');
+    const final = completedMessages.find(
+      (message) => message.type === 'assistant_final' && message.runId === safeResumeRunId,
+    );
+    assert(
+      resume && final?.finishReason && Number.isInteger(final.contextRevision),
+      `safe resume missing production terminal evidence: ${JSON.stringify({ resume, final })}`,
+    );
+    const finalRevision = final?.contextRevision as number;
+    const finalReason = final?.finishReason as FrontierTerminalReason;
     emitFrontierTrace('worker-safe-resume', {
-      events: resume ? [{ id: 'safe-run:run_resume_started', kind: String(resume.type) }] : [],
+      events: [
+        {
+          source: 'runtime_message',
+          id: `${safeResumeRunId}:run_resume_started`,
+          kind: 'run_resume_started',
+        },
+      ],
       mutations: [],
       actionAttempts: [],
-      contextRevisions: [0],
-      terminalReason: resume ? 'completed' : 'failed',
-      expectedTerminalReason: 'completed',
+      contextRevisions: [{ source: 'runtime_message', revision: finalRevision }],
+      terminal: { source: 'runtime_message', reason: finalReason },
     });
   }
-  console.log('PASS safe checkpoint emitted run_resume_started');
+  console.log('PASS safe checkpoint resumed through production terminal event');
+  if (requestedEvalCase === 'worker-safe-resume') throw new EvalCaseComplete();
 
   await panel.evaluate(async () => {
     (window as unknown as { __workerRecoveryMessages: unknown[] }).__workerRecoveryMessages = [];
@@ -461,18 +493,38 @@ try {
     'Ambiguous checkpoint replayed browser tool.',
   );
   if (process.env.GLIDE_FRONTIER_EVAL_CASE === 'worker-ambiguous-action') {
-    const required = messages.find((message) => message.type === 'run_resume_required');
-    const actionId = 'ambiguous-run:action:1';
+    const required = messages.find((message) => message.type === 'run_resume_required') as
+      | {
+          type: string;
+          action?: { actionId?: string };
+          contextRevision?: number;
+          terminalReason?: 'ambiguous_action';
+        }
+      | undefined;
+    assert(required?.action?.actionId, `ambiguous runtime message missing action: ${JSON.stringify(required)}`);
+    assert(
+      Number.isInteger(required?.contextRevision) && required?.terminalReason === 'ambiguous_action',
+      `ambiguous runtime message missing production state: ${JSON.stringify(required)}`,
+    );
+    const actionId = required?.action?.actionId as string;
+    const contextRevision = required?.contextRevision as number;
     emitFrontierTrace('worker-ambiguous-action', {
-      events: required ? [{ id: `${actionId}:run_resume_required`, actionId, kind: String(required.type) }] : [],
+      events: [
+        {
+          source: 'runtime_message',
+          id: `${actionId}:run_resume_required`,
+          actionId,
+          kind: 'run_resume_required',
+        },
+      ],
       mutations: [],
-      actionAttempts: [{ actionId, state: 'ambiguous' }],
-      contextRevisions: [0],
-      terminalReason: required ? 'ambiguous_action' : 'failed',
-      expectedTerminalReason: 'ambiguous_action',
+      actionAttempts: [{ source: 'runtime_message', actionId, state: 'ambiguous' }],
+      contextRevisions: [{ source: 'runtime_message', revision: contextRevision }],
+      terminal: { source: 'runtime_message', reason: 'ambiguous_action' },
     });
   }
   console.log('PASS ambiguous action required confirmation with zero replay');
+  if (requestedEvalCase === 'worker-ambiguous-action') throw new EvalCaseComplete();
 
   for (const action of [
     { runId: 'ambiguous-post-run', tool: 'httpRequest' },
@@ -504,8 +556,10 @@ try {
   }
   void workerTarget;
 } catch (error) {
-  console.error(error);
-  process.exitCode = 1;
+  if (!(error instanceof EvalCaseComplete)) {
+    console.error(error);
+    process.exitCode = 1;
+  }
 } finally {
   await context?.close();
   await mockModelServer?.close();

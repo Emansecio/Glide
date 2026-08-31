@@ -84,14 +84,27 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 100));
   });
   if (process.env.GLIDE_FRONTIER_EVAL_CASE === 'stale-handle') {
-    const actionId = `${handle.snapshotId}:${handle.ref}`;
+    const executionResponse = await panel.evaluate(() => chrome.runtime.sendMessage({ type: 'get_execution_events' }));
+    const event = executionResponse?.events
+      ?.filter((candidate: any) => candidate.sessionId === 'stable-handle-production-path')
+      .at(-1);
+    if (!event?.actionId || !event?.actionState || !event?.terminalReason || !Number.isInteger(event.contextRevision)) {
+      throw new Error(`stale production event incomplete: ${JSON.stringify(event)}`);
+    }
     emitFrontierTrace('stale-handle', {
-      events: [{ id: `${actionId}:${acted.code}`, actionId, kind: acted.code, frameId: 0 }],
+      events: [
+        {
+          source: 'production_runtime',
+          id: event.id,
+          actionId: event.actionId,
+          kind: event.toolName,
+          frameId: event.frameId ?? 0,
+        },
+      ],
       mutations: [],
-      actionAttempts: [{ actionId, state: 'prepared' }],
-      contextRevisions: [Number(handle.domRevision ?? 0)],
-      terminalReason: acted.code === 'STALE_ELEMENT_HANDLE' ? 'completed' : 'failed',
-      expectedTerminalReason: 'completed',
+      actionAttempts: [{ source: 'production_runtime', actionId: event.actionId, state: event.actionState }],
+      contextRevisions: [{ source: 'production_runtime', revision: event.contextRevision }],
+      terminal: { source: 'production_runtime', reason: event.terminalReason },
     });
   }
   const framePage = await context.newPage();

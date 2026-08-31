@@ -16,6 +16,9 @@
       <form id="action-form">
         <button id="action-submit" type="submit">Submit action</button>
       </form>
+      <button id="spa-action" type="button">Open SPA route</button>
+      <div id="shadow-host"></div>
+      <dialog id="action-dialog">Shadow action completed</dialog>
     </main>
     <script>
       window.__actionLab = {
@@ -27,7 +30,18 @@
         hover: 0,
         checkboxClick: 0,
         checkbox: false,
+        spaNavigation: 0,
+        shadowClick: 0,
+        dialogOpen: 0,
       };
+
+      const shadowRoot = document.getElementById('shadow-host').attachShadow({ mode: 'open' });
+      shadowRoot.innerHTML = '<button id="shadow-action" type="button">Open shadow dialog</button>';
+      shadowRoot.getElementById('shadow-action').addEventListener('click', () => {
+        window.__actionLab.shadowClick += 1;
+        document.getElementById('action-dialog').showModal();
+        window.__actionLab.dialogOpen += 1;
+      });
 
       document.getElementById('action-button').addEventListener('click', () => {
         window.__actionLab.click += 1;
@@ -56,6 +70,10 @@
       document.getElementById('action-checkbox').addEventListener('change', (event) => {
         window.__actionLab.change += 1;
         window.__actionLab.checkbox = event.currentTarget.checked;
+      });
+      document.getElementById('spa-action').addEventListener('click', () => {
+        window.__actionLab.spaNavigation += 1;
+        history.pushState({ fixture: true }, '', '/action-lab.html?route=details');
       });
     </script>
   </body>

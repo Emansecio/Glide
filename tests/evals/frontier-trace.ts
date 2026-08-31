@@ -1,4 +1,4 @@
-import type { FrontierEvalTrace } from './frontier-graders.js';
+import { type FrontierEvalTrace, hasTrustedFrontierEvidence } from './frontier-graders.js';
 
 export const FRONTIER_TRACE_PREFIX = 'GLIDE_FRONTIER_TRACE ';
 
@@ -34,12 +34,15 @@ export function parseFrontierTraceOutput(output: string, caseId: string): Fronti
       !Array.isArray(trace.mutations) ||
       !Array.isArray(trace.actionAttempts) ||
       !Array.isArray(trace.contextRevisions) ||
-      typeof trace.terminalReason !== 'string' ||
-      typeof trace.expectedTerminalReason !== 'string'
+      !isRecord(trace.terminal)
     ) {
       throw new Error(`fixture trace missing required fields for ${caseId}`);
     }
-    return trace as FrontierEvalTrace;
+    const typedTrace = trace as FrontierEvalTrace;
+    if (!hasTrustedFrontierEvidence(typedTrace)) {
+      throw new Error(`fixture trace contains untrusted evidence for ${caseId}`);
+    }
+    return typedTrace;
   }
   throw new Error(`fixture emitted no machine-readable trace for ${caseId}`);
 }

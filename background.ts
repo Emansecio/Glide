@@ -496,6 +496,9 @@ class BackgroundService {
       this.stopGraceTimerId = null;
     }
     const runMeta = this.activeRunId === runId ? this.activeRunMeta : null;
+    const contextRevision =
+      this.runCoordinator.get(runId)?.contextRevision ??
+      (runMeta ? contextTransactionStore.read(runMeta.sessionId).revision : 0);
     this.runPhase = 'stopped';
     if (this.runCoordinator.get(runId)) {
       this.runCoordinator.terminal(runId, 'stopped');
@@ -507,7 +510,13 @@ class BackgroundService {
       this.sendRuntime(runMeta, {
         type: 'run_stopped',
         message: 'Execução interrompida por você.',
-        details: { runId: runMeta.runId, sessionId: runMeta.sessionId, timestamp: Date.now() },
+        details: {
+          runId: runMeta.runId,
+          sessionId: runMeta.sessionId,
+          timestamp: Date.now(),
+          contextRevision,
+          terminalReason: 'stopped',
+        },
       });
     }
   }
@@ -609,6 +618,8 @@ class BackgroundService {
             ? `A ação ${action.tool} pode ter sido executada antes do reinício. Confirme o estado da página antes de continuar.`
             : 'Uma ação pode ter sido executada antes do reinício. Confirme o estado da página antes de continuar.',
           ...(action ? { action: { actionId: action.actionId, tool: action.tool } } : {}),
+          contextRevision: checkpoint.contextRevision,
+          terminalReason: 'ambiguous_action',
         });
         return;
       }
@@ -644,6 +655,7 @@ class BackgroundService {
         type: 'run_resume_started',
         resumedFromRunId: checkpoint.runId,
         message: 'Retomando execução após reinício da extensão.',
+        contextRevision: checkpoint.contextRevision,
       });
       const resumedHistory = normalizeConversationHistory([
         ...recoveryContext.messages,
@@ -3311,6 +3323,10 @@ class BackgroundService {
           resumedFromRunId: options.runMeta.runId,
           message: `A ação ${toolName} pode ter sido executada, mas o resultado não pôde ser confirmado. Verifique o estado antes de continuar.`,
           action: { actionId: journalActionId, tool: toolName },
+          contextRevision:
+            this.runCoordinator.get(options.runMeta.runId)?.contextRevision ??
+            contextTransactionStore.read(options.runMeta.sessionId).revision,
+          terminalReason: 'ambiguous_action',
         });
         this.releaseRunExclusiveLock(options.runMeta.runId);
         sendResult(result, toolArgs);
@@ -3777,6 +3793,19 @@ class BackgroundService {
       checkpointPhase:
         typeof raw.checkpointPhase === 'string' ? this.trimExecutionText(raw.checkpointPhase, 80) : undefined,
       contextRevision: this.normalizeTelemetryMetric(raw.contextRevision),
+      actionState:
+        raw.actionState === 'prepared' ||
+        raw.actionState === 'in_flight' ||
+        raw.actionState === 'committed' ||
+        raw.actionState === 'ambiguous'
+          ? raw.actionState
+          : undefined,
+      terminalReason:
+        raw.terminalReason === 'completed' ||
+        raw.terminalReason === 'failed' ||
+        raw.terminalReason === 'ambiguous_action'
+          ? raw.terminalReason
+          : undefined,
     };
   }
 
@@ -4284,6 +4313,9 @@ class BackgroundService {
         : success
           ? ''
           : 'TOOL_ERROR';
+    const actionId = payload.telemetry.actionId;
+    const actionState = actionId ? this.actionJournal.get(actionId)?.state : undefined;
+    const terminalReason = actionState === 'ambiguous' ? 'ambiguous_action' : success ? 'completed' : 'failed';
     const executionEvent: ExecutionEvent = {
       id: `evt_${endedAt}_${Math.random().toString(36).slice(2, 8)}`,
       runId: runMeta.runId,
@@ -4301,6 +4333,8 @@ class BackgroundService {
       errorMessage: '',
       resultPreview: '',
       ...telemetryFields,
+      ...(actionState ? { actionState } : {}),
+      terminalReason,
     };
 
     this.executionEvents.push(executionEvent);

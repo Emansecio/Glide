@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { canApplyCompactionResult, shouldDiscardCompactionAttempt } from '../../background/context-transaction.js';
-import { emitFrontierTrace } from '../evals/frontier-trace.js';
 
 async function simulatePendingCompaction(options: {
   abort?: boolean;
@@ -75,19 +74,6 @@ describe('compaction transaction guard', () => {
       created: 0,
       committed: 0,
       emitted: 0,
-    });
-  });
-
-  it('emits compaction-stop eval trace from discarded work', async () => {
-    const effects = await simulatePendingCompaction({ abort: true });
-    expect(effects).toEqual({ deleted: 0, created: 0, committed: 0, emitted: 0 });
-    emitFrontierTrace('compaction-stop', {
-      events: [{ id: 'compaction-stop:abort', kind: 'stop' }],
-      mutations: [],
-      actionAttempts: [],
-      contextRevisions: [2],
-      terminalReason: effects.committed === 0 ? 'stopped' : 'completed',
-      expectedTerminalReason: 'stopped',
     });
   });
 

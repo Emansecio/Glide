@@ -70,7 +70,7 @@ jobs:
       - run: node dist/tests/validate-extension.js
 
   e2e:
-    name: E2E Tests
+    name: Canonical Frontier E2E and deterministic evals
     runs-on: ubuntu-latest
     needs: build
     steps:
@@ -86,4 +86,7 @@ jobs:
           path: dist/
       - run: npm run build:test
       - run: npx playwright install chromium --with-deps
-      - run: xvfb-run -a node dist/tests/e2e/run-e2e.js
+      - name: Run production-path Frontier browser gate
+        run: xvfb-run -a npm run test:e2e:run
+      - name: Run deterministic Frontier eval gate
+        run: xvfb-run -a npm run test:evals:run

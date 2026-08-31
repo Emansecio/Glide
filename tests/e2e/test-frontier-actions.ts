@@ -63,18 +63,47 @@ async function sendManualTool(
   );
 }
 
-async function readSessionExecutionEvent(panel: Page, sessionId: string) {
+type ProductionExecutionEvent = {
+  id: string;
+  actionId?: string;
+  actionState?: 'prepared' | 'in_flight' | 'committed' | 'ambiguous';
+  contextRevision?: number;
+  frameId?: number;
+  sessionId?: string;
+  success?: boolean;
+  terminalReason?: 'completed' | 'failed' | 'ambiguous_action';
+  toolName?: string;
+};
+
+async function readSessionExecutionEvent(
+  panel: Page,
+  sessionId: string,
+): Promise<ProductionExecutionEvent | undefined> {
   const response = (await panel.evaluate(() => chrome.runtime.sendMessage({ type: 'get_execution_events' }))) as {
-    events?: Array<{
-      id: string;
-      actionId?: string;
-      frameId?: number;
-      contextRevision?: number;
-      sessionId?: string;
-      success?: boolean;
-    }>;
+    events?: ProductionExecutionEvent[];
   };
   return response.events?.filter((event) => event.sessionId === sessionId).at(-1);
+}
+
+function runtimeTrace(event: ProductionExecutionEvent) {
+  assert(event.actionId, `production event missing actionId: ${JSON.stringify(event)}`);
+  assert(event.actionState, `production event missing actionState: ${JSON.stringify(event)}`);
+  assert(event.terminalReason, `production event missing terminalReason: ${JSON.stringify(event)}`);
+  assert(Number.isInteger(event.contextRevision), `production event missing contextRevision: ${JSON.stringify(event)}`);
+  return {
+    events: [
+      {
+        source: 'production_runtime' as const,
+        id: event.id,
+        actionId: event.actionId,
+        kind: event.toolName || 'browser_action',
+        frameId: event.frameId,
+      },
+    ],
+    actionAttempts: [{ source: 'production_runtime' as const, actionId: event.actionId, state: event.actionState }],
+    contextRevisions: [{ source: 'production_runtime' as const, revision: event.contextRevision as number }],
+    terminal: { source: 'production_runtime' as const, reason: event.terminalReason },
+  };
 }
 
 async function clickOnce(context: BrowserContext, worker: Worker, panel: Page, baseUrl: string) {
@@ -99,15 +128,19 @@ async function clickOnce(context: BrowserContext, worker: Worker, panel: Page, b
     assert(event?.actionId, `eval click execution event missing actionId: ${JSON.stringify(event)}`);
     const clickCount = await page.evaluate(() => (window as any).__actionLab.click as number);
     emitFrontierTrace('click-once', {
-      events: [{ id: event.id, actionId: event.actionId, kind: 'mutation', frameId: event.frameId ?? 0 }],
+      ...runtimeTrace(event),
       mutations:
         clickCount === 1
-          ? [{ actionId: event.actionId, requestedFrameId: 0, actualFrameId: event.frameId ?? 0, handleState: 'fresh' }]
+          ? [
+              {
+                source: 'fixture_state',
+                actionId: event.actionId,
+                requestedFrameId: 0,
+                actualFrameId: event.frameId ?? 0,
+                handleState: 'fresh',
+              },
+            ]
           : [],
-      actionAttempts: [{ actionId: event.actionId, state: 'committed' }],
-      contextRevisions: [event.contextRevision ?? 0],
-      terminalReason: response.success ? 'completed' : 'failed',
-      expectedTerminalReason: 'completed',
     });
   } else {
     for (const selector of ['#action-button', '#action-checkbox', '#action-submit']) {
@@ -253,11 +286,12 @@ async function checkboxFrame(context: BrowserContext, worker: Worker, panel: Pag
     const event = await readSessionExecutionEvent(panel, sessionId);
     assert(event?.actionId, `eval form execution event missing actionId: ${JSON.stringify(event)}`);
     emitFrontierTrace('form-frame', {
-      events: [{ id: event.id, actionId: event.actionId, kind: 'mutation', frameId: event.frameId }],
+      ...runtimeTrace(event),
       mutations:
         childChecked && !topChecked
           ? [
               {
+                source: 'fixture_state',
                 actionId: event.actionId,
                 requestedFrameId: childFrameId,
                 actualFrameId: childFrameId,
@@ -265,12 +299,92 @@ async function checkboxFrame(context: BrowserContext, worker: Worker, panel: Pag
               },
             ]
           : [],
-      actionAttempts: [{ actionId: event.actionId, state: 'committed' }],
-      contextRevisions: [event.contextRevision ?? 0],
-      terminalReason: explicitResponse.success ? 'completed' : 'failed',
-      expectedTerminalReason: 'completed',
     });
   }
+  await page.close();
+}
+
+async function shadowDialog(context: BrowserContext, worker: Worker, panel: Page, baseUrl: string) {
+  const page = await context.newPage();
+  await page.goto(`${baseUrl}/action-lab.html`);
+  const tabId = await worker.evaluate(async (url) => (await chrome.tabs.query({ url }))[0]?.id, page.url());
+  assert(typeof tabId === 'number', 'Fixture tab not found.');
+  await waitForBridge(worker, tabId);
+  const sessionId = 'frontier-eval-shadow-dialog';
+  const response = (await sendManualTool(
+    panel,
+    tabId,
+    'click',
+    { selector: '#shadow-host >>> #shadow-action', waitForDialog: false },
+    sessionId,
+  )) as { success?: boolean; result?: { success?: boolean } };
+  assert(response.success && response.result?.success, `shadow click failed: ${JSON.stringify(response)}`);
+  const observed = await page.evaluate(() => ({
+    shadowClick: (window as any).__actionLab.shadowClick as number,
+    dialogOpen: (window as any).__actionLab.dialogOpen as number,
+    dialogVisible: (document.getElementById('action-dialog') as HTMLDialogElement).open,
+  }));
+  const event = await readSessionExecutionEvent(panel, sessionId);
+  assert(event, 'shadow production execution event missing');
+  emitFrontierTrace('shadow-dialog', {
+    ...runtimeTrace(event),
+    mutations:
+      observed.shadowClick === 1 && observed.dialogOpen === 1 && observed.dialogVisible
+        ? [
+            {
+              source: 'fixture_state',
+              actionId: event.actionId as string,
+              requestedFrameId: 0,
+              actualFrameId: event.frameId ?? 0,
+              handleState: 'fresh',
+            },
+          ]
+        : [],
+  });
+  await page.close();
+}
+
+async function spaNavigation(context: BrowserContext, worker: Worker, panel: Page, baseUrl: string) {
+  const page = await context.newPage();
+  await page.goto(`${baseUrl}/action-lab.html`);
+  const tabId = await worker.evaluate(async (url) => (await chrome.tabs.query({ url }))[0]?.id, page.url());
+  assert(typeof tabId === 'number', 'Fixture tab not found.');
+  await waitForBridge(worker, tabId);
+  const sessionId = 'frontier-eval-spa-navigation';
+  const response = (await sendManualTool(
+    panel,
+    tabId,
+    'click',
+    {
+      selector: '#spa-action',
+      waitForDialog: false,
+      postcondition: { kind: 'url_changed', from: page.url() },
+    },
+    sessionId,
+  )) as { success?: boolean; result?: { success?: boolean; verified?: boolean } };
+  assert(response.success && response.result?.success, `SPA click failed: ${JSON.stringify(response)}`);
+  assert(response.result?.verified === true, `SPA postcondition missing: ${JSON.stringify(response)}`);
+  const observed = await page.evaluate(() => ({
+    navigationCount: (window as any).__actionLab.spaNavigation as number,
+    path: `${location.pathname}${location.search}`,
+  }));
+  const event = await readSessionExecutionEvent(panel, sessionId);
+  assert(event, 'SPA production execution event missing');
+  emitFrontierTrace('spa-navigation', {
+    ...runtimeTrace(event),
+    mutations:
+      observed.navigationCount === 1 && observed.path === '/action-lab.html?route=details'
+        ? [
+            {
+              source: 'fixture_state',
+              actionId: event.actionId as string,
+              requestedFrameId: 0,
+              actualFrameId: event.frameId ?? 0,
+              handleState: 'fresh',
+            },
+          ]
+        : [],
+  });
   await page.close();
 }
 
@@ -279,6 +393,8 @@ const cases = {
   'find-element': findElement,
   'checkbox-frame': checkboxFrame,
   'delayed-ambiguous': delayedAmbiguousMutation,
+  'shadow-dialog': shadowDialog,
+  'spa-navigation': spaNavigation,
   postcondition,
 } as const;
 if (!(requestedCase in cases)) {

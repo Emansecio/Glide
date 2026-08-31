@@ -35,6 +35,10 @@ export type ExecutionEvent = {
   recoveryStage?: string;
   checkpointPhase?: string;
   contextRevision?: number;
+  /** Final state read from production action journal after tool dispatch. */
+  actionState?: 'prepared' | 'in_flight' | 'committed' | 'ambiguous';
+  /** Terminal classification derived from production result/journal state. */
+  terminalReason?: 'completed' | 'failed' | 'ambiguous_action';
 };
 
 export const DEFAULT_REQUEST_TIMEOUT_MS = 30000;

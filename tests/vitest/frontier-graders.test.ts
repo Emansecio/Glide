@@ -16,36 +16,48 @@ const evalCase: FrontierCase = {
     'terminal_reason',
   ],
   timeoutMs: 1_000,
+  expectedTerminalReason: 'completed',
   expectedEffects: {
     events: 1,
     mutations: 1,
     committedAttempts: 1,
-    allowedActionTransitions: [['prepared', 'in_flight', 'committed']],
+    allowedActionTransitions: [['committed']],
   },
 };
 
 const trace = (overrides: Partial<FrontierEvalTrace> = {}): FrontierEvalTrace => ({
-  events: [{ id: 'event-1', actionId: 'action-1', kind: 'mutation', frameId: 2 }],
-  mutations: [{ actionId: 'action-1', requestedFrameId: 2, actualFrameId: 2, handleState: 'fresh' }],
-  actionAttempts: [
-    { actionId: 'action-1', state: 'prepared' },
-    { actionId: 'action-1', state: 'in_flight' },
-    { actionId: 'action-1', state: 'committed' },
+  events: [
+    {
+      source: 'production_runtime',
+      id: 'event-1',
+      actionId: 'action-1',
+      kind: 'click',
+      frameId: 2,
+    },
   ],
-  contextRevisions: [4],
-  terminalReason: 'completed',
-  expectedTerminalReason: 'completed',
+  mutations: [
+    {
+      source: 'fixture_state',
+      actionId: 'action-1',
+      requestedFrameId: 2,
+      actualFrameId: 2,
+      handleState: 'fresh',
+    },
+  ],
+  actionAttempts: [{ source: 'production_runtime', actionId: 'action-1', state: 'committed' }],
+  contextRevisions: [{ source: 'production_runtime', revision: 4 }],
+  terminal: { source: 'production_runtime', reason: 'completed' },
   ...overrides,
 });
 
 describe('frontier invariant grader', () => {
-  it('passes exact effect counts and allowed action transition', () => {
+  it('passes evidence derived from production runtime and fixture state', () => {
     expect(gradeFrontierCase(evalCase, trace())).toEqual({
       caseId: 'test-case',
       passed: true,
       failures: [],
       metrics: {
-        actionAttempts: 3,
+        actionAttempts: 1,
         contextCommits: 1,
         events: 1,
         mutations: 1,
@@ -58,8 +70,8 @@ describe('frontier invariant grader', () => {
       'multiple unique events',
       trace({
         events: [
-          { id: 'first', kind: 'mutation' },
-          { id: 'second', kind: 'mutation' },
+          { source: 'production_runtime', id: 'first', kind: 'click' },
+          { source: 'production_runtime', id: 'second', kind: 'click' },
         ],
       }),
       'event count 2; expected 1',
@@ -68,8 +80,20 @@ describe('frontier invariant grader', () => {
       'multiple mutations',
       trace({
         mutations: [
-          { actionId: 'action-1', requestedFrameId: 2, actualFrameId: 2, handleState: 'fresh' },
-          { actionId: 'action-2', requestedFrameId: 2, actualFrameId: 2, handleState: 'fresh' },
+          {
+            source: 'fixture_state',
+            actionId: 'action-1',
+            requestedFrameId: 2,
+            actualFrameId: 2,
+            handleState: 'fresh',
+          },
+          {
+            source: 'fixture_state',
+            actionId: 'action-2',
+            requestedFrameId: 2,
+            actualFrameId: 2,
+            handleState: 'fresh',
+          },
         ],
       }),
       'mutation count 2; expected 1',
@@ -78,40 +102,48 @@ describe('frontier invariant grader', () => {
       'multiple committed attempts',
       trace({
         actionAttempts: [
-          { actionId: 'action-1', state: 'prepared' },
-          { actionId: 'action-1', state: 'in_flight' },
-          { actionId: 'action-1', state: 'committed' },
-          { actionId: 'action-2', state: 'committed' },
+          { source: 'production_runtime', actionId: 'action-1', state: 'committed' },
+          { source: 'production_runtime', actionId: 'action-2', state: 'committed' },
         ],
       }),
       'committed attempt count 2; expected 1',
     ],
     [
-      'invalid transition',
+      'cross-frame mutation',
       trace({
-        actionAttempts: [
-          { actionId: 'action-1', state: 'prepared' },
-          { actionId: 'action-1', state: 'committed' },
+        mutations: [
+          {
+            source: 'fixture_state',
+            actionId: 'action-1',
+            requestedFrameId: 2,
+            actualFrameId: 7,
+            handleState: 'fresh',
+          },
         ],
       }),
-      'invalid action transition action-1: prepared -> committed',
-    ],
-    [
-      'cross-frame mutation',
-      trace({ mutations: [{ actionId: 'action-1', requestedFrameId: 2, actualFrameId: 7, handleState: 'fresh' }] }),
       'cross-frame mutation',
     ],
     [
       'stale-handle mutation',
-      trace({ mutations: [{ actionId: 'action-1', requestedFrameId: 2, actualFrameId: 2, handleState: 'stale' }] }),
+      trace({
+        mutations: [
+          {
+            source: 'fixture_state',
+            actionId: 'action-1',
+            requestedFrameId: 2,
+            actualFrameId: 2,
+            handleState: 'stale',
+          },
+        ],
+      }),
       'stale handle mutated',
     ],
     [
       'post-ambiguous replay',
       trace({
         actionAttempts: [
-          { actionId: 'action-1', state: 'ambiguous' },
-          { actionId: 'action-1', state: 'committed' },
+          { source: 'production_runtime', actionId: 'action-1', state: 'ambiguous' },
+          { source: 'production_runtime', actionId: 'action-1', state: 'committed' },
         ],
       }),
       'ambiguous action replayed',
@@ -119,8 +151,13 @@ describe('frontier invariant grader', () => {
     ['missing context revision', trace({ contextRevisions: [] }), 'missing context revision'],
     [
       'wrong terminal reason',
-      trace({ terminalReason: 'failed', expectedTerminalReason: 'completed' }),
+      trace({ terminal: { source: 'production_runtime', reason: 'failed' } }),
       'terminal reason failed; expected completed',
+    ],
+    [
+      'self-declared action state',
+      trace({ actionAttempts: [{ source: 'test_literal' as never, actionId: 'action-1', state: 'committed' }] }),
+      'untrusted trace source',
     ],
   ])('fails on %s', (_name, input, expectedFailure) => {
     const grade = gradeFrontierCase(evalCase, input);
@@ -128,15 +165,18 @@ describe('frontier invariant grader', () => {
     expect(grade.failures).toContain(expectedFailure);
   });
 
-  it('parses emitted fixture trace and rejects missing required trace fields', () => {
+  it('parses trusted fixture trace and rejects self-declared orchestration fields', () => {
     const encoded = `${FRONTIER_TRACE_PREFIX}${JSON.stringify({ caseId: 'test-case', trace: trace() })}`;
     expect(parseFrontierTraceOutput(encoded, 'test-case')).toEqual(trace());
     expect(() =>
       parseFrontierTraceOutput(
-        `${FRONTIER_TRACE_PREFIX}${JSON.stringify({ caseId: 'test-case', trace: { events: [] } })}`,
+        `${FRONTIER_TRACE_PREFIX}${JSON.stringify({
+          caseId: 'test-case',
+          trace: { ...trace(), actionAttempts: [{ actionId: 'literal', state: 'committed' }] },
+        })}`,
         'test-case',
       ),
-    ).toThrow('fixture trace missing required fields for test-case');
+    ).toThrow('fixture trace contains untrusted evidence for test-case');
     expect(() => parseFrontierTraceOutput('PASS without trace', 'test-case')).toThrow(
       'fixture emitted no machine-readable trace for test-case',
     );

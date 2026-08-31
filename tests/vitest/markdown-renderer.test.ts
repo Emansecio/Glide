@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ContextTransactionStore } from '../../background/context-transaction.js';
 import { renderMarkdownToHtml } from '../../sidepanel/ui/markdown-renderer.js';
-import { emitFrontierTrace } from '../evals/frontier-trace.js';
 
 describe('renderMarkdownToHtml', () => {
   it('renders CommonMark and GFM structures', () => {
@@ -79,15 +78,7 @@ describe('renderMarkdownToHtml', () => {
     });
     expect(rendered.fallback).toBe(false);
     expect(rendered.html.length).toBeGreaterThan(source.length);
-    const eventId = `${commit.runId}:${commit.turnId}`;
-    emitFrontierTrace('long-markdown', {
-      events: [{ id: eventId, kind: 'context_commit' }],
-      mutations: [],
-      actionAttempts: [],
-      contextRevisions: [commit.revision],
-      terminalReason: rendered.fallback ? 'failed' : 'completed',
-      expectedTerminalReason: 'completed',
-    });
+    expect(commit.revision).toBe(1);
   });
 
   it('falls back to escaped plain text for malformed runtime input', () => {

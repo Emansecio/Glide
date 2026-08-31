@@ -1,4 +1,4 @@
-import type { ActionAttemptState, FrontierCase } from './frontier-cases.js';
+import type { ActionAttemptState, FrontierCase, FrontierTerminalReason } from './frontier-cases.js';
 
 export type FrontierGrade = {
   caseId: string;
@@ -7,26 +7,71 @@ export type FrontierGrade = {
   metrics: Record<string, number>;
 };
 
+export type FrontierEvidenceSource = 'production_runtime' | 'fixture_state' | 'runtime_message' | 'storage_state';
+
 export type FrontierEvalTrace = {
-  events: Array<{ id: string; actionId?: string; kind: string; frameId?: number }>;
+  events: Array<{
+    source: FrontierEvidenceSource;
+    id: string;
+    actionId?: string;
+    kind: string;
+    frameId?: number;
+  }>;
   mutations: Array<{
+    source: 'fixture_state';
     actionId: string;
     requestedFrameId: number;
     actualFrameId: number;
     handleState: 'fresh' | 'stale' | 'none';
   }>;
-  actionAttempts: Array<{ actionId: string; state: ActionAttemptState }>;
-  contextRevisions: number[];
-  terminalReason: string;
-  expectedTerminalReason: string;
+  actionAttempts: Array<{
+    source: 'production_runtime' | 'runtime_message' | 'storage_state';
+    actionId: string;
+    state: ActionAttemptState;
+  }>;
+  contextRevisions: Array<{
+    source: 'production_runtime' | 'runtime_message' | 'storage_state';
+    revision: number;
+  }>;
+  terminal: {
+    source: 'production_runtime' | 'runtime_message' | 'storage_state';
+    reason: FrontierTerminalReason;
+  };
 };
 
+const trustedSources = new Set<FrontierEvidenceSource>([
+  'production_runtime',
+  'fixture_state',
+  'runtime_message',
+  'storage_state',
+]);
 const hasInvariant = (evalCase: FrontierCase, invariant: string) => evalCase.invariants.includes(invariant);
 const sameTransition = (left: ActionAttemptState[], right: ActionAttemptState[]) =>
   left.length === right.length && left.every((state, index) => state === right[index]);
 
+export const hasTrustedFrontierEvidence = (trace: FrontierEvalTrace): boolean =>
+  trace.events.every((event) => trustedSources.has(event.source)) &&
+  trace.mutations.every((mutation) => mutation.source === 'fixture_state') &&
+  trace.actionAttempts.every(
+    (attempt) =>
+      attempt.source === 'production_runtime' ||
+      attempt.source === 'runtime_message' ||
+      attempt.source === 'storage_state',
+  ) &&
+  trace.contextRevisions.every(
+    (commit) =>
+      commit.source === 'production_runtime' ||
+      commit.source === 'runtime_message' ||
+      commit.source === 'storage_state',
+  ) &&
+  (trace.terminal.source === 'production_runtime' ||
+    trace.terminal.source === 'runtime_message' ||
+    trace.terminal.source === 'storage_state');
+
 export const gradeFrontierCase = (evalCase: FrontierCase, trace: FrontierEvalTrace): FrontierGrade => {
   const failures: string[] = [];
+
+  if (!hasTrustedFrontierEvidence(trace)) failures.push('untrusted trace source');
 
   if (hasInvariant(evalCase, 'single_event')) {
     const seen = new Set<string>();
@@ -90,19 +135,20 @@ export const gradeFrontierCase = (evalCase: FrontierCase, trace: FrontierEvalTra
     }
   }
 
+  const revisions = trace.contextRevisions.map((commit) => commit.revision);
   if (
     hasInvariant(evalCase, 'context_revision') &&
-    (trace.contextRevisions.length === 0 ||
-      trace.contextRevisions.some(
+    (revisions.length === 0 ||
+      revisions.some(
         (revision, index) =>
-          !Number.isInteger(revision) || revision < 0 || (index > 0 && revision <= trace.contextRevisions[index - 1]),
+          !Number.isInteger(revision) || revision < 0 || (index > 0 && revision <= revisions[index - 1]),
       ))
   ) {
     failures.push('missing context revision');
   }
 
-  if (hasInvariant(evalCase, 'terminal_reason') && trace.terminalReason !== trace.expectedTerminalReason) {
-    failures.push(`terminal reason ${trace.terminalReason}; expected ${trace.expectedTerminalReason}`);
+  if (hasInvariant(evalCase, 'terminal_reason') && trace.terminal.reason !== evalCase.expectedTerminalReason) {
+    failures.push(`terminal reason ${trace.terminal.reason}; expected ${evalCase.expectedTerminalReason}`);
   }
 
   return {

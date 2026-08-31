@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { ContextTransactionStore } from '../../background/context-transaction.js';
 import { fitSessionToBudget, measureStoredBytes } from '../../sidepanel/ui/history-budget.js';
 import type { ChatSessionPayload } from '../../sidepanel/ui/history-storage.js';
-import { emitFrontierTrace } from '../evals/frontier-trace.js';
 
 function session(transcript: unknown[], contextTranscript?: unknown[]): ChatSessionPayload {
   return {
@@ -87,14 +86,6 @@ describe('history byte budgets', () => {
     });
     expect(restored.messages).toHaveLength(1);
     expect(commit.revision).toBe(7);
-    emitFrontierTrace('history-restart', {
-      events: [{ id: `${commit.runId}:${commit.turnId}`, kind: 'context_commit' }],
-      mutations: [],
-      actionAttempts: [],
-      contextRevisions: [restored.revision, commit.revision],
-      terminalReason: 'completed',
-      expectedTerminalReason: 'completed',
-    });
   });
 
   it('budgets display and distinct context transcripts independently', () => {

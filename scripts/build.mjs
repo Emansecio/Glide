@@ -133,6 +133,7 @@ const buildTestBundles = async () => {
       path.join(rootDir, 'tests', 'e2e', 'test-frontier-actions.ts'),
       path.join(rootDir, 'tests', 'e2e', 'test-stable-handles.ts'),
       path.join(rootDir, 'tests', 'e2e', 'test-worker-recovery.ts'),
+      path.join(rootDir, 'tests', 'e2e', 'test-frontier-runtime-evals.ts'),
       path.join(rootDir, 'tests', 'e2e', 'test-model-communication.ts'),
       path.join(rootDir, 'tests', 'e2e', 'test-live-model-e2e.ts'),
       path.join(rootDir, 'tests', 'evals', 'run-frontier-evals.ts'),

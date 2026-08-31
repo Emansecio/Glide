@@ -6,72 +6,110 @@ import { frontierCases } from './frontier-cases.js';
 import { gradeFrontierCase } from './frontier-graders.js';
 import { parseFrontierTraceOutput } from './frontier-trace.js';
 
-const vitestCommand = (file: string, testName: string) =>
-  [
-    process.execPath,
-    [
-      path.resolve('node_modules/vitest/vitest.mjs'),
-      'run',
-      '--run',
-      file,
-      '--testNamePattern',
-      testName,
-      '--reporter',
-      'verbose',
-    ],
-  ] as const;
-const fixtureCommands: Record<string, readonly [string, readonly string[]]> = {
-  'click-once': [process.execPath, ['dist/tests/e2e/test-frontier-actions.js', '--case', 'click-once']],
-  'form-frame': [process.execPath, ['dist/tests/e2e/test-frontier-actions.js', '--case', 'checkbox-frame']],
-  'stale-handle': [process.execPath, ['dist/tests/e2e/test-stable-handles.js']],
-  'shadow-dialog': vitestCommand('tests/vitest/stable-element-handle.test.ts', 'emits shadow-dialog eval trace'),
-  'spa-navigation': vitestCommand('tests/vitest/action-postcondition.test.ts', 'emits spa-navigation eval trace'),
-  'compaction-stop': vitestCommand('tests/vitest/compaction-transaction.test.ts', 'emits compaction-stop eval trace'),
-  'worker-safe-resume': [process.execPath, ['dist/tests/e2e/test-worker-recovery.js']],
-  'worker-ambiguous-action': [process.execPath, ['dist/tests/e2e/test-worker-recovery.js']],
-  'long-markdown': vitestCommand('tests/vitest/markdown-renderer.test.ts', 'emits long-markdown eval trace'),
-  'history-restart': vitestCommand('tests/vitest/history-budget.test.ts', 'emits history-restart eval trace'),
+type FixtureGroup = {
+  caseIds: string[];
+  command: string;
+  args: string[];
+  env?: Record<string, string>;
+  timeoutMs: number;
 };
+
+const fixtureGroups: FixtureGroup[] = [
+  {
+    caseIds: ['click-once'],
+    command: process.execPath,
+    args: ['dist/tests/e2e/test-frontier-actions.js', '--case', 'click-once'],
+    env: { GLIDE_FRONTIER_EVAL_CASE: 'click-once' },
+    timeoutMs: 30_000,
+  },
+  {
+    caseIds: ['form-frame'],
+    command: process.execPath,
+    args: ['dist/tests/e2e/test-frontier-actions.js', '--case', 'checkbox-frame'],
+    env: { GLIDE_FRONTIER_EVAL_CASE: 'form-frame' },
+    timeoutMs: 30_000,
+  },
+  {
+    caseIds: ['stale-handle'],
+    command: process.execPath,
+    args: ['dist/tests/e2e/test-stable-handles.js'],
+    env: { GLIDE_FRONTIER_EVAL_CASE: 'stale-handle' },
+    timeoutMs: 30_000,
+  },
+  {
+    caseIds: ['shadow-dialog'],
+    command: process.execPath,
+    args: ['dist/tests/e2e/test-frontier-actions.js', '--case', 'shadow-dialog'],
+    timeoutMs: 30_000,
+  },
+  {
+    caseIds: ['spa-navigation'],
+    command: process.execPath,
+    args: ['dist/tests/e2e/test-frontier-actions.js', '--case', 'spa-navigation'],
+    timeoutMs: 30_000,
+  },
+  {
+    caseIds: ['compaction-stop', 'long-markdown', 'history-restart'],
+    command: process.execPath,
+    args: ['dist/tests/e2e/test-frontier-runtime-evals.js'],
+    timeoutMs: 60_000,
+  },
+  {
+    caseIds: ['worker-safe-resume'],
+    command: process.execPath,
+    args: ['dist/tests/e2e/test-worker-recovery.js', '--case', 'worker-safe-resume'],
+    env: { GLIDE_FRONTIER_EVAL_CASE: 'worker-safe-resume' },
+    timeoutMs: 90_000,
+  },
+  {
+    caseIds: ['worker-ambiguous-action'],
+    command: process.execPath,
+    args: ['dist/tests/e2e/test-worker-recovery.js', '--case', 'worker-ambiguous-action'],
+    env: { GLIDE_FRONTIER_EVAL_CASE: 'worker-ambiguous-action' },
+    timeoutMs: 90_000,
+  },
+];
+
+const traces = new Map<string, ReturnType<typeof parseFrontierTraceOutput>>();
+const commandFailures = new Map<string, string>();
+for (const group of fixtureGroups) {
+  const child = spawnSync(group.command, group.args, {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+    timeout: group.timeoutMs,
+    env: { ...process.env, ...group.env },
+  });
+  const output = `${child.stdout || ''}\n${child.stderr || ''}`.trim();
+  if (child.status !== 0) {
+    const failure = `fixture command failed with status ${child.status ?? 1}: ${output.slice(-1_000)}`;
+    group.caseIds.forEach((caseId) => commandFailures.set(caseId, failure));
+    continue;
+  }
+  for (const caseId of group.caseIds) {
+    try {
+      traces.set(caseId, parseFrontierTraceOutput(output, caseId));
+    } catch (error) {
+      commandFailures.set(caseId, error instanceof Error ? error.message : String(error));
+    }
+  }
+}
 
 const grades = frontierCases.map((evalCase) => {
   const fixturePath = path.resolve(process.cwd(), evalCase.fixture.split('#', 1)[0]);
   if (!fs.existsSync(fixturePath)) {
-    return {
-      caseId: evalCase.id,
-      passed: false,
-      failures: [`fixture missing: ${evalCase.fixture}`],
-      metrics: {},
-    };
+    return { caseId: evalCase.id, passed: false, failures: [`fixture missing: ${evalCase.fixture}`], metrics: {} };
   }
-
-  const [command, args] = fixtureCommands[evalCase.id];
-  const child = spawnSync(command, args, {
-    cwd: process.cwd(),
-    encoding: 'utf8',
-    timeout: evalCase.timeoutMs,
-    env: { ...process.env, GLIDE_FRONTIER_EVAL_CASE: evalCase.id },
-  });
-  const output = `${child.stdout || ''}\n${child.stderr || ''}`.trim();
-  if (child.status !== 0) {
-    return {
-      caseId: evalCase.id,
-      passed: false,
-      failures: [`fixture command failed with status ${child.status ?? 1}: ${output.slice(-500)}`],
-      metrics: {},
-    };
+  const commandFailure = commandFailures.get(evalCase.id);
+  if (commandFailure) {
+    return { caseId: evalCase.id, passed: false, failures: [commandFailure], metrics: {} };
   }
-
-  try {
-    return gradeFrontierCase(evalCase, parseFrontierTraceOutput(output, evalCase.id));
-  } catch (error) {
-    return {
-      caseId: evalCase.id,
-      passed: false,
-      failures: [error instanceof Error ? error.message : String(error)],
-      metrics: {},
-    };
+  const trace = traces.get(evalCase.id);
+  if (!trace) {
+    return { caseId: evalCase.id, passed: false, failures: ['fixture trace missing'], metrics: {} };
   }
+  return gradeFrontierCase(evalCase, trace);
 });
+
 const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'glide-frontier-evals-'));
 const outputPath = path.join(outputDir, 'summary.json');
 const summary = {
@@ -81,7 +119,6 @@ const summary = {
   grades,
 };
 fs.writeFileSync(outputPath, `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
-
 for (const grade of grades) {
   console.log(
     `${grade.passed ? 'PASS' : 'FAIL'} ${grade.caseId}${grade.failures.length ? `: ${grade.failures.join(', ')}` : ''}`,

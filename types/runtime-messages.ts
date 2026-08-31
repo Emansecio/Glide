@@ -176,6 +176,7 @@ export type RunResumeStarted = RuntimeMessageBase & {
   type: 'run_resume_started';
   resumedFromRunId: string;
   message: string;
+  contextRevision?: number;
 };
 
 export type RunResumeRequired = RuntimeMessageBase & {
@@ -183,6 +184,8 @@ export type RunResumeRequired = RuntimeMessageBase & {
   resumedFromRunId: string;
   message: string;
   action?: { actionId: string; tool: string };
+  contextRevision?: number;
+  terminalReason?: 'ambiguous_action';
 };
 
 export type RunInterrupted = RuntimeMessageBase & {

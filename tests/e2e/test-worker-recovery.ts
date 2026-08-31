@@ -395,8 +395,10 @@ try {
   workerTarget = await restartWorker(context, panel, workerTarget);
   await panel.waitForFunction(
     () =>
-      (window as unknown as { __workerRecoveryMessages: Array<{ type?: string }> }).__workerRecoveryMessages.some(
-        (message) => message.type === 'run_interrupted',
+      (
+        window as unknown as { __workerRecoveryMessages: Array<{ type?: string; runId?: string }> }
+      ).__workerRecoveryMessages.some(
+        (message) => message.type === 'run_interrupted' && message.runId === 'lossy-context-run',
       ),
     { timeout: 20_000 },
   );
@@ -404,14 +406,16 @@ try {
     () =>
       (
         window as unknown as {
-          __workerRecoveryMessages: Array<{ type?: string; recoveryLoss?: { lossy?: boolean } }>;
+          __workerRecoveryMessages: Array<{ type?: string; runId?: string; recoveryLoss?: { lossy?: boolean } }>;
         }
       ).__workerRecoveryMessages,
   );
-  const lossyInterrupted = lossyMessages.find((message) => message.type === 'run_interrupted');
+  const lossyInterrupted = lossyMessages.find(
+    (message) => message.type === 'run_interrupted' && message.runId === 'lossy-context-run',
+  );
   assert(lossyInterrupted?.recoveryLoss?.lossy === true, 'Lossy recovery should emit structured interruption loss.');
   assert(
-    !lossyMessages.some((message) => message.type === 'run_resume_started'),
+    !lossyMessages.some((message) => message.type === 'run_resume_started' && message.runId === 'lossy-context-run'),
     'Lossy recovery context must never auto-resume.',
   );
   console.log('PASS lossy recovery context interrupted with structured loss and no auto-resume');

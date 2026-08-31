@@ -1,4 +1,3 @@
-import type { RunTerminalReason } from '../../background/run-types.js';
 import {
   MODEL_DISPLAY_LABELS,
   PROVIDER_DEFAULT_MODELS,
@@ -7,6 +6,7 @@ import {
   normalizeProviderId,
   normalizeProviderModel,
 } from '../../ai/providers.js';
+import type { RunTerminalReason } from '../../background/run-types.js';
 import {
   buildModelProbeRequestKey,
   isModelProbeResponseStale,

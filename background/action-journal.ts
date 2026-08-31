@@ -1,5 +1,5 @@
-import { VERIFICATION_EFFECT_TOOLS } from './service-config.js';
 import type { ActionJournalEntry } from './run-types.js';
+import { VERIFICATION_EFFECT_TOOLS } from './service-config.js';
 
 export const MUTATIVE_BROWSER_EFFECT_TOOLS = VERIFICATION_EFFECT_TOOLS;
 

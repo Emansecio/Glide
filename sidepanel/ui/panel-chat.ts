@@ -1,9 +1,9 @@
 import { createMessage } from '../../ai/message-schema.js';
 import type { Message } from '../../ai/message-schema.js';
 import { dedupeThinking, extractThinking } from '../../ai/message-utils.js';
+import { getTerminalStatusPresentation } from './panel-status.js';
 import { resolvePanelTabId } from './panel-tab-id.js';
 import type { UsagePayload } from './panel-types.js';
-import { getTerminalStatusPresentation } from './panel-status.js';
 import { SidePanelUI } from './panel-ui.js';
 
 SidePanelUI.prototype.sendMessage = async function sendMessage() {

@@ -37,8 +37,7 @@ export class VerificationState {
     }
     const newer =
       observation.navigationRevision > effect.navigationRevision ||
-      (observation.navigationRevision === effect.navigationRevision &&
-        observation.domRevision > effect.domRevision);
+      (observation.navigationRevision === effect.navigationRevision && observation.domRevision > effect.domRevision);
     if (!newer) return { verified: false, reason: 'stale_observation', effect: { ...effect } };
     this.pendingEffect = null;
     return { verified: true, reason: 'matching_observation', effect: { ...effect } };

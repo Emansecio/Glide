@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { resolveRunTerminalReason } from '../../background/run-terminal-reason.js';
 import { textAwaitsUser } from '../../background/continuation-intent.js';
+import { resolveRunTerminalReason } from '../../background/run-terminal-reason.js';
 
 const reasonForText = (text: string) =>
   resolveRunTerminalReason({ awaitsUser: textAwaitsUser(text), stopped: false, ambiguous: false, failed: false });

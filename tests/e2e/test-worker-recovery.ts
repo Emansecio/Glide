@@ -3,7 +3,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { chromium, type BrowserContext, type Page, type Worker } from 'playwright';
+import { type BrowserContext, type Page, type Worker, chromium } from 'playwright';
 import { getExtensionId, waitForPanelReady } from './test-helpers.js';
 
 const root = path.resolve(process.cwd());
@@ -31,9 +31,7 @@ async function restartWorker(context: BrowserContext, panel: Page, workerTarget:
     const targets = (await cdp.send('Target.getTargets')) as {
       targetInfos: Array<{ targetId: string; type: string; url: string }>;
     };
-    const target = targets.targetInfos.find(
-      (info) => info.type === 'service_worker' && info.url === workerTarget.url,
-    );
+    const target = targets.targetInfos.find((info) => info.type === 'service_worker' && info.url === workerTarget.url);
     if (target) {
       await cdp.detach();
       return { targetId: target.targetId, url: target.url };

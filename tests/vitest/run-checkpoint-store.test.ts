@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  ACTIVE_RUN_CHECKPOINT_KEY,
-  RunCheckpointSessionStore,
-} from '../../background/run-checkpoint-store.js';
+import { ACTIVE_RUN_CHECKPOINT_KEY, RunCheckpointSessionStore } from '../../background/run-checkpoint-store.js';
 import type { RunCheckpoint } from '../../background/run-types.js';
 
 class MemoryStorage {

@@ -17,7 +17,9 @@ export class VisionInbox {
 
   publish(runId: string, item: VisionContextItem): void {
     if (!runId || this.terminalRuns.has(runId)) return;
-    const description = String(item.description || '').trim().slice(0, this.maxDescriptionChars);
+    const description = String(item.description || '')
+      .trim()
+      .slice(0, this.maxDescriptionChars);
     if (!description) return;
     const list = this.items.get(runId) || [];
     list.push({ ...item, description });

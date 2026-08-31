@@ -1,12 +1,5 @@
 import type { RunCheckpointStore } from './run-checkpoint-store.js';
-import type {
-  RunCheckpoint,
-  RunMeta,
-  RunPhase,
-  RunResumeInput,
-  RunState,
-  RunTerminalReason,
-} from './run-types.js';
+import type { RunCheckpoint, RunMeta, RunPhase, RunResumeInput, RunState, RunTerminalReason } from './run-types.js';
 
 const TERMINAL_PHASES = new Set<RunPhase>(['awaiting_user', 'completed', 'failed', 'stopped', 'ambiguous']);
 

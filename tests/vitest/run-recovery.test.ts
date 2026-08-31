@@ -37,9 +37,9 @@ describe('recoverCheckpoint', () => {
 
   it('discards terminal, stale, and revision-mismatched checkpoints', () => {
     expect(recoverCheckpoint(checkpoint('completed'), { committedContextRevision: 4, now: 300 })).toBe('discard');
-    expect(
-      recoverCheckpoint(checkpoint('model'), { committedContextRevision: 4, now: 8 * 24 * 60 * 60 * 1000 }),
-    ).toBe('discard');
+    expect(recoverCheckpoint(checkpoint('model'), { committedContextRevision: 4, now: 8 * 24 * 60 * 60 * 1000 })).toBe(
+      'discard',
+    );
     expect(recoverCheckpoint(checkpoint('model'), { committedContextRevision: 3, now: 300 })).toBe('discard');
   });
 });

@@ -92,9 +92,9 @@ import { installProviderNetRequestRules } from './background/provider-net-rules.
 import { RunAbortRegistry } from './background/run-abort-registry.js';
 import { RunCheckpointSessionStore } from './background/run-checkpoint-store.js';
 import { RunCoordinator } from './background/run-coordinator.js';
-import { buildRecoveryExecutionNote, recoverCheckpoint } from './background/run-recovery.js';
 import { RunEventSequencer } from './background/run-event-sequencer.js';
 import { RunPassCache } from './background/run-pass-cache.js';
+import { buildRecoveryExecutionNote, recoverCheckpoint } from './background/run-recovery.js';
 import { resolveRunTerminalReason } from './background/run-terminal-reason.js';
 import {
   RuntimeBatcher,
@@ -612,9 +612,7 @@ class BackgroundService {
       );
       sessionContextStore.adopt(recoveryContext.sessionId, recoveryContext.messages);
       const selectedTabs = (
-        await Promise.all(
-          checkpoint.selectedTabIds.map((tabId) => chrome.tabs.get(tabId).catch(() => null)),
-        )
+        await Promise.all(checkpoint.selectedTabIds.map((tabId) => chrome.tabs.get(tabId).catch(() => null)))
       ).filter((tab): tab is chrome.tabs.Tab => Boolean(tab));
       const resumedMeta: RunMeta = {
         runId: `run-${Date.now()}-resume`,
@@ -1781,9 +1779,7 @@ class BackgroundService {
         let promptCacheApplied = isAnthropicPromptCacheEnabled(runtimeProfile.provider);
         // callMessages é reatribuído se o cache for desligado no retry (ver empty response).
         const appendVolatileContext = (base: ModelMessage[]): ModelMessage[] => {
-          const next = visualContext
-            ? [...base, { role: 'user', content: visualContext } as ModelMessage]
-            : base;
+          const next = visualContext ? [...base, { role: 'user', content: visualContext } as ModelMessage] : base;
           return splitAnthropicState ? [...next, { role: 'user', content: systemState } as ModelMessage] : next;
         };
         let callMessages = appendVolatileContext(applyPromptCacheBreakpoint(modelMessages, runtimeProfile.provider));
@@ -3245,8 +3241,7 @@ class BackgroundService {
           frameId: evidenceFrameId,
           domRevision,
           navigationRevision,
-          postconditionSatisfied:
-            result?.verified === true || result?.postcondition?.satisfied === true,
+          postconditionSatisfied: result?.verified === true || result?.postcondition?.satisfied === true,
         });
         result.verification = {
           pending: Boolean(this.verificationState.pending()),

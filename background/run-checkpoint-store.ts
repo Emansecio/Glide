@@ -1,8 +1,8 @@
 import type { Message } from '../ai/message-schema.js';
 import { cloneConversationHistory, normalizeConversationHistory } from '../ai/message-schema.js';
+import type { RunCheckpoint, RunPhase } from './run-types.js';
 import type { SessionStorageArea } from './storage-access.js';
 import { getSessionStorageArea } from './storage-access.js';
-import type { RunCheckpoint, RunPhase } from './run-types.js';
 
 export const ACTIVE_RUN_CHECKPOINT_KEY = 'glideActiveRunCheckpointV1';
 export const RUN_RECOVERY_CONTEXT_KEY = 'glideRunRecoveryContextV1';

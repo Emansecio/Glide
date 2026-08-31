@@ -495,10 +495,7 @@ SidePanelUI.prototype.handleRuntimeMessage = function handleRuntimeMessage(messa
     this.pendingToolCount = 0;
     this.isStreaming = false;
     this.activeToolName = null;
-    preservePartialAssistantOutput(
-      this,
-      message.type === 'run_resume_required' ? 'ambiguous_action' : 'interrupted',
-    );
+    preservePartialAssistantOutput(this, message.type === 'run_resume_required' ? 'ambiguous_action' : 'interrupted');
     this.setComposerBusy(false);
     applyRunTransientNoticesClear(this, { sweepTools: true });
     if (message.type === 'run_resume_required') {

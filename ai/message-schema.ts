@@ -43,13 +43,7 @@ type MessageMeta = {
   kind?: 'summary' | 'compaction' | 'context' | 'tool';
   summaryOfCount?: number;
   source?: string;
-  finishReason?:
-    | 'completed'
-    | 'awaiting_user'
-    | 'stopped'
-    | 'failed'
-    | 'interrupted'
-    | 'ambiguous_action';
+  finishReason?: 'completed' | 'awaiting_user' | 'stopped' | 'failed' | 'interrupted' | 'ambiguous_action';
 };
 
 export type Message = {

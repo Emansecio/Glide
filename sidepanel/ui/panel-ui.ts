@@ -42,6 +42,7 @@ export class SidePanelUI {
     text?: string;
     dataUrl?: string;
     previewUrl?: string;
+    byteSize?: number;
   }>;
   scrollPositions: Map<string, number>;
   pendingToolCount: number;
@@ -62,6 +63,7 @@ export class SidePanelUI {
       text?: string;
       dataUrl?: string;
       previewUrl?: string;
+      byteSize?: number;
     }>;
   } | null;
   isStreaming: boolean;

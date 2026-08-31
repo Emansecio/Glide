@@ -1,3 +1,4 @@
+import { ATTACHMENT_LIMITS, validateAttachmentBatch } from './attachment-policy.js';
 import { SidePanelUI } from './panel-ui.js';
 
 export type PendingAttachment = {
@@ -12,6 +13,8 @@ export type PendingAttachment = {
   dataUrl?: string;
   /** Short preview for chips / bubbles. */
   previewUrl?: string;
+  /** Original file bytes used by batch budget policy. */
+  byteSize?: number;
 };
 
 const MAX_TEXT_FILES = 6;
@@ -73,36 +76,43 @@ export async function compressImageBlob(
   width: number;
   height: number;
 }> {
-  const rawUrl = await readAsDataUrl(blob);
-  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-    const el = new Image();
-    el.onload = () => resolve(el);
-    el.onerror = () => reject(new Error('Invalid image'));
-    el.src = rawUrl;
-  });
+  const objectUrl = URL.createObjectURL(blob);
+  const img = new Image();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error('Invalid image'));
+      img.src = objectUrl;
+    });
+    if (img.width * img.height > ATTACHMENT_LIMITS.maxImagePixels) {
+      throw new Error(`Imagem excede ${ATTACHMENT_LIMITS.maxImagePixels.toLocaleString()} pixels.`);
+    }
 
-  let { width, height } = img;
-  const scale = Math.min(1, maxEdge / Math.max(width, height, 1));
-  width = Math.max(1, Math.round(width * scale));
-  height = Math.max(1, Math.round(height * scale));
-
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) {
-    return { dataUrl: rawUrl, mime: blob.type || 'image/png', width: img.width, height: img.height };
+    let { width, height } = img;
+    const scale = Math.min(1, maxEdge / Math.max(width, height, 1));
+    width = Math.max(1, Math.round(width * scale));
+    height = Math.max(1, Math.round(height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      return { dataUrl: await readAsDataUrl(blob), mime: blob.type || 'image/png', width: img.width, height: img.height };
+    }
+    ctx.drawImage(img, 0, 0, width, height);
+    const preferPng = blob.type === 'image/png' && width * height < 900_000;
+    return {
+      dataUrl: preferPng ? canvas.toDataURL('image/png') : canvas.toDataURL('image/jpeg', quality),
+      mime: preferPng ? 'image/png' : 'image/jpeg',
+      width,
+      height,
+    };
+  } finally {
+    img.onload = null;
+    img.onerror = null;
+    img.src = '';
+    URL.revokeObjectURL(objectUrl);
   }
-  ctx.drawImage(img, 0, 0, width, height);
-  // Keep PNG for screenshots with transparency / sharp UI chrome when small enough.
-  const preferPng = blob.type === 'image/png' && width * height < 900_000;
-  const dataUrl = preferPng ? canvas.toDataURL('image/png') : canvas.toDataURL('image/jpeg', quality);
-  return {
-    dataUrl,
-    mime: preferPng ? 'image/png' : 'image/jpeg',
-    width,
-    height,
-  };
 }
 
 SidePanelUI.prototype.ensureAttachmentsState = function ensureAttachmentsState() {
@@ -199,8 +209,21 @@ SidePanelUI.prototype.addPendingAttachment = function addPendingAttachment(att: 
   return true;
 };
 
-SidePanelUI.prototype.addImageFromBlob = async function addImageFromBlob(blob: Blob, name = 'print.png') {
+SidePanelUI.prototype.addImageFromBlob = async function addImageFromBlob(
+  blob: Blob,
+  name = 'print.png',
+  prevalidated = false,
+) {
   try {
+    if (!prevalidated) {
+      const decision = validateAttachmentBatch(this.ensureAttachmentsState(), [
+        { name, type: blob.type, size: blob.size },
+      ])[0];
+      if (!decision.accepted) {
+        this.showErrorBanner?.(decision.reason || 'Anexo rejeitado.');
+        return false;
+      }
+    }
     const compressed = await compressImageBlob(blob);
     const att: PendingAttachment = {
       id: attachmentId(),
@@ -210,6 +233,7 @@ SidePanelUI.prototype.addImageFromBlob = async function addImageFromBlob(blob: B
       sizeLabel: `${compressed.width}×${compressed.height}`,
       dataUrl: compressed.dataUrl,
       previewUrl: compressed.dataUrl,
+      byteSize: blob.size,
     };
     if (this.addPendingAttachment(att)) {
       this.updateStatus?.('Print anexado', 'success');
@@ -229,12 +253,18 @@ SidePanelUI.prototype.handleFileSelection = async function handleFileSelection(e
   input.value = '';
   if (!files.length) return;
 
-  for (const file of files) {
+  const decisions = validateAttachmentBatch(this.ensureAttachmentsState(), files);
+  for (const [index, file] of files.entries()) {
+    const decision = decisions[index];
+    if (!decision.accepted) {
+      this.showErrorBanner?.(decision.reason || `${file.name}: anexo rejeitado.`);
+      continue;
+    }
     const mime = file.type || '';
     const ext = fileExt(file.name);
 
-    if (IMAGE_MIME.test(mime) || ['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(ext)) {
-      await this.addImageFromBlob(file, file.name || 'image.png');
+    if (decision.kind === 'image') {
+      await this.addImageFromBlob(file, file.name || 'image.png', true);
       continue;
     }
 
@@ -256,6 +286,7 @@ SidePanelUI.prototype.handleFileSelection = async function handleFileSelection(e
         mime: mime || 'text/plain',
         sizeLabel: formatBytes(file.size),
         text: trimmed,
+        byteSize: file.size,
       };
       this.addPendingAttachment(att);
     } catch (error) {

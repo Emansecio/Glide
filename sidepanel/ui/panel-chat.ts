@@ -290,17 +290,16 @@ SidePanelUI.prototype.buildAssistantHeaderHtml = function buildAssistantHeaderHt
 SidePanelUI.prototype.bindAssistantActions = function bindAssistantActions(
   header: HTMLElement | null,
   markdownSource: string,
+  precedingUserText: string,
 ) {
   if (!header) return;
-  header.dataset.markdownSource = markdownSource;
   const copyBtn = header.querySelector('.assistant-copy-btn') as HTMLButtonElement | null;
   const editBtn = header.querySelector('.assistant-edit-btn') as HTMLButtonElement | null;
   if (copyBtn && !copyBtn.dataset.bound) {
     copyBtn.dataset.bound = '1';
     copyBtn.addEventListener('click', () => {
-      const source = header.dataset.markdownSource || '';
-      if (!source) return;
-      void navigator.clipboard.writeText(source).then(
+      if (!markdownSource) return;
+      void navigator.clipboard.writeText(markdownSource).then(
         () => this.showSuccessToast?.('Resposta copiada'),
         () => this.showErrorBanner?.('Não foi possível copiar a resposta.'),
       );
@@ -309,9 +308,8 @@ SidePanelUI.prototype.bindAssistantActions = function bindAssistantActions(
   if (editBtn && !editBtn.dataset.bound) {
     editBtn.dataset.bound = '1';
     editBtn.addEventListener('click', () => {
-      const lastUserText = this.getLastUserMessageText?.() || '';
-      if (!lastUserText) return;
-      this.elements.userInput.value = lastUserText;
+      if (!precedingUserText) return;
+      this.elements.userInput.value = precedingUserText;
       this.elements.userInput.dispatchEvent(new Event('input', { bubbles: true }));
       this.elements.userInput.focus();
     });
@@ -462,7 +460,7 @@ SidePanelUI.prototype.displayAssistantMessage = function displayAssistantMessage
       streamedContainer.prepend(header);
     }
     header.innerHTML = this.buildAssistantHeaderHtml(messageMeta);
-    this.bindAssistantActions(header, content);
+    this.bindAssistantActions(header, content, this.getLastUserMessageText?.() || '');
 
     if (content && content.trim() !== '' && streamMainTextEl) {
       const finalDiffersFromStream = content !== streamResult?.renderedContent;
@@ -526,7 +524,7 @@ SidePanelUI.prototype.displayAssistantMessage = function displayAssistantMessage
   }
 
   const assistantHeader = messageDiv.querySelector('.assistant-header') as HTMLElement | null;
-  this.bindAssistantActions(assistantHeader, content);
+  this.bindAssistantActions(assistantHeader, content, this.getLastUserMessageText?.() || '');
 
   if (this.lastChatTurn) {
     this.lastChatTurn.appendChild(messageDiv);

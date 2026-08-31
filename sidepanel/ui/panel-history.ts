@@ -540,6 +540,8 @@ SidePanelUI.prototype.renderConversationHistory = function renderConversationHis
   }
 
   const fragment = document.createDocumentFragment();
+  let precedingUserText = '';
+  let currentTurn: HTMLElement | null = null;
   this.displayHistory.forEach((msg: any) => {
     if (msg.role === 'system' || msg.meta?.kind === 'summary') {
       // Mesmo fragment que o resto — evita flash/ordem errada vs rAF append.
@@ -566,12 +568,17 @@ SidePanelUI.prototype.renderConversationHistory = function renderConversationHis
         : typeof msg.content === 'string'
           ? msg.content
           : String(msg.content ?? '');
+      const turn = document.createElement('div');
+      turn.className = 'chat-turn';
       const messageDiv = document.createElement('div');
       messageDiv.className = 'message user';
       messageDiv.innerHTML = `
           <div class="message-content">${this.escapeHtml(userText)}</div>
         `;
-      fragment.appendChild(messageDiv);
+      turn.appendChild(messageDiv);
+      fragment.appendChild(turn);
+      currentTurn = turn;
+      precedingUserText = userText;
     } else if (msg.role === 'assistant') {
       const rawContent = typeof msg.content === 'string' ? msg.content : this.safeJsonStringify(msg.content);
       const parsed = extractThinking(rawContent, msg.thinking || null);
@@ -614,8 +621,14 @@ SidePanelUI.prototype.renderConversationHistory = function renderConversationHis
       if (thinkingHeader) {
         this.bindThinkingToggle(thinkingHeader);
       }
+      this.bindAssistantActions(
+        messageDiv.querySelector('.assistant-header') as HTMLElement | null,
+        parsed.content,
+        precedingUserText,
+      );
 
-      fragment.appendChild(messageDiv);
+      if (currentTurn) currentTurn.appendChild(messageDiv);
+      else fragment.appendChild(messageDiv);
     }
   });
 

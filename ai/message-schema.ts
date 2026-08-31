@@ -46,6 +46,11 @@ type MessageMeta = {
   finishReason?: 'completed' | 'awaiting_user' | 'stopped' | 'failed' | 'interrupted' | 'ambiguous_action';
   /** True when visible assistant content ended before normal completion. */
   partial?: boolean;
+  truncation?: {
+    originalChars: number;
+    retainedChars: number;
+    reason: 'session_budget' | 'total_budget';
+  };
 };
 
 export type Message = {

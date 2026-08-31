@@ -20,13 +20,13 @@ import {
   shrinkSessionPayloadForQuota,
   transcriptsEqual,
 } from './history-storage.js';
+import { fitSessionToBudget } from './history-budget.js';
 import { isHistoryListLoadTokenStale, isHistoryPersistBarrierStale, isRenderGenerationStale } from './panel-guards.js';
 import { SidePanelUI } from './panel-ui.js';
 
 const HISTORY_PERSIST_DEBOUNCE_MS = 350;
 const HISTORY_SCHEMA_VERSION = 1;
 const HISTORY_MAX_MESSAGES_PER_SESSION = 200;
-const HISTORY_MAX_CHARS_PER_FIELD = 4000;
 const HISTORY_MAX_SESSION_BYTES = 200 * 1024;
 const HISTORY_MAX_TOTAL_BYTES = 4 * 1024 * 1024;
 const HISTORY_STORAGE_RETRY_MAX = 2;
@@ -47,7 +47,7 @@ SidePanelUI.prototype.measureHistoryBytes = function measureHistoryBytes(value: 
 
 SidePanelUI.prototype.truncateHistoryField = function truncateHistoryField(
   value: unknown,
-  limit = HISTORY_MAX_CHARS_PER_FIELD,
+  limit = HISTORY_MAX_SESSION_BYTES,
 ) {
   const text = String(value ?? '');
   if (text.length <= limit) return text;
@@ -59,7 +59,7 @@ SidePanelUI.prototype.sanitizeHistoryMessage = function sanitizeHistoryMessage(m
   return sanitizeMessageForPersistence(
     message,
     {
-      maxCharsPerTextField: HISTORY_MAX_CHARS_PER_FIELD,
+      maxCharsPerTextField: HISTORY_MAX_SESSION_BYTES,
     },
     mode,
   );
@@ -71,16 +71,7 @@ SidePanelUI.prototype.buildHistoryTranscript = function buildHistoryTranscript(h
     .map((message: any) => this.sanitizeHistoryMessage(message))
     .filter((message: any) => Boolean(message));
 
-  const compacted: any[] = [];
-  let totalBytes = 0;
-  for (let i = sanitized.length - 1; i >= 0; i -= 1) {
-    const item = sanitized[i];
-    const size = this.measureHistoryBytes(item);
-    if (compacted.length > 0 && totalBytes + size > HISTORY_MAX_SESSION_BYTES) break;
-    compacted.push(item);
-    totalBytes += size;
-  }
-  const chronological = compacted.reverse();
+  const chronological = sanitized;
   // O corte por bytes (do fim para o começo) pode ter removido o assistant(tool_use)
   // e deixado seus tool-results no início do transcript. Um transcript que começa
   // com tool-result quebra a alternância user/assistant e dá 400 na Anthropic ao
@@ -224,16 +215,19 @@ SidePanelUI.prototype.persistHistoryNow = async function persistHistoryNow() {
   const contextSameAsDisplay = transcriptsEqual(transcript, contextTranscriptBuilt);
   const contextTranscript = contextSameAsDisplay ? transcript : contextTranscriptBuilt;
 
-  const entry: ChatSessionPayload = {
-    schemaVersion: HISTORY_SCHEMA_VERSION,
-    id: this.sessionId,
-    startedAt: this.sessionStartedAt,
-    updatedAt: Date.now(),
-    title: this.truncateHistoryField(this.firstUserMessage || 'Sessão', 180),
-    messageCount: transcript.length,
-    transcript,
-    contextTranscript: contextSameAsDisplay ? undefined : contextTranscript,
-  };
+  const entry = fitSessionToBudget(
+    {
+      schemaVersion: HISTORY_SCHEMA_VERSION,
+      id: this.sessionId,
+      startedAt: this.sessionStartedAt,
+      updatedAt: Date.now(),
+      title: this.truncateHistoryField(this.firstUserMessage || 'Sessão', 180),
+      messageCount: transcript.length,
+      transcript,
+      contextTranscript: contextSameAsDisplay ? undefined : contextTranscript,
+    },
+    HISTORY_MAX_SESSION_BYTES,
+  );
 
   const signature = this.buildHistoryPersistSignature({
     id: entry.id,
@@ -584,9 +578,13 @@ SidePanelUI.prototype.renderConversationHistory = function renderConversationHis
       const parsed = extractThinking(rawContent, msg.thinking || null);
       const messageDiv = document.createElement('div');
       const isPartial = msg.meta?.partial === true;
-      messageDiv.className = `message assistant${isPartial ? ' partial' : ''}`;
+      const isTruncated = Boolean(msg.meta?.truncation);
+      const historyMeta = [isPartial ? 'Interrompida' : '', isTruncated ? 'Conteúdo truncado' : '']
+        .filter(Boolean)
+        .join(' · ');
+      messageDiv.className = `message assistant${isPartial ? ' partial' : ''}${isTruncated ? ' truncated' : ''}`;
       const htmlParts: string[] = [
-        `<div class="message-header assistant-header">${this.buildAssistantHeaderHtml(isPartial ? 'Interrompida' : null)}</div>`,
+        `<div class="message-header assistant-header">${this.buildAssistantHeaderHtml(historyMeta || null)}</div>`,
       ];
       if (parsed.thinking) {
         const cleanedThinking = dedupeThinking(parsed.thinking);

@@ -198,6 +198,7 @@ export function sanitizeMessageForPersistence(
       ...(message.meta.summaryOfCount != null ? { summaryOfCount: message.meta.summaryOfCount } : {}),
       ...(message.meta.finishReason ? { finishReason: message.meta.finishReason } : {}),
       ...(message.meta.partial === true ? { partial: true } : {}),
+      ...(message.meta.truncation ? { truncation: { ...message.meta.truncation } } : {}),
     };
   }
   if (message.usage) {

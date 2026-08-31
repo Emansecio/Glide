@@ -1,3 +1,5 @@
+import { fitSessionToBudget, measureStoredBytes } from './history-budget.js';
+
 export const LEGACY_CHAT_SESSIONS_KEY = 'chatSessions';
 export const CHAT_SESSIONS_INDEX_KEY = 'chatSessionsIndex';
 export const CHAT_SESSION_KEY_PREFIX = 'chatSession:';
@@ -250,20 +252,7 @@ export function shrinkSessionPayloadForQuota(
   payload: ChatSessionPayload,
   ratio = HISTORY_STORAGE_SHRINK_RATIO,
 ): ChatSessionPayload {
-  const transcript = Array.isArray(payload.transcript) ? payload.transcript : [];
-  if (transcript.length <= 1) {
-    return payload;
-  }
-  const nextLength = Math.max(1, Math.floor(transcript.length * ratio));
-  const shortenedTranscript = transcript.slice(-nextLength);
-  const contextSource = resolveContextTranscript(payload);
-  const shortenedContext = contextSource.length > nextLength ? contextSource.slice(-nextLength) : contextSource;
-  const next: ChatSessionPayload = {
-    ...payload,
-    transcript: shortenedTranscript,
-  };
-  if (!transcriptsEqual(shortenedTranscript, shortenedContext)) {
-    next.contextTranscript = shortenedContext;
-  }
-  return compactSessionPayload(next);
+  const currentBytes = measureStoredBytes(payload);
+  const targetBytes = Math.max(1024, Math.floor(currentBytes * ratio));
+  return compactSessionPayload(fitSessionToBudget(payload, targetBytes));
 }

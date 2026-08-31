@@ -55,6 +55,11 @@ export const buildToolDefinitions = (_maxSessionTabs: number): ToolDefinition[] 
       selector: SELECTOR_PROP(
         'CSS selector or text hint for the element to hover. Example: "#menu", "[aria-label=More]".',
       ),
+      handle: ELEMENT_HANDLE_PROP,
+      native: {
+        type: 'boolean',
+        description: 'Use opt-in CDP native pointer input. Requires debugger permission.',
+      },
       tabId: TAB_ID_PROP,
       retries: RETRIES_PROP,
     },
@@ -70,9 +75,14 @@ export const buildToolDefinitions = (_maxSessionTabs: number): ToolDefinition[] 
         description: 'Mouse action: doubleClick, rightClick, or drag (needs toSelector).',
       },
       selector: SELECTOR_PROP('CSS selector or text hint for the source element.'),
+      handle: ELEMENT_HANDLE_PROP,
       toSelector: {
         type: 'string',
         description: 'For action=drag: CSS selector or text hint of the drop target.',
+      },
+      native: {
+        type: 'boolean',
+        description: 'Use opt-in CDP native pointer input for drag. Requires debugger permission.',
       },
       tabId: TAB_ID_PROP,
       retries: RETRIES_PROP,

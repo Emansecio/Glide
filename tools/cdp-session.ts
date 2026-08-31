@@ -172,6 +172,51 @@ export async function cdpSend(
   }
 }
 
+export async function dispatchNativePointer(
+  tabId: number,
+  input: { action: 'hover' | 'drag'; from: { x: number; y: number }; to?: { x: number; y: number } },
+): Promise<Record<string, unknown>> {
+  const attached = await cdpAttach(tabId);
+  if (!attached.success) return attached;
+  try {
+    const move = await cdpSend(tabId, 'Input.dispatchMouseEvent', {
+      type: 'mouseMoved',
+      x: input.from.x,
+      y: input.from.y,
+      button: 'none',
+    });
+    if (!move.success || input.action === 'hover') return move;
+    const down = await cdpSend(tabId, 'Input.dispatchMouseEvent', {
+      type: 'mousePressed',
+      x: input.from.x,
+      y: input.from.y,
+      button: 'left',
+      buttons: 1,
+      clickCount: 1,
+    });
+    if (!down.success) return down;
+    const destination = input.to || input.from;
+    const dragMove = await cdpSend(tabId, 'Input.dispatchMouseEvent', {
+      type: 'mouseMoved',
+      x: destination.x,
+      y: destination.y,
+      button: 'left',
+      buttons: 1,
+    });
+    if (!dragMove.success) return dragMove;
+    return cdpSend(tabId, 'Input.dispatchMouseEvent', {
+      type: 'mouseReleased',
+      x: destination.x,
+      y: destination.y,
+      button: 'left',
+      buttons: 0,
+      clickCount: 1,
+    });
+  } finally {
+    await cdpDetach(tabId);
+  }
+}
+
 export async function cdpCommand(
   tabId: number,
   action: string,

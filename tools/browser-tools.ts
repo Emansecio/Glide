@@ -7,7 +7,7 @@ import {
   rectIntersectsViewport,
 } from '../background/image-scale.js';
 import { BrowserBridgeClient } from './browser-bridge-client.js';
-import { cdpCommand } from './cdp-session.js';
+import { cdpCommand, dispatchNativePointer } from './cdp-session.js';
 import { type GlideBridgeOp, isMutativeBridgeOp, sendGlideBridge } from './content-bridge.js';
 import { isSameOriginUrl, isUrlAllowedByDomains, parseAllowedDomains } from './domain-policy.js';
 import {
@@ -28,6 +28,7 @@ import {
   resolveUniqueSelectorFrame,
 } from './frame-target.js';
 import { performHttpRequest, sanitizeHttpHeaders } from './http-request.js';
+import { chooseInputBackend } from './input-backend.js';
 import { highlightTargetOverlay, measureScreenshotTarget } from './ref-resolver.js';
 import { waitForHistoryTransition, waitForTabReadiness } from './tab-readiness.js';
 import { type TabResolution, withResolvedTab } from './tab-resolve.js';
@@ -1090,6 +1091,55 @@ export class BrowserTools {
     });
     if (response.code === 'BRIDGE_UNAVAILABLE' && !isMutativeBridgeOp(op)) return null;
     return response;
+  }
+
+  private async runNativeInput(tabId: number, tool: 'hover' | 'mouse', args: Record<string, any>) {
+    let debuggerEnabled = false;
+    try {
+      const stored = await chrome.storage.local.get(['settings', 'toolPermissions']);
+      const settings = stored.settings as { toolPermissions?: { debugger?: boolean } } | undefined;
+      const permissions = stored.toolPermissions as { debugger?: boolean } | undefined;
+      debuggerEnabled = settings?.toolPermissions?.debugger === true || permissions?.debugger === true;
+    } catch {
+      debuggerEnabled = false;
+    }
+    const backend = chooseInputBackend(tool, args, debuggerEnabled);
+    if (backend === 'bridge') return null;
+    if (typeof backend === 'object') {
+      return {
+        success: false,
+        code: backend.error,
+        error: 'Native input requires opt-in debugger permission.',
+      };
+    }
+    if (!args.handle) {
+      return {
+        success: false,
+        code: 'STABLE_HANDLE_REQUIRED',
+        error: 'Native input requires stable handle from findElement or readPage.',
+      };
+    }
+    const source = await this.bridgeClient.send(tabId, Number(args.handle.frameId ?? 0), 'getElementBox', {
+      handle: args.handle,
+    });
+    if (!source.success) return source;
+    const from = source.point as { x: number; y: number };
+    let to: { x: number; y: number } | undefined;
+    if (tool === 'mouse' && args.action === 'drag') {
+      const measured = await this.runInTab(
+        tabId,
+        (selector: string) => {
+          const element = document.querySelector(selector);
+          if (!element) return null;
+          const rect = element.getBoundingClientRect();
+          return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+        },
+        [String(args.toSelector || '')],
+      );
+      if (!measured) return { success: false, code: 'ELEMENT_NOT_FOUND', error: 'Drag destination not found.' };
+      to = measured;
+    }
+    return dispatchNativePointer(tabId, { action: tool === 'hover' ? 'hover' : 'drag', from, to });
   }
 
   private async loadAllowedDomains(): Promise<string[]> {
@@ -2226,6 +2276,8 @@ export class BrowserTools {
     if (!resolved.ok) return resolved.result;
     const { resolution } = resolved;
     const tabId = resolution.tabId;
+    const nativeResult = await this.runNativeInput(tabId, 'hover', args);
+    if (nativeResult) return this.attachResolutionMeta(nativeResult, resolution);
     const selector = String(args.selector || '');
     const retries = typeof args.retries === 'number' ? Math.max(1, Math.min(5, Math.round(args.retries))) : 3;
 
@@ -2421,6 +2473,8 @@ export class BrowserTools {
     if (!resolved.ok) return resolved.result;
     const { resolution } = resolved;
     const tabId = resolution.tabId;
+    const nativeResult = await this.runNativeInput(tabId, 'mouse', args);
+    if (nativeResult) return this.attachResolutionMeta(nativeResult, resolution);
     const selector = String(args.selector || '');
     const action = String(args.action || '');
     const toSelector = args.toSelector != null ? String(args.toSelector) : '';

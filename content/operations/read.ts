@@ -1,4 +1,4 @@
-import { beginElementSnapshot, createElementHandle } from '../element-snapshot.js';
+import { beginElementSnapshot, createElementHandle, resolveSnapshotHandle } from '../element-snapshot.js';
 import {
   deepQuerySelector,
   extractPageStructure,
@@ -29,6 +29,18 @@ const withHandles = <T extends { selector: string; ref?: string }>(
         ...(element ? { handle: createElementHandle(element, target, entry.selector, refFor(entry, index), snapshot) } : {}),
       };
     }),
+  };
+};
+
+const getElementBox: ContentOperation = (payload) => {
+  const resolved = resolveSnapshotHandle(payload.handle, targetFrom(payload));
+  if (!resolved) return { success: false, code: 'INVALID_HANDLE', error: 'Stable handle required.' };
+  if (!resolved.ok) return resolved;
+  const rect = resolved.element.getBoundingClientRect();
+  return {
+    success: true,
+    rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+    point: { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 },
   };
 };
 
@@ -86,4 +98,9 @@ const getContent: ContentOperation = (payload) => {
   };
 };
 
-export const readOperations = { findElement, readPage, getContent } satisfies Record<string, ContentOperation>;
+export const readOperations = {
+  findElement,
+  readPage,
+  getContent,
+  getElementBox,
+} satisfies Record<string, ContentOperation>;

@@ -50,6 +50,43 @@ export const EXECUTION_TEXT_LIMIT = 500;
 /** Tools that capture page images and share screenshot-store / vision delivery. */
 export const SCREENSHOT_TOOLS = new Set(['screenshot', 'annotatedScreenshot', 'elementScreenshot']);
 
+export const VERIFICATION_EFFECT_TOOLS = new Set([
+  'click',
+  'type',
+  'selectOption',
+  'fillForm',
+  'navigate',
+  'navigateHistory',
+  'scroll',
+  'mouse',
+  'hover',
+  'pressKey',
+  'dismissModal',
+  'setInputFiles',
+  'clipboard',
+  'openTab',
+  'closeTab',
+  'focusTab',
+  'switchTab',
+  'groupTabs',
+  'executeScript',
+  'cdp',
+]);
+
+export const VERIFICATION_OBSERVATION_TOOLS = new Set([
+  'readPage',
+  'getContent',
+  'findElement',
+  'screenshot',
+  'annotatedScreenshot',
+  'elementScreenshot',
+  'wait',
+  'getNetworkRequests',
+  'getConsoleOutput',
+  'getStorageData',
+  'getPerformanceMetrics',
+]);
+
 export const BROWSER_ACTION_TOOLS = [
   'navigate',
   'navigateHistory',

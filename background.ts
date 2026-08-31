@@ -136,6 +136,7 @@ import {
   type RunMeta,
   SCREENSHOT_TOOLS,
   TAB_MANAGEMENT_TOOLS,
+  VERIFICATION_OBSERVATION_TOOLS,
   VISION_DESCRIBE_TIMEOUT_MS,
   humanizeProviderError,
   isAbortError,
@@ -162,6 +163,7 @@ import {
   getToolPermissionCategory as resolveToolPermissionCategory,
   toolPermissionsCacheKey,
 } from './background/tool-permissions.js';
+import { VerificationState } from './background/verification-state.js';
 import { VisionInbox, buildVisualContextMessage } from './background/vision-inbox.js';
 import {
   VisionQueue,
@@ -230,7 +232,7 @@ class BackgroundService {
   executionEventsFlushTimerId: ReturnType<typeof setTimeout> | null;
   // State tracking for enforcement
   lastBrowserAction: string | null;
-  awaitingVerification: boolean;
+  private verificationState: VerificationState;
   // Layer 2: Failure tracking for anti-desistance
   consecutiveFailures: number;
   failedTools: Array<{ tool: string; error: string; selector?: string }>;
@@ -677,7 +679,7 @@ class BackgroundService {
     this.executionEventsFlushTimerId = null;
     // State tracking for enforcement
     this.lastBrowserAction = null;
-    this.awaitingVerification = false;
+    this.verificationState = new VerificationState();
     this.consecutiveFailures = 0;
     this.failedTools = [];
     this.evidenceLedger = [];
@@ -700,7 +702,7 @@ class BackgroundService {
     this.currentPlan = null;
     this._planPromptCache = null;
     this.lastBrowserAction = null;
-    this.awaitingVerification = false;
+    this.verificationState.reset();
     this.consecutiveFailures = 0;
     this.failedTools = [];
     this.evidenceLedger = [];
@@ -2262,7 +2264,7 @@ class BackgroundService {
         const failedToolDecision = taskIntent.usesBrowserAutomation
           ? advanceFailedToolRecovery({
               hasFailedTools,
-              awaitingVerification: this.awaitingVerification,
+              awaitingVerification: Boolean(this.verificationState.pending()),
               continuationUsed: failedToolContinuationUsed,
             })
           : { outcome: 'complete' as const, continuationUsed: false };
@@ -3210,7 +3212,6 @@ class BackgroundService {
       // Track state for enforcement (parent run only — sub-agents must not mutate orchestrator state)
       if (isBrowserAction) {
         this.lastBrowserAction = toolName;
-        this.awaitingVerification = true;
         // Layer 2b: Track consecutive browser action failures
         if (result?.success === false) {
           this.consecutiveFailures = (this.consecutiveFailures || 0) + 1;
@@ -3227,8 +3228,49 @@ class BackgroundService {
         } else {
           this.consecutiveFailures = 0;
         }
-      } else if (toolName === 'getContent') {
-        this.awaitingVerification = false;
+      }
+
+      const evidenceTabId =
+        typeof toolArgs?.tabId === 'number'
+          ? toolArgs.tabId
+          : (this.browserTools.getCurrentSessionTabId() ?? lockedTabId ?? null);
+      const evidenceFrameId = typeof toolArgs?.frameId === 'number' ? toolArgs.frameId : 0;
+      const domRevision = Number(result?.domRevision ?? result?.revision ?? startedAt);
+      const navigationRevision = Number(result?.navigationRevision ?? 0);
+      if (MUTATIVE_BROWSER_EFFECT_TOOLS.has(toolName) && result?.success !== false) {
+        this.verificationState.recordEffect({
+          actionId: journalActionId || callId,
+          tool: toolName,
+          tabId: evidenceTabId,
+          frameId: evidenceFrameId,
+          domRevision,
+          navigationRevision,
+          postconditionSatisfied:
+            result?.verified === true || result?.postcondition?.satisfied === true,
+        });
+        result.verification = {
+          pending: Boolean(this.verificationState.pending()),
+          tabId: evidenceTabId,
+          frameId: evidenceFrameId,
+          domRevision,
+          navigationRevision,
+        };
+      } else if (VERIFICATION_OBSERVATION_TOOLS.has(toolName) && result?.success !== false) {
+        const outcome = this.verificationState.recordObservation({
+          tool: toolName,
+          tabId: evidenceTabId,
+          frameId: evidenceFrameId,
+          domRevision,
+          navigationRevision,
+        });
+        result.verification = {
+          verified: outcome.verified,
+          reason: outcome.reason,
+          tabId: evidenceTabId,
+          frameId: evidenceFrameId,
+          domRevision,
+          navigationRevision,
+        };
       }
 
       const finalResult: Record<string, any> = { ...(result as Record<string, any>) };
@@ -5116,7 +5158,7 @@ ${planLines.join('\n')}
 
 REQUIRED: Provide your final summary now with evidence from getContent.
 </execution_state>`;
-      } else if (this.awaitingVerification && requiresDetailedReport) {
+      } else if (this.verificationState.pending() && requiresDetailedReport) {
         requiredNextCall = 'getContent({ mode: "text" })';
         stateSection = `
 <execution_state>

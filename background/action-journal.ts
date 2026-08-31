@@ -1,27 +1,7 @@
+import { VERIFICATION_EFFECT_TOOLS } from './service-config.js';
 import type { ActionJournalEntry } from './run-types.js';
 
-export const MUTATIVE_BROWSER_EFFECT_TOOLS = new Set([
-  'click',
-  'type',
-  'selectOption',
-  'fillForm',
-  'navigate',
-  'navigateHistory',
-  'scroll',
-  'mouse',
-  'hover',
-  'pressKey',
-  'dismissModal',
-  'setInputFiles',
-  'clipboard',
-  'openTab',
-  'closeTab',
-  'focusTab',
-  'switchTab',
-  'groupTabs',
-  'executeScript',
-  'cdp',
-]);
+export const MUTATIVE_BROWSER_EFFECT_TOOLS = VERIFICATION_EFFECT_TOOLS;
 
 export type PreparedAction = {
   actionId: string;

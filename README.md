@@ -21,7 +21,7 @@ Em vez de alternar entre scripts, DevTools e várias ferramentas, você conversa
 - Captura screenshots, downloads, rede, console e métricas de performance.
 - Executa scripts no contexto isolado da extensão quando necessário.
 - Mantém histórico de sessões e reduz automaticamente contextos longos.
-- Permite escolher entre Anthropic/Claude, Codex/OpenAI, OpenCode e Ollama local.
+- Permite escolher entre Anthropic/Claude, Codex/OpenAI, OpenCode, Command Code e Ollama local.
 
 ## Interface
 
@@ -74,11 +74,15 @@ As credenciais e configurações da extensão carregada localmente ficam isolada
 ## Desenvolvimento e verificação
 
 ```bash
-npm run check       # TypeScript + Biome
-npm run test:unit   # suíte unitária
-npm run validate    # validação do pacote da extensão
-npm run preview     # preview estático da interface
+npm run check             # TypeScript + Biome
+npm run test:unit         # suíte unitária
+npm run test:evals        # avaliações determinísticas locais
+npm run test:evals:live   # skip por padrão; requer GLIDE_LIVE_TESTS=1
+npm run validate          # validação do pacote da extensão
+npm run preview           # preview estático da interface
 ```
+
+`test:evals` usa fixtures locais, é determinístico e integra o gate de desenvolvimento. `test:evals:live` acessa somente páginas públicas estáveis para navegação/leitura, não faz login nem mutações e fica fora do CI. Para executar: `GLIDE_LIVE_TESTS=1 npm run test:evals:live` (PowerShell: `$env:GLIDE_LIVE_TESTS='1'; npm run test:evals:live`). Falhas de rede ou mudanças nos sites retornam status não zero.
 
 O preview usa os templates e estilos reais:
 

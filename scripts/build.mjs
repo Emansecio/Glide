@@ -136,6 +136,7 @@ const buildTestBundles = async () => {
       path.join(rootDir, 'tests', 'e2e', 'test-model-communication.ts'),
       path.join(rootDir, 'tests', 'e2e', 'test-live-model-e2e.ts'),
       path.join(rootDir, 'tests', 'evals', 'run-frontier-evals.ts'),
+      path.join(rootDir, 'tests', 'evals', 'run-live-frontier-evals.ts'),
       path.join(rootDir, 'tests', 'integration', 'test-ollama-sdk.ts'),
       path.join(rootDir, 'tests', 'integration', 'test-model-correctness.ts'),
     ],

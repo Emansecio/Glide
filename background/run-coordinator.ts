@@ -1,4 +1,6 @@
+import type { RunCheckpointStore } from './run-checkpoint-store.js';
 import type {
+  RunCheckpoint,
   RunMeta,
   RunPhase,
   RunResumeInput,
@@ -39,6 +41,23 @@ const cloneState = (state: RunState): RunState => ({
 
 export class RunCoordinator {
   private states = new Map<string, RunState>();
+
+  constructor(private checkpointStore?: RunCheckpointStore) {}
+
+  private toCheckpoint(state: RunState): RunCheckpoint {
+    return { version: 1, ...cloneState(state) };
+  }
+
+  async persist(runId: string): Promise<boolean> {
+    const state = this.states.get(runId);
+    if (!state || !this.checkpointStore) return false;
+    await this.checkpointStore.write(this.toCheckpoint(state));
+    return this.checkpointStore.isResumeEnabled();
+  }
+
+  async clear(runId: string): Promise<void> {
+    await this.checkpointStore?.clear(runId);
+  }
 
   start(meta: RunMeta, input: RunResumeInput): RunState {
     if (this.states.has(meta.runId)) throw new Error(`Run ${meta.runId} already exists.`);

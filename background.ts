@@ -89,6 +89,7 @@ import {
 import { fetchProviderModels } from './background/provider-fetch.js';
 import { installProviderNetRequestRules } from './background/provider-net-rules.js';
 import { RunAbortRegistry } from './background/run-abort-registry.js';
+import { RunCheckpointSessionStore } from './background/run-checkpoint-store.js';
 import { RunCoordinator } from './background/run-coordinator.js';
 import { RunEventSequencer } from './background/run-event-sequencer.js';
 import { RunPassCache } from './background/run-pass-cache.js';
@@ -463,6 +464,7 @@ class BackgroundService {
     this.runPhase = 'stopped';
     if (this.runCoordinator.get(runId)) {
       this.runCoordinator.terminal(runId, 'stopped');
+      void this.runCoordinator.clear(runId);
     }
     this.releaseRunExclusiveLock(runId);
     if (runMeta) {
@@ -556,7 +558,7 @@ class BackgroundService {
     this.activeRunMeta = null;
     this.activeRunAbortController = null;
     this.runAbortRegistry = new RunAbortRegistry();
-    this.runCoordinator = new RunCoordinator();
+    this.runCoordinator = new RunCoordinator(new RunCheckpointSessionStore());
     this.orchestrationOwnerRunId = null;
     this.activeRunLockOwnerRunId = null;
     this.activeRunTimeoutId = null;
@@ -1380,6 +1382,12 @@ class BackgroundService {
           ...(typeof panelTabId === 'number' ? { panelTabId } : {}),
         },
       });
+      if (!(await this.runCoordinator.persist(runMeta.runId))) {
+        this.sendRuntime(runMeta, {
+          type: 'run_warning',
+          message: 'Checkpoint indisponível; execução atual continua sem retomada automática.',
+        });
+      }
       const settings = await this.loadRuntimeSettings();
       // A follow-up in an ongoing browser task ("e aí?", a correction) rarely
       // repeats action keywords itself; recent tool usage keeps tool access armed
@@ -2013,6 +2021,7 @@ class BackgroundService {
         const coordinatorState = this.runCoordinator.get(runMeta.runId);
         if (coordinatorState?.phase !== 'model') {
           this.runCoordinator.transition(runMeta.runId, 'model');
+          await this.runCoordinator.persist(runMeta.runId);
         }
         const passResult = await runModelPass(currentHistory);
         const toolRecoverySource = [passResult.text, passResult.reasoningText || ''].filter(Boolean).join('\n\n');
@@ -2368,6 +2377,7 @@ class BackgroundService {
         throw new Error('Run aborted before context commit.');
       }
       this.runCoordinator.transition(runMeta.runId, 'committing');
+      await this.runCoordinator.persist(runMeta.runId);
       const contextCommit = contextTransactionStore.commit({
         sessionId,
         ...(sessionId !== contextSourceSessionId ? { previousSessionId: contextSourceSessionId } : {}),
@@ -2413,6 +2423,7 @@ class BackgroundService {
       // Turn terminal: libera o lock após assistant_final. Compaction/warnings
       // terminam antes do evento terminal para o painel não descartá-los.
       this.runCoordinator.terminal(runMeta.runId, textAwaitsUser(finalText) ? 'awaiting_user' : 'completed');
+      await this.runCoordinator.clear(runMeta.runId);
       this.releaseRunExclusiveLock(runMeta.runId);
     } catch (error) {
       console.error('Error processing user message:', error);
@@ -2448,6 +2459,10 @@ class BackgroundService {
       this.pendingVisionByRun.delete(runMeta.runId);
       this.visionQueue.cancelRun(runMeta.runId);
       await this.clearActiveRunSentinel(runMeta.runId);
+      const finalCoordinatorState = this.runCoordinator.get(runMeta.runId);
+      if (finalCoordinatorState?.terminalReason) {
+        await this.runCoordinator.clear(runMeta.runId);
+      }
       this.runAbortRegistry.dispose(runMeta.runId);
       if (this.orchestrationOwnerRunId === runMeta.runId) {
         this.orchestrationOwnerRunId = null;

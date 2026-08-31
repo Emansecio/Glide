@@ -162,6 +162,7 @@ import {
   getToolPermissionCategory as resolveToolPermissionCategory,
   toolPermissionsCacheKey,
 } from './background/tool-permissions.js';
+import { VisionInbox, buildVisualContextMessage } from './background/vision-inbox.js';
 import {
   VisionQueue,
   isVisionBridgeEnabled,
@@ -237,10 +238,7 @@ class BackgroundService {
   evidenceKeys: Set<string>;
   private _planPromptCache: { length: number; doneCount: number; currentIndex: number; planLines: string } | null;
   private visionQueue: VisionQueue;
-  private pendingVisionByRun: Map<
-    string,
-    Array<{ tool: string; description: string; source: 'recovery' | 'screenshot' }>
-  >;
+  private visionInbox: VisionInbox;
   private runtimeBatcher: RuntimeBatcher;
   private _sessionToolsCache: Map<string, ReturnType<typeof buildSessionTools>>;
 
@@ -686,7 +684,7 @@ class BackgroundService {
     this.evidenceKeys = new Set();
     this._planPromptCache = null;
     this.visionQueue = new VisionQueue();
-    this.pendingVisionByRun = new Map();
+    this.visionInbox = new VisionInbox();
     this.domCacheLru = new DomCacheLru();
     this.failureRecoveryTracker = new FailureRecoveryTracker(3);
     this.runtimeBatcher = new RuntimeBatcher(
@@ -1750,6 +1748,8 @@ class BackgroundService {
       let streamSessionStarted = false;
 
       const runModelPass = async (messages: Message[]) => {
+        const visualItems = this.visionInbox.consume(runMeta.runId);
+        const visualContext = visualItems.length > 0 ? buildVisualContextMessage(visualItems) : '';
         const modelMessages = runPassCache.getModelMessages(messages, {
           systemMessageMode: runtimeProfile.provider === 'anthropic' ? 'user' : 'system',
         });
@@ -1778,14 +1778,16 @@ class BackgroundService {
         const systemPayload = this.sanitizeSystemPrompt(fullSystemPrompt, runtimeProfile.provider);
         let promptCacheApplied = isAnthropicPromptCacheEnabled(runtimeProfile.provider);
         // callMessages é reatribuído se o cache for desligado no retry (ver empty response).
-        const appendExecutionState = (base: ModelMessage[]): ModelMessage[] =>
-          splitAnthropicState ? [...base, { role: 'user', content: systemState } as ModelMessage] : base;
-        let callMessages = appendExecutionState(applyPromptCacheBreakpoint(modelMessages, runtimeProfile.provider));
-        // Fim do prefixo inicial: a âncora de cache que não se move durante a
-        // passe (ver applyStepPromptCacheBreakpoints). A mensagem de estado fica
-        // DEPOIS da âncora — se ela fosse a âncora, mudar a cada passe voltaria
-        // a invalidar o cache.
-        let cacheAnchorIndex = splitAnthropicState ? callMessages.length - 2 : callMessages.length - 1;
+        const appendVolatileContext = (base: ModelMessage[]): ModelMessage[] => {
+          const next = visualContext
+            ? [...base, { role: 'user', content: visualContext } as ModelMessage]
+            : base;
+          return splitAnthropicState ? [...next, { role: 'user', content: systemState } as ModelMessage] : next;
+        };
+        let callMessages = appendVolatileContext(applyPromptCacheBreakpoint(modelMessages, runtimeProfile.provider));
+        // Fim do prefixo inicial: visão e estado volátil ficam DEPOIS da âncora.
+        const volatileTailCount = (visualContext ? 1 : 0) + (splitAnthropicState ? 1 : 0);
+        let cacheAnchorIndex = callMessages.length - volatileTailCount - 1;
         const timeoutMs = resolveTimeoutMs(runtimeProfile.timeout ?? runtimeSettings.timeout);
         const runAbortSignal = this.getRunAbortSignal(runMeta.runId);
 
@@ -2015,8 +2017,8 @@ class BackgroundService {
               // partir de modelMessages limpos; senão o "retry sem cache" continua
               // com breakpoints e gasta as tentativas em vão.
               promptCacheApplied = false;
-              callMessages = appendExecutionState(modelMessages);
-              cacheAnchorIndex = splitAnthropicState ? callMessages.length - 2 : callMessages.length - 1;
+              callMessages = appendVolatileContext(modelMessages);
+              cacheAnchorIndex = callMessages.length - volatileTailCount - 1;
               this.sendRuntime(runMeta, {
                 type: 'run_warning',
                 message: 'Resposta vazia do provedor com cache de prompt; repetindo sem cache.',
@@ -2144,6 +2146,27 @@ class BackgroundService {
         ]);
         toolResults = passResult.toolResults || [];
         toolCalls = passResult.toolCalls || [];
+
+        if (this.visionInbox.hasPending(runMeta.runId)) {
+          currentHistory = normalizeConversationHistory(
+            [
+              ...currentHistory,
+              ...buildToolTurnMessages(
+                passResult.text || '',
+                passResult.reasoningText || null,
+                this.buildToolResultMessageContent(toolResults),
+                toolCalls,
+              ),
+              {
+                role: 'system',
+                content: 'New visual context is ready. Consume it in the next pass before finalizing.',
+              },
+            ],
+            ORCHESTRATION_RETRY_NORMALIZE,
+          );
+          assertOrchestrationContinue('vision_delivery');
+          continue;
+        }
 
         if (recoveredToolCalls.length > 0 && toolResults.length === 0 && recoveryAttempt < maxRecoveryAttempts) {
           this.sendRuntime(runMeta, {
@@ -2574,7 +2597,7 @@ class BackgroundService {
       // Limpeza run-scoped: sempre roda para ESTE run, mesmo quando o watchdog já
       // zerou activeRunId antes do finally (o guard antigo `activeRunId === runId`
       // ficava falso nesse caminho e vazava pendingVisionByRun permanentemente).
-      this.pendingVisionByRun.delete(runMeta.runId);
+      this.visionInbox.terminal(runMeta.runId);
       this.visionQueue.cancelRun(runMeta.runId);
       await this.clearActiveRunSentinel(runMeta.runId);
       const finalCoordinatorState = this.runCoordinator.get(runMeta.runId);
@@ -5195,10 +5218,7 @@ ${recoverySection}${visualRecoverySection}${checkpointSection}`.trim();
     runId: string,
     entry: { tool: string; description: string; source: 'recovery' | 'screenshot' },
   ) {
-    const list = this.pendingVisionByRun.get(runId) || [];
-    list.push(entry);
-    while (list.length > 3) list.shift();
-    this.pendingVisionByRun.set(runId, list);
+    this.visionInbox.publish(runId, entry);
   }
 
   private async describeImageForRun(
@@ -5287,13 +5307,7 @@ ${recoverySection}${visualRecoverySection}${checkpointSection}`.trim();
       .slice(-3)
       .map((f) => `  - ${f.tool}(${f.selector || ''}): ${f.error}`)
       .join('\n');
-    const pendingVision = this.pendingVisionByRun.get(runId) || [];
-    const visionHints =
-      pendingVision.length > 0
-        ? `\nVisual context from recent screenshots:\n${pendingVision
-            .map((entry) => `  - [${entry.source}/${entry.tool}] ${entry.description.slice(0, 400)}`)
-            .join('\n')}\n`
-        : '';
+    const visionHints = '';
     return `
 <failure_recovery>
 ⚠️ ${this.consecutiveFailures} consecutive action(s) FAILED:

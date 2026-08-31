@@ -49,6 +49,7 @@ import {
   isValidFinalResponse,
 } from './ai/retry-engine.js';
 import { buildRunToolSet, getCachedLanguageModel } from './ai/runtime-cache.js';
+import { filterToolDefinitionsForPacks, selectToolPacks } from './ai/tool-packs.js';
 import { describeImageWithModel, migrateStoredProvider } from './ai/sdk-client.js';
 import { withScopedOwnership } from './ai/system-prompt-mode.js';
 import { detectTaskIntent, hasRecentToolActivity } from './ai/task-intent.js';
@@ -1666,9 +1667,17 @@ class BackgroundService {
       // that already produced side effects (duplicate navigate/click/type).
       let toolExecutionsTotal = 0;
       let modelActivityWatchdog: ModelActivityWatchdog | null = null;
+      const taskIntentState = taskIntent as unknown as Record<string, unknown>;
+      const activeToolPacks = selectToolPacks({
+        text:
+          taskIntentState.needsLongReport === true || taskIntentState.reportMode === true
+            ? 'analyze extract report'
+            : '',
+      });
+      const packedTools = filterToolDefinitionsForPacks(tools, activeToolPacks);
       const toolSet = taskIntent.usesBrowserAutomation
         ? buildRunToolSet(
-            tools,
+            packedTools,
             async (toolName, args, options) => {
               toolExecutionsTotal += 1;
               modelActivityWatchdog?.touch();

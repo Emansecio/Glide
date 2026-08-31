@@ -1,3 +1,5 @@
+import type { ToolPackName } from '../ai/tool-packs.js';
+import { buildPackedToolDefinitions } from '../ai/tool-packs.js';
 import {
   arrayBufferToBase64,
   clipIntersectsBitmap,
@@ -882,8 +884,10 @@ export class BrowserTools {
     }
   }
 
-  getToolDefinitions(): ToolDefinition[] {
-    return buildToolDefinitions(MAX_SESSION_TABS);
+  getToolDefinitions(packs?: ToolPackName[]): ToolDefinition[] {
+    return packs?.length
+      ? buildPackedToolDefinitions(packs, MAX_SESSION_TABS)
+      : buildToolDefinitions(MAX_SESSION_TABS);
   }
 
   getSessionTabSummaries(): SessionTabSummary[] {

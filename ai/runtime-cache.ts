@@ -1,5 +1,9 @@
 import type { Tool } from 'ai';
 import type { ToolDefinition } from '../tools/tool-schema.js';
+import {
+  type ToolPackName,
+  filterToolDefinitionsForPacks,
+} from './tool-packs.js';
 import { type SDKModelSettings, buildToolSet, resolveLanguageModel } from './sdk-client.js';
 
 type RunToolSet = Record<string, Tool>;
@@ -65,7 +69,14 @@ export const buildRunToolSet = (
   execute: (toolName: string, args: Record<string, unknown>, options: { toolCallId: string }) => Promise<unknown>,
   provider?: string,
   getScreenshotImage?: (toolCallId: string) => string | undefined,
-): RunToolSet => buildToolSet(tools, execute, provider, getScreenshotImage);
+  packs?: ToolPackName[],
+): RunToolSet =>
+  buildToolSet(
+    packs?.length ? filterToolDefinitionsForPacks(tools, packs) : tools,
+    execute,
+    provider,
+    getScreenshotImage,
+  );
 
 export const invalidateRuntimeCaches = () => {
   modelCache.clear();

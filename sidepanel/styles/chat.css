@@ -135,6 +135,7 @@
   border-radius: var(--radius-lg) var(--radius-lg) var(--radius-xs) var(--radius-lg);
   padding: 10px 14px;
   color: var(--foreground);
+  white-space: pre-wrap;
   transform-origin: bottom right;
 }
 
@@ -385,6 +386,18 @@
   font-size: inherit;
 }
 
+.markdown-body img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.markdown-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+}
+
 /* Link é o único texto azul da interface. */
 .markdown-body a {
   color: var(--accent);
@@ -401,7 +414,8 @@
 }
 
 .markdown-body table {
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
   border-collapse: collapse;
   margin: 0.7em 0;
   font-size: var(--text-sm);

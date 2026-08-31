@@ -264,7 +264,8 @@ SidePanelUI.prototype.startStreamingMessage = function startStreamingMessage() {
       </div>
     `;
 
-  this.elements.chatMessages.appendChild(container);
+  const streamParent = this.lastChatTurn?.isConnected ? this.lastChatTurn : this.elements.chatMessages;
+  streamParent.appendChild(container);
   const executionDetailsEl = container.querySelector('.execution-details') as HTMLDetailsElement | null;
   const executionSummaryTitleEl = container.querySelector('.execution-details-title') as HTMLElement | null;
   const executionSummaryMetaEl = container.querySelector('.execution-details-meta') as HTMLElement | null;

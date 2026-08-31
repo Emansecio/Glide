@@ -55,6 +55,19 @@ describe('history byte budgets', () => {
     expect(message.meta.truncation.retainedChars).toBe(message.content.length);
   });
 
+  it('preserves skewed distinct transcripts when whole session fits', () => {
+    const display = 'D'.repeat(10_000);
+    const context = 'C'.repeat(140_000);
+    const input = session([{ role: 'assistant', content: display }], [{ role: 'assistant', content: context }]);
+    expect(measureStoredBytes(input)).toBeLessThan(200 * 1024);
+
+    const fitted = fitSessionToBudget(input, 200 * 1024);
+
+    expect((fitted.transcript[0] as any).content).toBe(display);
+    expect((fitted.contextTranscript?.[0] as any).content).toBe(context);
+    expect((fitted.contextTranscript?.[0] as any).meta?.truncation).toBeUndefined();
+  });
+
   it('budgets display and distinct context transcripts independently', () => {
     const fitted = fitSessionToBudget(
       session(

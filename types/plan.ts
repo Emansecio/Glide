@@ -22,10 +22,13 @@ export type RunPlan = {
 };
 
 type PlanStepInput = {
+  id?: string;
   title?: string;
   status?: string;
   notes?: string;
 };
+
+type NormalizedPlanStepInput = Omit<PlanStep, 'id'> & { requestedId?: string };
 
 export function normalizePlanStatus(value: unknown): PlanStatus {
   if (typeof value !== 'string') return 'pending';
@@ -33,12 +36,12 @@ export function normalizePlanStatus(value: unknown): PlanStatus {
   return PLAN_STATUS_SET.has(lowered as PlanStatus) ? (lowered as PlanStatus) : 'pending';
 }
 
-export function normalizePlanSteps(input: unknown, options: { maxSteps?: number } = {}): PlanStep[] {
+function normalizePlanStepInputs(input: unknown, maxSteps: number): NormalizedPlanStepInput[] {
   const rawSteps = Array.isArray(input) ? input : [];
-  const maxSteps = options.maxSteps ?? 8;
-  const normalized: PlanStep[] = [];
+  const normalized: NormalizedPlanStepInput[] = [];
 
   for (const step of rawSteps) {
+    let requestedId: string | undefined;
     let title = '';
     let status: PlanStatus = 'pending';
     let notes: string | undefined;
@@ -47,27 +50,34 @@ export function normalizePlanSteps(input: unknown, options: { maxSteps?: number 
       title = step.trim();
     } else if (step && typeof step === 'object') {
       const candidate = step as PlanStepInput;
-      if (typeof candidate.title === 'string') {
-        title = candidate.title.trim();
-      }
+      if (typeof candidate.id === 'string' && candidate.id.trim()) requestedId = candidate.id.trim();
+      if (typeof candidate.title === 'string') title = candidate.title.trim();
       status = normalizePlanStatus(candidate.status);
-      if (typeof candidate.notes === 'string' && candidate.notes.trim()) {
-        notes = candidate.notes.trim();
-      }
+      if (typeof candidate.notes === 'string' && candidate.notes.trim()) notes = candidate.notes.trim();
     }
 
     if (!title) continue;
-    normalized.push({
-      id: `step-${normalized.length + 1}`,
-      title,
-      status,
-      ...(notes ? { notes } : {}),
-    });
-
+    normalized.push({ title, status, ...(requestedId ? { requestedId } : {}), ...(notes ? { notes } : {}) });
     if (normalized.length >= maxSteps) break;
   }
 
   return normalized;
+}
+
+function nextStepId(reservedIds: Set<string>, startAt = 1): string {
+  let sequence = startAt;
+  while (reservedIds.has(`step-${sequence}`)) sequence += 1;
+  return `step-${sequence}`;
+}
+
+export function normalizePlanSteps(input: unknown, options: { maxSteps?: number } = {}): PlanStep[] {
+  const drafts = normalizePlanStepInputs(input, options.maxSteps ?? 8);
+  const reservedIds = new Set<string>();
+  return drafts.map(({ requestedId, ...step }) => {
+    const id = requestedId && !reservedIds.has(requestedId) ? requestedId : nextStepId(reservedIds);
+    reservedIds.add(id);
+    return { id, ...step };
+  });
 }
 
 export function buildRunPlan(
@@ -76,13 +86,32 @@ export function buildRunPlan(
 ): RunPlan {
   const now = options.now ?? Date.now();
   const existing = options.existingPlan;
-  const steps = normalizePlanSteps(stepsInput, { maxSteps: options.maxSteps });
-  if (existing) {
-    for (const step of steps) {
-      const prior = existing.steps.find((candidate) => candidate.id === step.id && candidate.title === step.title);
-      if (prior?.status === 'done') step.status = 'done';
+  const drafts = normalizePlanStepInputs(stepsInput, options.maxSteps ?? 8);
+  const reservedIds = new Set(existing?.steps.map((step) => step.id) ?? []);
+  const assignedIds = new Set<string>();
+  const matchedPriorIds = new Set<string>();
+  const titleKey = (title: string): string => title.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
+
+  const steps = drafts.map(({ requestedId, ...draft }) => {
+    const priorById = requestedId
+      ? existing?.steps.find((candidate) => candidate.id === requestedId && !matchedPriorIds.has(candidate.id))
+      : undefined;
+    const prior =
+      priorById ||
+      existing?.steps.find(
+        (candidate) => !matchedPriorIds.has(candidate.id) && titleKey(candidate.title) === titleKey(draft.title),
+      );
+    if (prior) matchedPriorIds.add(prior.id);
+
+    let id = prior?.id || requestedId;
+    if (!id || assignedIds.has(id) || (reservedIds.has(id) && !prior)) {
+      id = nextStepId(new Set([...reservedIds, ...assignedIds]));
     }
-  }
+    assignedIds.add(id);
+    reservedIds.add(id);
+    return { id, ...draft, status: prior?.status === 'done' ? 'done' : draft.status };
+  });
+
   const createdAt = existing?.createdAt ?? now;
   return {
     planId: existing?.planId || options.planId || `plan-${now}-${Math.random().toString(36).slice(2, 8)}`,

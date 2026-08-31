@@ -82,6 +82,30 @@ function fitMessagesToBudget(messages: unknown[], maxBytes: number, reason: Trun
   return fitted;
 }
 
+function allocateTranscriptBudgets(
+  displayBytes: number,
+  contextBytes: number,
+  availableBytes: number,
+): [number, number] {
+  const half = Math.floor(availableBytes / 2);
+  let displayBudget = Math.min(displayBytes, half);
+  let contextBudget = Math.min(contextBytes, half);
+  let remaining = Math.max(0, availableBytes - displayBudget - contextBudget);
+
+  const displayNeed = Math.max(0, displayBytes - displayBudget);
+  const contextNeed = Math.max(0, contextBytes - contextBudget);
+  if (displayNeed > 0 && contextNeed > 0) {
+    const displayShare = Math.min(displayNeed, Math.floor(remaining / 2));
+    displayBudget += displayShare;
+    remaining -= displayShare;
+  }
+  const contextShare = Math.min(contextBytes - contextBudget, remaining);
+  contextBudget += contextShare;
+  remaining -= contextShare;
+  displayBudget += Math.min(displayBytes - displayBudget, remaining);
+  return [displayBudget, contextBudget];
+}
+
 /** Fits display + context history without fixed per-field caps. Recent text is final fallback. */
 export function fitSessionToBudget(session: StoredSession, maxBytes: number): StoredSession {
   const budget = Math.max(1024, Math.floor(maxBytes));
@@ -89,24 +113,55 @@ export function fitSessionToBudget(session: StoredSession, maxBytes: number): St
   const hasDistinctContext =
     Array.isArray(fitted.contextTranscript) &&
     JSON.stringify(fitted.contextTranscript) !== JSON.stringify(fitted.transcript);
-
-  if (hasDistinctContext) {
-    const transcriptBudget = Math.max(512, Math.floor((budget - 768) / 2));
-    fitted.transcript = fitMessagesToBudget(fitted.transcript, transcriptBudget, 'session_budget');
-    fitted.contextTranscript = fitMessagesToBudget(fitted.contextTranscript || [], transcriptBudget, 'session_budget');
-  } else {
-    fitted.transcript = fitMessagesToBudget(fitted.transcript, budget - 512, 'session_budget');
-    fitted.contextTranscript = undefined;
-  }
+  if (!hasDistinctContext) fitted.contextTranscript = undefined;
   fitted.messageCount = fitted.transcript.length;
 
+  // Full transcripts remain authoritative until serialized session actually exceeds its budget.
   if (measureStoredBytes(fitted) <= budget) return fitted;
-  const remaining = Math.max(512, budget - 512);
-  const finalTranscriptBudget = fitted.contextTranscript ? Math.max(512, Math.floor(remaining / 2)) : remaining;
-  fitted.transcript = fitMessagesToBudget(fitted.transcript, finalTranscriptBudget, 'total_budget');
-  if (fitted.contextTranscript) {
-    fitted.contextTranscript = fitMessagesToBudget(fitted.contextTranscript, finalTranscriptBudget, 'total_budget');
+
+  const messageSets = [fitted.transcript, ...(fitted.contextTranscript ? [fitted.contextTranscript] : [])];
+  for (const messages of messageSets) {
+    for (const message of messages as any[]) {
+      if (compactToolMessage(message) && measureStoredBytes(fitted) <= budget) return fitted;
+    }
+  }
+
+  if (!fitted.contextTranscript) {
+    const shell = { ...fitted, transcript: [] };
+    const transcriptBudget = Math.max(128, budget - measureStoredBytes(shell) + 2);
+    fitted.transcript = fitMessagesToBudget(fitted.transcript, transcriptBudget, 'session_budget');
+  } else {
+    const shell = { ...fitted, transcript: [], contextTranscript: [] };
+    const available = Math.max(256, budget - measureStoredBytes(shell) + 4);
+    const [displayBudget, contextBudget] = allocateTranscriptBudgets(
+      measureStoredBytes(fitted.transcript),
+      measureStoredBytes(fitted.contextTranscript),
+      available,
+    );
+    fitted.transcript = fitMessagesToBudget(fitted.transcript, displayBudget, 'session_budget');
+    fitted.contextTranscript = fitMessagesToBudget(fitted.contextTranscript, contextBudget, 'session_budget');
   }
   fitted.messageCount = fitted.transcript.length;
+
+  // JSON metadata overhead can shift while truncation markers are added; remove only remaining overflow.
+  for (let attempt = 0; attempt < 4 && measureStoredBytes(fitted) > budget; attempt += 1) {
+    const overflow = measureStoredBytes(fitted) - budget;
+    const displayBytes = measureStoredBytes(fitted.transcript);
+    const contextBytes = fitted.contextTranscript ? measureStoredBytes(fitted.contextTranscript) : 0;
+    if (contextBytes > displayBytes && fitted.contextTranscript) {
+      fitted.contextTranscript = fitMessagesToBudget(
+        fitted.contextTranscript,
+        Math.max(128, contextBytes - overflow - 128),
+        'total_budget',
+      );
+    } else {
+      fitted.transcript = fitMessagesToBudget(
+        fitted.transcript,
+        Math.max(128, displayBytes - overflow - 128),
+        'total_budget',
+      );
+      fitted.messageCount = fitted.transcript.length;
+    }
+  }
   return fitted;
 }

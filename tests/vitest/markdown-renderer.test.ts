@@ -49,6 +49,13 @@ describe('renderMarkdownToHtml', () => {
     expect(result.html).not.toContain('src="data:');
   });
 
+  it('closes rejected links around nested inline markup', () => {
+    const result = renderMarkdownToHtml('[**bad**](ftp://example.com)');
+
+    expect(result.html).toContain('<span><strong>bad</strong></span>');
+    expect(result.html).not.toContain('</a>');
+  });
+
   it('escapes raw HTML', () => {
     const result = renderMarkdownToHtml('<script>alert(1)</script>');
     expect(result.html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');

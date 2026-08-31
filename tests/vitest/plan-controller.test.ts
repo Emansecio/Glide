@@ -60,6 +60,26 @@ describe('manual plan controller', () => {
     expect(replacement.version).toBe(3);
   });
 
+  it('keeps stable step identity when model prepends and reorders steps', () => {
+    const acknowledged = applyManualPlanUpdate(plan(), {
+      planId: 'plan-1',
+      version: 1,
+      stepId: 'step-1',
+      status: 'done',
+    }).plan;
+    const replacement = buildRunPlan(
+      [{ title: 'new prerequisite' }, { title: 'second' }, { title: 'first', status: 'pending' }],
+      { existingPlan: acknowledged, now: 200 },
+    );
+
+    expect(replacement.steps.map(({ id, title }) => ({ id, title }))).toEqual([
+      { id: 'step-3', title: 'new prerequisite' },
+      { id: 'step-2', title: 'second' },
+      { id: 'step-1', title: 'first' },
+    ]);
+    expect(replacement.steps[2].status).toBe('done');
+  });
+
   it('accepts versioned plan acknowledgements in runtime schema', () => {
     const result = validateRuntimeMessage({
       schemaVersion: 2,

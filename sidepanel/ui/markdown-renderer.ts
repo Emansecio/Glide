@@ -37,6 +37,7 @@ markdown.renderer.rules.link_open = (tokens, index, options, env, self) => {
   if (!safeHref) {
     token.tag = 'span';
     token.attrs = [];
+    token.meta = { ...(token.meta || {}), rejectedLink: true };
     return '<span>';
   }
   token.attrSet('href', safeHref);
@@ -48,8 +49,20 @@ markdown.renderer.rules.link_open = (tokens, index, options, env, self) => {
 };
 
 markdown.renderer.rules.link_close = (tokens, index, options, _env, self) => {
-  const opener = tokens[index - 2];
-  if (opener?.type === 'link_open' && opener.tag === 'span') return '</span>';
+  let nestedLinks = 0;
+  for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+    if (tokens[cursor].type === 'link_close') {
+      nestedLinks += 1;
+      continue;
+    }
+    if (tokens[cursor].type !== 'link_open') continue;
+    if (nestedLinks > 0) {
+      nestedLinks -= 1;
+      continue;
+    }
+    if (tokens[cursor].meta?.rejectedLink) return '</span>';
+    break;
+  }
   return self.renderToken(tokens, index, options);
 };
 

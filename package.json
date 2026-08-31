@@ -53,11 +53,13 @@
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.17",
     "@ai-sdk/openai-compatible": "^2.0.16",
-    "ai": "^6.0.42"
+    "ai": "^6.0.42",
+    "markdown-it": "^15.0.1"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
     "@types/chrome": "^0.0.268",
+    "@types/markdown-it": "^14.2.0",
     "@types/node": "^22.10.5",
     "esbuild": "^0.27.2",
     "jsdom": "^29.1.1",

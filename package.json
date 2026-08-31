@@ -15,6 +15,8 @@
     "test:run": "node dist/tests/run-tests.js",
     "test:unit": "npm run build:all && node dist/tests/unit/run-unit-tests.js",
     "test:unit:run": "node dist/tests/unit/run-unit-tests.js",
+    "test:vitest": "vitest run",
+    "test:vitest:watch": "vitest",
     "test:integration": "npm run test:e2e",
     "test:integration:manual": "echo 'Load tests/integration/test-page.html in browser and run tests'",
     "test:e2e": "npm run build:all && node dist/tests/e2e/run-e2e.js",
@@ -56,6 +58,7 @@
     "@types/node": "^22.10.5",
     "esbuild": "^0.27.2",
     "playwright": "^1.57.0",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "vitest": "^4.1.11"
   }
 }

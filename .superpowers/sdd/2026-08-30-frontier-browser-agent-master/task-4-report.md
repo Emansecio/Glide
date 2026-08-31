@@ -234,3 +234,34 @@ PASS frontier action case: postcondition
 ## Review gate
 
 Self-review: no blocker found. Independent reviewer still required by acceptance contract. Focus review on live tool-pack expansion and bridge-disabled compatibility boundary.
+
+## Fix 1 evidence
+
+Status: DONE
+
+Implementation commit: `381ba76 fix: close browser kernel review findings`
+
+Closed review findings:
+
+1. `url_changed` now captures pre-action URL when `from` is omitted; unchanged URL fails with `POSTCONDITION_FAILED`.
+2. Stable handles now use shared deep-selector resolution for Glide `>>>` shadow selectors. Expired snapshots also return refreshed candidates.
+3. Background now rebuilds tool packs per orchestration pass from latest user task text, active failures, and outstanding calls, then emits deterministic pack state in execution context.
+
+Tests added/updated:
+
+- `tests/vitest/action-postcondition.test.ts` — omitted-baseline unchanged-URL regression.
+- `tests/vitest/stable-element-handle.test.ts` — shadow handle round-trip and expired-snapshot candidate recovery.
+- `tests/vitest/background-tool-packs.test.ts` — background pass selection, failure diagnostics, outstanding-call retention, and prompt state.
+
+Validation:
+
+```text
+Focused Vitest: 5 files / 30 tests passed.
+npm run check: typecheck + Biome passed (199 files).
+npm run build:all: production bundles passed.
+Postcondition E2E: passed.
+Stable-handle E2E: passed.
+npm run test:frontier: 22 Vitest files / 96 tests; legacy unit 335; validator 33; all E2E and worker-recovery cases passed.
+```
+
+Full fix artifact: `.superpowers/sdd/2026-08-30-frontier-browser-agent-master/task-4-fix-1-report.md`.

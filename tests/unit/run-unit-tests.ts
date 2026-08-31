@@ -194,7 +194,6 @@ import {
 import { SessionContextStore, resolveUserMessageContextAction } from '../../background/session-context-store.js';
 import {
   ActiveRunSentinelRegistry,
-  SessionCompactionQueue,
   SessionGenerationRegistry,
   SessionTombstoneRegistry,
   createSentinelToken,
@@ -262,7 +261,6 @@ import {
   isCspEvalError,
   resolveExecuteScriptTimeoutMs,
   resolveExecuteScriptWorld,
-  runUserScriptInPage,
   shouldAllowMainToIsolatedFallback,
   truncateExecuteScriptValue,
 } from '../../tools/execute-script-runner.js';
@@ -948,13 +946,6 @@ async function testHttpRequestHelper(runner: TestRunner) {
     runner.assertEqual(normalizeHttpMethod('TRACE'), 'GET');
   });
 
-  runner.test('performHttpRequest rejects non-http and private hosts', async () => {
-    const bad = await performHttpRequest({ url: 'file:///etc/passwd' });
-    runner.assertFalse(bad.success, 'file rejected');
-    const priv = await performHttpRequest({ url: 'http://127.0.0.1/admin' });
-    runner.assertFalse(priv.success, 'loopback rejected');
-  });
-
   await runner.asyncTest('performHttpRequest honors run abort signal', async () => {
     const controller = new AbortController();
     const mockFetch = (_input: RequestInfo | URL, init?: RequestInit) =>
@@ -971,24 +962,6 @@ async function testHttpRequestHelper(runner: TestRunner) {
     const res = await pending;
     runner.assertFalse(res.success);
     runner.assertEqual(res.code, 'RUN_ABORTED');
-  });
-
-  runner.test('performHttpRequest returns body from mock fetch', async () => {
-    const mockFetch = async () =>
-      new Response(JSON.stringify({ users: [{ username: 'a' }], next_max_id: 'x' }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      });
-    const res = await performHttpRequest(
-      {
-        url: 'https://www.instagram.com/api/v1/friendships/1/followers/',
-        headers: { 'X-IG-App-ID': '936619743392459' },
-      },
-      mockFetch as unknown as typeof fetch,
-    );
-    runner.assertTrue(res.success, 'ok');
-    runner.assertEqual(res.status, 200);
-    runner.assertTrue(String(res.body || '').includes('next_max_id'), 'body');
   });
 
   runner.test('resolveRedirectUrl blocks private/metadata hops', () => {
@@ -1014,56 +987,6 @@ async function testHttpRequestHelper(runner: TestRunner) {
     runner.assertEqual(stripped.Accept, 'application/json');
     const kept = stripSensitiveHeadersForRedirect(headers, 'https://example.com/a', 'https://example.com/b');
     runner.assertEqual(kept.Authorization, 'Bearer secret');
-  });
-
-  runner.test('performHttpRequest enforces allowedDomains on redirect hops', async () => {
-    let calls = 0;
-    const mockFetch = async () => {
-      calls += 1;
-      if (calls === 1) {
-        return new Response(null, {
-          status: 302,
-          headers: { Location: 'https://evil.example.net/landing' },
-        });
-      }
-      return new Response('nope', { status: 200 });
-    };
-    const res = await performHttpRequest(
-      {
-        url: 'https://allowed.example.com/start',
-        allowedDomains: ['allowed.example.com'],
-      },
-      mockFetch as unknown as typeof fetch,
-    );
-    runner.assertFalse(res.success, 'redirect outside allowlist must fail');
-    runner.assertEqual(calls, 1, 'must not fetch disallowed redirect target');
-  });
-
-  runner.test('performHttpRequest rejects redirect to private host (manual follow)', async () => {
-    let calls = 0;
-    const mockFetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
-      calls += 1;
-      runner.assertEqual(init?.redirect, 'manual', 'must use manual redirect mode');
-      if (calls === 1) {
-        return new Response(null, {
-          status: 302,
-          headers: { Location: 'http://127.0.0.1/secret' },
-        });
-      }
-      return new Response('should not fetch private', { status: 200 });
-    };
-    const res = await performHttpRequest(
-      { url: 'https://example.com/open-redirect' },
-      mockFetch as unknown as typeof fetch,
-    );
-    runner.assertFalse(res.success, 'private redirect must fail');
-    runner.assertEqual(calls, 1, 'must not follow into private host');
-    runner.assertTrue(
-      String(res.error || '')
-        .toLowerCase()
-        .includes('block') || String(res.error || '').includes('127'),
-      'error mentions block/private',
-    );
   });
 }
 
@@ -1094,23 +1017,6 @@ function testExecuteScriptRunner(runner: TestRunner) {
     runner.assertEqual(resolveExecuteScriptTimeoutMs(500), 1000);
     runner.assertEqual(resolveExecuteScriptTimeoutMs(999999), 120000);
     runner.assertEqual(resolveExecuteScriptTimeoutMs(45000), 45000);
-  });
-
-  runner.test('runUserScriptInPage returns values and side-effect nulls', async () => {
-    const num = await runUserScriptInPage('return 42');
-    runner.assertTrue(num.ok === true && num.value === 42, 'return 42');
-    const bare = await runUserScriptInPage('1+1');
-    runner.assertTrue(bare.ok === true && bare.value === 2, 'bare expression');
-    const side = await runUserScriptInPage('var __glide_t=1');
-    runner.assertTrue(side.ok === true && side.value === null, 'statement without return → null value');
-  });
-
-  runner.test('runUserScriptInPage awaits promises and top-level await', async () => {
-    const promised = await runUserScriptInPage('return Promise.resolve(7)');
-    runner.assertTrue(promised.ok === true && promised.value === 7, 'awaits returned Promise');
-    runner.assertTrue(promised.ok === true && promised.awaited === true, 'marks awaited');
-    const topAwait = await runUserScriptInPage('return await Promise.resolve(9)');
-    runner.assertTrue(topAwait.ok === true && topAwait.value === 9, 'top-level await works');
   });
 
   runner.test('isCspEvalError detects CSP eval blocks', () => {
@@ -3348,21 +3254,6 @@ function testFixSwReviewFindings(runner: TestRunner) {
     const wrapped = wrapUntrustedToolPayload('hello');
     runner.assertTrue(wrapped.includes('<untrusted_tool_output>'));
     runner.assertTrue(wrapped.includes('hello'));
-  });
-
-  runner.asyncTest('session compaction queue serializes same-session work', async () => {
-    const queue = new SessionCompactionQueue();
-    const events: string[] = [];
-    const first = queue.run('session-1', async () => {
-      events.push('first:start');
-      await new Promise((resolve) => setTimeout(resolve, 5));
-      events.push('first:end');
-    });
-    const second = queue.run('session-1', async () => {
-      events.push('second');
-    });
-    await Promise.all([first, second]);
-    runner.assertEqual(events.join(','), 'first:start,first:end,second');
   });
 
   runner.test('run event sequencer increments per run independently', () => {

@@ -46,6 +46,12 @@ export function canApplyCompactionResult(input: {
 
 type SessionSnapshot = { revision: number; messages: Message[] };
 
+export type ContextLineageAdoption = {
+  accepted: boolean;
+  state: 'cold_adopted' | 'warm_confirmed' | 'revision_mismatch';
+  revision: number;
+};
+
 const cloneCommit = (commit: ContextCommit): ContextCommit => ({
   ...commit,
   messages: cloneConversationHistory(commit.messages),
@@ -64,6 +70,23 @@ export class ContextTransactionStore {
     const current = this.sessions.get(id);
     if (current && current.revision > revision) return;
     this.sessions.set(id, { revision, messages: cloneConversationHistory(normalizeConversationHistory(messages)) });
+  }
+
+  /** Adopts panel-owned history only when its explicit revision matches this lineage. */
+  adoptLineage(sessionId: string, revision: number, messages: Message[]): ContextLineageAdoption {
+    const id = String(sessionId || '').trim();
+    const current = this.sessions.get(id);
+    const currentRevision = current?.revision ?? 0;
+    if (!id || !Number.isInteger(revision) || revision < 0 || (current && currentRevision !== revision)) {
+      return { accepted: false, state: 'revision_mismatch', revision: currentRevision };
+    }
+
+    const state = current ? 'warm_confirmed' : 'cold_adopted';
+    this.sessions.set(id, {
+      revision,
+      messages: cloneConversationHistory(normalizeConversationHistory(messages)),
+    });
+    return { accepted: true, state, revision };
   }
 
   read(sessionId: string): SessionSnapshot {

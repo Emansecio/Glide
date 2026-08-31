@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ContextTransactionStore } from '../../background/context-transaction.js';
-import { shouldAppendAssistantFinalForCommit } from '../../sidepanel/ui/panel-guards.js';
+import { isContextLineageAcknowledged, shouldAppendAssistantFinalForCommit } from '../../sidepanel/ui/panel-guards.js';
 
 const message = (content: string) => ({ role: 'assistant' as const, content });
 const input = (overrides: Record<string, unknown> = {}) => ({
@@ -60,6 +60,40 @@ describe('ContextTransactionStore', () => {
     );
     expect(compacted.revision).toBe(2);
   });
+
+  it('adopts an explicit warm-panel revision into a cold worker lineage', () => {
+    const restarted = new ContextTransactionStore();
+    const history = [
+      { role: 'user' as const, content: 'first' },
+      message('first final'),
+      { role: 'user' as const, content: 'continue after restart' },
+    ];
+
+    const adoption = restarted.adoptLineage('session-1', 4, history);
+    expect(adoption).toEqual({ accepted: true, state: 'cold_adopted', revision: 4 });
+
+    const commit = restarted.commit(
+      input({
+        sourceRevision: 4,
+        runId: 'run-after-restart',
+        turnId: 'turn-after-restart',
+        messages: [...history, message('second final')],
+      }),
+    );
+    expect(commit.revision).toBe(5);
+    expect(commit.messages.filter((entry) => String(entry.content).includes('second final'))).toHaveLength(1);
+  });
+
+  it('rejects a mismatched panel revision when worker lineage is already warm', () => {
+    const store = new ContextTransactionStore();
+    store.hydrate('session-1', 3, [message('canonical')]);
+    expect(store.adoptLineage('session-1', 2, [message('stale')])).toEqual({
+      accepted: false,
+      state: 'revision_mismatch',
+      revision: 3,
+    });
+    expect(store.read('session-1').messages[0].content).toBe('canonical');
+  });
 });
 
 describe('panel context ordering', () => {
@@ -69,5 +103,20 @@ describe('panel context ordering', () => {
 
   it('temporarily appends final when commit has not arrived yet', () => {
     expect(shouldAppendAssistantFinalForCommit({ contextRevision: 2, finalRevision: 3 })).toBe(true);
+  });
+
+  it('accepts only a matching explicit cold-lineage acknowledgement', () => {
+    expect(
+      isContextLineageAcknowledged({
+        contextRevision: 4,
+        contextLineage: { state: 'cold_adopted', revision: 4 },
+      }),
+    ).toBe(true);
+    expect(
+      isContextLineageAcknowledged({
+        contextRevision: 4,
+        contextLineage: { state: 'cold_adopted', revision: 0 },
+      }),
+    ).toBe(false);
   });
 });

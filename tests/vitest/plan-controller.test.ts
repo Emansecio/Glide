@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyManualPlanUpdate } from '../../background/plan-controller.js';
+import { applyManualPlanUpdate, applyModelPlanUpdate } from '../../background/plan-controller.js';
 import { buildRunPlan } from '../../types/plan.js';
 import { validateRuntimeMessage } from '../../types/runtime-messages.js';
 
@@ -41,7 +41,7 @@ describe('manual plan controller', () => {
     });
     expect(accepted.accepted).toBe(true);
     expect(accepted.plan.version).toBe(2);
-    expect(accepted.plan.steps[0].status).toBe('done');
+    expect(accepted.plan.steps[0]).toMatchObject({ status: 'done', statusProvenance: 'manual' });
     expect(current.steps[0].status).toBe('pending');
   });
 
@@ -56,8 +56,50 @@ describe('manual plan controller', () => {
       existingPlan: acknowledged,
       now: 200,
     });
-    expect(replacement.steps[0].status).toBe('done');
+    expect(replacement.steps[0]).toMatchObject({ status: 'done', statusProvenance: 'manual' });
     expect(replacement.version).toBe(3);
+  });
+
+  it('blocks model update_plan from reverting a manually acknowledged done step', () => {
+    const acknowledged = applyManualPlanUpdate(plan(), {
+      planId: 'plan-1',
+      version: 1,
+      stepId: 'step-1',
+      status: 'done',
+    }).plan;
+
+    const modelUpdate = applyModelPlanUpdate(acknowledged, {
+      stepIndex: 0,
+      status: 'pending',
+    });
+
+    expect(modelUpdate.applied).toBe(false);
+    expect(modelUpdate.protectedByManualState).toBe(true);
+    expect(modelUpdate.plan).toBe(acknowledged);
+    expect(modelUpdate.plan.version).toBe(2);
+    expect(modelUpdate.plan.steps[0]).toMatchObject({ status: 'done', statusProvenance: 'manual' });
+  });
+
+  it('allows explicit user reversal while keeping later model conflicts blocked', () => {
+    const acknowledged = applyManualPlanUpdate(plan(), {
+      planId: 'plan-1',
+      version: 1,
+      stepId: 'step-1',
+      status: 'done',
+    }).plan;
+    const reversed = applyManualPlanUpdate(acknowledged, {
+      planId: 'plan-1',
+      version: 2,
+      stepId: 'step-1',
+      status: 'pending',
+    }).plan;
+
+    expect(reversed.steps[0]).toMatchObject({ status: 'pending', statusProvenance: 'manual' });
+    expect(applyModelPlanUpdate(reversed, { stepIndex: 0, status: 'done' })).toMatchObject({
+      applied: false,
+      protectedByManualState: true,
+      plan: reversed,
+    });
   });
 
   it('keeps stable step identity when model prepends and reorders steps', () => {

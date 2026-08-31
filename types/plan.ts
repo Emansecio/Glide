@@ -1,4 +1,5 @@
 export type PlanStatus = 'pending' | 'running' | 'done' | 'blocked';
+export type PlanStatusProvenance = 'model' | 'manual';
 
 export const PLAN_STATUSES = ['pending', 'running', 'done', 'blocked'] as const;
 
@@ -8,6 +9,8 @@ export type PlanStep = {
   id: string;
   title: string;
   status: PlanStatus;
+  /** Manual status remains authoritative until another acknowledged manual update. */
+  statusProvenance?: PlanStatusProvenance;
   notes?: string;
 };
 
@@ -109,7 +112,13 @@ export function buildRunPlan(
     }
     assignedIds.add(id);
     reservedIds.add(id);
-    return { id, ...draft, status: prior?.status === 'done' ? 'done' : draft.status };
+    const preserveManualStatus = prior?.statusProvenance === 'manual';
+    return {
+      id,
+      ...draft,
+      status: preserveManualStatus || prior?.status === 'done' ? prior?.status || draft.status : draft.status,
+      statusProvenance: preserveManualStatus ? ('manual' as const) : ('model' as const),
+    };
   });
 
   const createdAt = existing?.createdAt ?? now;

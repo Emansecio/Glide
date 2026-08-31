@@ -1,3 +1,4 @@
+import type { RunRecoveryLoss } from '../background/run-checkpoint-store.js';
 import { RUN_TERMINAL_REASONS, type RunTerminalReason } from '../background/run-types.js';
 import type { RunPlan } from './plan.js';
 
@@ -188,6 +189,7 @@ export type RunInterrupted = RuntimeMessageBase & {
   type: 'run_interrupted';
   message: string;
   finishReason: RunTerminalReason;
+  recoveryLoss?: RunRecoveryLoss;
 };
 
 export type ContextCommitMessage = RuntimeMessageBase & {
@@ -496,6 +498,9 @@ const validateRuntimeMessageShape = (message: GenericRecord): RuntimeMessageVali
       if (!isString(message.message) || !isNonEmptyString(message.finishReason)) {
         return { ok: false, reason: 'run_interrupted fields are invalid.' };
       }
+      if (message.recoveryLoss !== undefined && !isRecord(message.recoveryLoss)) {
+        return { ok: false, reason: 'run_interrupted.recoveryLoss must be an object.' };
+      }
       return { ok: true, message: message as RuntimeMessage };
     case 'context_commit':
       if (!Number.isInteger(message.revision) || Number(message.revision) <= 0) {
@@ -580,6 +585,8 @@ export type UserMessagePanel = {
   sessionId: string;
   /** Full model context — optional when the SW already holds this session (warm path). */
   conversationHistory?: Array<Record<string, unknown>>;
+  /** Panel's canonical session-lineage revision, used for cold-worker adoption. */
+  contextRevision?: number;
   selectedTabs?: unknown[];
   panelTabId?: number;
 };
@@ -599,6 +606,12 @@ export function validateUserMessagePanel(value: unknown): UserMessagePanelValida
   if (!isNonEmptyString(value.sessionId)) return { ok: false, reason: 'user_message.sessionId is required.' };
   if (!isConversationHistoryLike(value.conversationHistory)) {
     return { ok: false, reason: 'user_message.conversationHistory must be an array when provided.' };
+  }
+  if (
+    value.contextRevision !== undefined &&
+    (!Number.isInteger(value.contextRevision) || Number(value.contextRevision) < 0)
+  ) {
+    return { ok: false, reason: 'user_message.contextRevision must be a non-negative integer when provided.' };
   }
   if (value.selectedTabs !== undefined && !Array.isArray(value.selectedTabs)) {
     return { ok: false, reason: 'user_message.selectedTabs must be an array when provided.' };

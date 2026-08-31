@@ -1,3 +1,4 @@
+import type { RunRecoveryLoss } from './run-checkpoint-store.js';
 import type { RunCheckpoint } from './run-types.js';
 
 export type RunRecoveryDecision = 'resume' | 'confirm' | 'discard';
@@ -5,7 +6,12 @@ export const MAX_CHECKPOINT_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export function recoverCheckpoint(
   checkpoint: RunCheckpoint,
-  options: { committedContextRevision: number; committedActionId?: string; now?: number },
+  options: {
+    committedContextRevision: number;
+    committedActionId?: string;
+    recoveryLoss?: RunRecoveryLoss;
+    now?: number;
+  },
 ): RunRecoveryDecision {
   const now = options.now ?? Date.now();
   if (now - checkpoint.updatedAt > MAX_CHECKPOINT_AGE_MS || checkpoint.updatedAt > now + 60_000) {
@@ -22,6 +28,7 @@ export function recoverCheckpoint(
   if (checkpoint.lastCommittedActionId && checkpoint.lastCommittedActionId !== options.committedActionId) {
     return 'confirm';
   }
+  if (options.recoveryLoss?.lossy === true) return 'discard';
   if (checkpoint.contextRevision !== options.committedContextRevision) return 'discard';
   if (checkpoint.phase === 'model' || checkpoint.phase === 'committing' || checkpoint.phase === 'starting') {
     return 'resume';

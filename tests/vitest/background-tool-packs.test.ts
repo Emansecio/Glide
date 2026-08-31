@@ -38,6 +38,21 @@ describe('background adaptive tool-pack state', () => {
     expect(pass.outstandingToolNames).toEqual(['extractTable']);
   });
 
+  it('keeps the completed tool pack available for a Portuguese continuation', () => {
+    const pass = resolveBrowserToolPassState(definitions, {
+      taskText: 'continue de onde parou',
+      activeFailure: false,
+      messages: [
+        { role: 'assistant', toolCalls: [{ id: 'call-1', name: 'fillForm' }] },
+        { role: 'tool', toolCallId: 'call-1' },
+      ],
+    });
+
+    expect(pass.outstandingToolNames).toEqual([]);
+    expect(pass.packs).toEqual(['core', 'forms']);
+    expect(pass.definitions.map((tool) => tool.name)).toContain('fillForm');
+  });
+
   it('drops outstanding status after matching tool result', () => {
     expect(
       collectOutstandingToolNames([

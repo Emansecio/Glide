@@ -259,6 +259,43 @@ test('Plan checklist renders sized checkboxes and marks completed steps', async 
   );
 });
 
+test('Model update_plan cannot revert an acknowledged manual completion', async ({ panel }) => {
+  await resetPanelRunState(panel);
+  const sessionId = `manual-plan-${Date.now()}`;
+  const send = (payload: Record<string, unknown>) =>
+    panel.evaluate((message) => chrome.runtime.sendMessage(message), { ...payload, sessionId });
+
+  const created = (await send({
+    type: 'execute_tool',
+    tool: 'set_plan',
+    args: { steps: [{ title: 'Etapa manual' }, { title: 'Etapa seguinte' }] },
+  })) as any;
+  const plan = created?.result?.plan;
+  assert(created?.success === true && plan?.planId && plan?.version === 1, 'Manual fixture should create plan v1.');
+
+  const acknowledged = (await send({
+    type: 'manual_plan_update',
+    planId: plan.planId,
+    version: plan.version,
+    stepId: plan.steps[0].id,
+    status: 'done',
+  })) as any;
+  assert(acknowledged?.accepted === true, 'Panel completion should be acknowledged.');
+  assert(
+    acknowledged?.plan?.steps?.[0]?.statusProvenance === 'manual',
+    'Acknowledged completion should carry manual provenance.',
+  );
+
+  const modelUpdate = (await send({
+    type: 'execute_tool',
+    tool: 'update_plan',
+    args: { step_index: 0, status: 'pending' },
+  })) as any;
+  assert(modelUpdate?.success === true, 'Protected model update should return a conclusive result.');
+  assert(modelUpdate?.result?.protectedByManualState === true, 'Model conflict should report manual protection.');
+  assert(modelUpdate?.result?.plan?.steps?.[0]?.status === 'done', 'Model must not revert manual done to pending.');
+});
+
 test('run_warning renders as an advisory banner, run_error as an alert', async ({ panel, worker }) => {
   await resetPanelRunState(panel);
   const runId = `run-e2e-${Date.now()}`;

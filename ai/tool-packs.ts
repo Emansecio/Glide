@@ -1,11 +1,13 @@
 import { buildToolDefinitions } from '../tools/tool-definitions.js';
 import type { ToolDefinition } from '../tools/tool-schema.js';
+import { normalizeTaskIntentText } from './task-intent.js';
 
 export type ToolPackName = 'core' | 'forms' | 'extract' | 'diagnostics' | 'tabs' | 'advanced';
 export type ToolPackIntent = {
   text?: string;
   activeFailure?: boolean;
   outstandingToolNames?: string[];
+  recentToolNames?: string[];
 };
 
 const PACK_TOOLS: Record<ToolPackName, readonly string[]> = {
@@ -38,19 +40,58 @@ const packForTool = (toolName: string): ToolPackName | undefined =>
   (Object.keys(PACK_TOOLS) as ToolPackName[]).find((pack) => PACK_TOOLS[pack].includes(toolName));
 
 export function selectToolPacks(input: ToolPackIntent): ToolPackName[] {
-  const text = String(input.text || '').toLowerCase();
+  const text = normalizeTaskIntentText(input.text);
   const selected = new Set<ToolPackName>(['core']);
-  if (/\b(form|field|input|select|dropdown|checkbox|radio|fill|submit|upload)\b/.test(text)) selected.add('forms');
-  if (/\b(analy[sz]e|extract|table|collect|scrape|harvest|content|report)\b/.test(text)) selected.add('extract');
-  if (/\b(tab|tabs|window|history|back|forward)\b/.test(text)) selected.add('tabs');
-  if (/\b(hover|drag|script|request|download|cdp|native)\b/.test(text)) selected.add('advanced');
-  if (input.activeFailure || /\b(debug|diagnos|console|network|screenshot|storage|performance)\b/.test(text)) {
-    selected.add('diagnostics');
-  }
+  const formsIntent =
+    /\b(form|formular\w*|field|campo|input|select|selecion\w*|opcao|dropdown|checkbox|radio|fill|preench\w*|submit|upload|anex\w*|arquivo)\b/.test(
+      text,
+    );
+  const extractIntent =
+    /\b(analy[sz]\w*|analis\w*|extract\w*|extrai\w*|table|tabela|collect\w*|colet\w*|scrape|rasp\w*|harvest|content|conteudo|report|relatorio)\b/.test(
+      text,
+    );
+  const tabsIntent = /\b(tab|tabs|aba|abas|window|janela|history|historico|back|voltar|forward|avancar)\b/.test(text);
+  const advancedIntent =
+    /\b(hover|drag|arrast\w*|script|request|requisicao|download|baixar|baixe|cdp|native|nativo)\b/.test(text);
+  const diagnosticsIntent =
+    /\b(debug|depur\w*|diagnos\w*|console|network|rede|screenshot|print|storage|armazenamento|performance|desempenho)\b/.test(
+      text,
+    );
+  const explicitCoreIntent =
+    /\b(click|clique|clicar|open|abra|abrir|navigate|naveg\w*|scroll|role|rolar|wait|aguard\w*|esper\w*|read|leia|type|digit\w*|dismiss|feche)\b/.test(
+      text,
+    );
+  const continuationIntent =
+    /\b(continue|continuar|prossiga|prosseguir|retome|retomar|siga|seguir|next|adiante)\b|de onde parou/.test(text);
+
+  if (formsIntent) selected.add('forms');
+  if (extractIntent) selected.add('extract');
+  if (tabsIntent) selected.add('tabs');
+  if (advancedIntent) selected.add('advanced');
+  if (input.activeFailure || diagnosticsIntent) selected.add('diagnostics');
+
   for (const name of input.outstandingToolNames || []) {
     const pack = packForTool(name);
     if (pack) selected.add(pack);
   }
+  if (continuationIntent) {
+    for (const name of input.recentToolNames || []) {
+      const pack = packForTool(name);
+      if (pack) selected.add(pack);
+    }
+  }
+
+  const hasTaskSpecificPack = [...selected].some(
+    (pack) => pack === 'forms' || pack === 'extract' || pack === 'tabs' || pack === 'advanced',
+  );
+  const uncertainIntent = Boolean(text) && !explicitCoreIntent && !diagnosticsIntent && !hasTaskSpecificPack;
+  if (uncertainIntent) {
+    // Unknown locale or underspecified continuation: expose safe form/extract schemas
+    // rather than fail closed to core. Advanced effect packs still require evidence.
+    selected.add('forms');
+    selected.add('extract');
+  }
+
   const order: ToolPackName[] = ['core', 'forms', 'extract', 'diagnostics', 'tabs', 'advanced'];
   return order.filter((pack) => selected.has(pack));
 }

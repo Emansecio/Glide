@@ -81,7 +81,7 @@ import {
   hasConnectedPanelPorts,
   postToPanelPorts,
 } from './background/panel-port.js';
-import { applyManualPlanUpdate } from './background/plan-controller.js';
+import { applyManualPlanUpdate, applyModelPlanUpdate } from './background/plan-controller.js';
 import { checkProviderReadiness } from './background/preflight.js';
 import {
   UNTRUSTED_DATA_POLICY,
@@ -592,6 +592,7 @@ class BackgroundService {
       const decision = recoverCheckpoint(checkpoint, {
         committedContextRevision: recoveryContext?.contextRevision ?? -1,
         committedActionId: recoveryContext?.lastCommittedActionId,
+        recoveryLoss: recoveryContext?.loss,
       });
       const previousMeta: RunMeta = {
         runId: checkpoint.runId,
@@ -614,8 +615,11 @@ class BackgroundService {
         await this.checkpointStore.clear(checkpoint.runId);
         this.sendRuntime(previousMeta, {
           type: 'run_interrupted',
-          message: 'Execução anterior não tinha checkpoint seguro para retomada.',
+          message: recoveryContext?.loss
+            ? 'Execução anterior não foi retomada porque o contexto de recuperação teve perda estruturada.'
+            : 'Execução anterior não tinha checkpoint seguro para retomada.',
           finishReason: 'interrupted',
+          ...(recoveryContext?.loss ? { recoveryLoss: recoveryContext.loss } : {}),
         });
         return;
       }
@@ -1110,22 +1114,52 @@ class BackgroundService {
           const hasProvidedHistory =
             Array.isArray(message.conversationHistory) && message.conversationHistory.length > 0;
           const action = resolveUserMessageContextAction(sessionContextStore.has(sessionId), hasProvidedHistory);
+          const workerRevision = contextTransactionStore.read(sessionId).revision;
+          const panelRevision =
+            Number.isInteger(message.contextRevision) && Number(message.contextRevision) >= 0
+              ? Number(message.contextRevision)
+              : workerRevision;
 
           if (action === 'history_needed') {
             // Cold session (SW restart, first send, loaded history). Panel resends once with
-            // full conversationHistory — no user-visible error. recoverOrphanedRun/watchdog
-            // flows are unaffected because no run is queued here.
-            sendResponse?.({ success: false, history_needed: true, sessionId });
+            // full conversationHistory and its lineage revision. No run is queued here.
+            sendResponse?.({
+              success: false,
+              history_needed: true,
+              sessionId,
+              contextLineage: { state: 'cold_required', revision: workerRevision },
+            });
             return false;
           }
 
-          sendResponse?.({ success: true, queued: true });
-
           let initialHistory: Message[];
+          let contextLineage: ReturnType<typeof contextTransactionStore.adoptLineage>;
           if (action === 'adopt') {
             initialHistory = normalizeConversationHistory(message.conversationHistory as Message[]);
+            contextLineage = contextTransactionStore.adoptLineage(sessionId, panelRevision, initialHistory);
+            if (!contextLineage.accepted) {
+              sendResponse?.({
+                success: false,
+                queued: false,
+                sessionId,
+                error: 'Context revision mismatch; reload canonical conversation history before continuing.',
+                contextLineage,
+              });
+              return false;
+            }
             sessionContextStore.adopt(sessionId, initialHistory);
           } else {
+            if (message.contextRevision !== undefined && panelRevision !== workerRevision) {
+              sendResponse?.({
+                success: false,
+                queued: false,
+                sessionId,
+                error: 'Context revision mismatch; reload canonical conversation history before continuing.',
+                contextLineage: { accepted: false, state: 'revision_mismatch', revision: workerRevision },
+              });
+              return false;
+            }
+            contextLineage = { accepted: true, state: 'warm_confirmed', revision: workerRevision };
             initialHistory = sessionContextStore.get(sessionId);
             const userEntry = createMessage({ role: 'user', content: String(message.message || '') });
             if (userEntry) {
@@ -1134,6 +1168,7 @@ class BackgroundService {
             }
           }
 
+          sendResponse?.({ success: true, queued: true, contextLineage });
           void this.processUserMessage(initialHistory, message.selectedTabs || [], sessionId, message.panelTabId).catch(
             (error) => {
               console.error('Error processing user_message:', error);
@@ -2917,12 +2952,27 @@ class BackgroundService {
           sendResult(errorResult);
           return errorResult;
         }
-        this.currentPlan.steps[stepIndex].status = status;
-        this.currentPlan.version = Math.max(1, Number(this.currentPlan.version || 1)) + 1;
-        this.currentPlan.updatedAt = Date.now();
-        this._planPromptCache = null;
-        this.sendRuntime(options.runMeta, { type: 'plan_update', plan: this.currentPlan });
-        const result = { success: true, step: stepIndex, status, plan: this.currentPlan };
+        const decision = applyModelPlanUpdate(this.currentPlan, { stepIndex, status });
+        if (decision.applied) {
+          this.currentPlan = decision.plan;
+          this._planPromptCache = null;
+          this.sendRuntime(options.runMeta, { type: 'plan_update', plan: this.currentPlan });
+        }
+        const currentStatus = decision.plan.steps[stepIndex].status;
+        const result = {
+          success: true,
+          step: stepIndex,
+          status: currentStatus,
+          requestedStatus: status,
+          applied: decision.applied,
+          ...(decision.protectedByManualState
+            ? {
+                protectedByManualState: true,
+                message: 'Model update ignored because this step has acknowledged manual status.',
+              }
+            : {}),
+          plan: decision.plan,
+        };
         sendResult(result);
         return result;
       }

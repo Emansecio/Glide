@@ -15,6 +15,29 @@ describe('adaptive browser tool packs', () => {
     expect(selectToolPacks({ text: 'analyze and extract this table' })).toContain('extract');
   });
 
+  it.each(['selecione uma opção', 'preencha o formulário', 'anexe o arquivo'])(
+    'adds forms for Portuguese intent: %s',
+    (text) => {
+      const names = buildPackedToolDefinitions(selectToolPacks({ text }), 10).map((tool) => tool.name);
+      expect(names).toEqual(expect.arrayContaining(['selectOption', 'fillForm', 'setInputFiles']));
+    },
+  );
+
+  it('adds extraction for diacritic-insensitive Portuguese intent', () => {
+    const names = buildPackedToolDefinitions(selectToolPacks({ text: 'extraia a tabela e faça um relatório' }), 10).map(
+      (tool) => tool.name,
+    );
+    expect(names).toEqual(expect.arrayContaining(['extractTable', 'getContent']));
+  });
+
+  it('conservatively expands uncertain continuation without exposing advanced effects', () => {
+    expect(selectToolPacks({ text: 'prossiga de onde parou' })).toEqual(['core', 'forms', 'extract']);
+  });
+
+  it('restores the recent pack for locale-neutral continuation', () => {
+    expect(selectToolPacks({ text: 'continue', recentToolNames: ['setInputFiles'] })).toEqual(['core', 'forms']);
+  });
+
   it('adds diagnostics after failure', () => {
     expect(selectToolPacks({ text: 'click Save', activeFailure: true })).toContain('diagnostics');
   });

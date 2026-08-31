@@ -47,6 +47,19 @@ describe('recoverCheckpoint', () => {
     ).toBe('resume');
   });
 
+  it('discards a safe-phase checkpoint when recovery context reports structured loss', () => {
+    expect(
+      recoverCheckpoint(checkpoint('model'), {
+        committedContextRevision: 4,
+        recoveryLoss: {
+          lossy: true,
+          reasons: [{ kind: 'total_byte_limit', originalBytes: 200_000, maxBytes: 131_072 }],
+        },
+        now: 300,
+      }),
+    ).toBe('discard');
+  });
+
   it('discards terminal, stale, and revision-mismatched checkpoints', () => {
     expect(recoverCheckpoint(checkpoint('completed'), { committedContextRevision: 4, now: 300 })).toBe('discard');
     expect(recoverCheckpoint(checkpoint('model'), { committedContextRevision: 4, now: 8 * 24 * 60 * 60 * 1000 })).toBe(

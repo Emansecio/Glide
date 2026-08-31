@@ -36,6 +36,17 @@ export function collectOutstandingToolNames(messages: ToolPackMessage[]): string
   return [...new Set(pending.values())].sort();
 }
 
+export function collectRecentToolNames(messages: ToolPackMessage[], windowSize = 12): string[] {
+  const recent = messages
+    .slice(-windowSize)
+    .flatMap((message) =>
+      message.role === 'assistant'
+        ? (message.toolCalls || []).flatMap((call) => (typeof call.name === 'string' && call.name ? [call.name] : []))
+        : [],
+    );
+  return [...new Set(recent)].sort();
+}
+
 export type BrowserToolPassState = {
   packs: ToolPackName[];
   definitions: ToolDefinition[];
@@ -48,10 +59,12 @@ export function resolveBrowserToolPassState(
   input: { taskText: string; activeFailure: boolean; messages: ToolPackMessage[] },
 ): BrowserToolPassState {
   const outstandingToolNames = collectOutstandingToolNames(input.messages);
+  const recentToolNames = collectRecentToolNames(input.messages);
   const packs = selectToolPacks({
     text: input.taskText,
     activeFailure: input.activeFailure,
     outstandingToolNames,
+    recentToolNames,
   });
   return {
     packs,

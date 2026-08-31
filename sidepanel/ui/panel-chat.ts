@@ -1,6 +1,7 @@
 import { createMessage } from '../../ai/message-schema.js';
 import type { Message } from '../../ai/message-schema.js';
 import { dedupeThinking, extractThinking } from '../../ai/message-utils.js';
+import { isContextLineageAcknowledged } from './panel-guards.js';
 import { getTerminalStatusPresentation } from './panel-status.js';
 import { resolvePanelTabId } from './panel-tab-id.js';
 import type { UsagePayload } from './panel-types.js';
@@ -95,6 +96,7 @@ SidePanelUI.prototype.sendMessage = async function sendMessage() {
         message: typeof modelContent === 'string' ? modelContent : displayText,
         selectedTabs: [],
         sessionId: this.sessionId,
+        contextRevision: this.contextRevision,
         panelTabId,
       };
       if (includeHistory) {
@@ -106,10 +108,19 @@ SidePanelUI.prototype.sendMessage = async function sendMessage() {
     let response = await chrome.runtime.sendMessage(buildPayload(!canOmitHistory));
 
     if (response?.history_needed) {
+      this.swContextSyncedSessions.delete(this.sessionId);
       response = await chrome.runtime.sendMessage(buildPayload(true));
     }
 
     if (response?.success && response?.queued) {
+      if (
+        !isContextLineageAcknowledged({
+          contextRevision: this.contextRevision,
+          contextLineage: response.contextLineage,
+        })
+      ) {
+        throw new Error('Service worker confirmou uma revisão de contexto diferente da revisão do painel.');
+      }
       this.swContextSyncedSessions.add(this.sessionId);
     } else if (!response?.success && !response?.queued) {
       throw new Error(response?.error || 'Falha ao enfileirar mensagem no service worker.');

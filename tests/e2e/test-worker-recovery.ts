@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import fs from 'fs';
+import http from 'node:http';
 import os from 'os';
 import path from 'path';
 import { type BrowserContext, type Page, type Worker, chromium } from 'playwright';
@@ -20,6 +21,96 @@ async function currentWorker(context: BrowserContext): Promise<Worker> {
 }
 
 type WorkerTarget = { targetId: string; url: string };
+
+type MockModelServer = { endpoint: string; close: () => Promise<void>; requestCount: () => number };
+
+async function startMockModelServer(): Promise<MockModelServer> {
+  let requests = 0;
+  const server = http.createServer((request, response) => {
+    if (request.method === 'OPTIONS') {
+      response.writeHead(204, {
+        'access-control-allow-origin': '*',
+        'access-control-allow-headers': '*',
+        'access-control-allow-methods': 'POST, OPTIONS',
+      });
+      response.end();
+      return;
+    }
+
+    const chunks: Buffer[] = [];
+    request.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+    request.on('end', () => {
+      if (request.url !== '/v1/chat/completions') {
+        response.writeHead(404, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
+        response.end(JSON.stringify({ error: { message: 'fixture route not found' } }));
+        return;
+      }
+      requests += 1;
+      const rawBody = Buffer.concat(chunks).toString('utf8');
+      const content = rawBody.includes('SEGUNDA_SOLICITACAO') ? 'SEGUNDO_FINAL_RUNTIME' : 'PRIMEIRO_FINAL_RUNTIME';
+      let body: { stream?: boolean } = {};
+      try {
+        body = JSON.parse(rawBody) as { stream?: boolean };
+      } catch {
+        // Invalid fixture input is answered as a normal request for deterministic diagnostics.
+      }
+
+      if (body.stream === true) {
+        response.writeHead(200, {
+          'content-type': 'text/event-stream',
+          'cache-control': 'no-cache',
+          connection: 'close',
+          'access-control-allow-origin': '*',
+        });
+        response.write(
+          `data: ${JSON.stringify({
+            id: `chatcmpl-${requests}`,
+            object: 'chat.completion.chunk',
+            created: 1,
+            model: 'fixture-model',
+            choices: [{ index: 0, delta: { role: 'assistant', content }, finish_reason: null }],
+          })}\n\n`,
+        );
+        response.write(
+          `data: ${JSON.stringify({
+            id: `chatcmpl-${requests}`,
+            object: 'chat.completion.chunk',
+            created: 1,
+            model: 'fixture-model',
+            choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7 },
+          })}\n\n`,
+        );
+        response.end('data: [DONE]\n\n');
+        return;
+      }
+
+      response.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
+      response.end(
+        JSON.stringify({
+          id: `chatcmpl-${requests}`,
+          object: 'chat.completion',
+          created: 1,
+          model: 'fixture-model',
+          choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7 },
+        }),
+      );
+    });
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => resolve());
+  });
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Mock model server did not expose a TCP port.');
+  return {
+    endpoint: `http://127.0.0.1:${address.port}`,
+    requestCount: () => requests,
+    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  };
+}
 
 async function restartWorker(context: BrowserContext, panel: Page, workerTarget: WorkerTarget): Promise<WorkerTarget> {
   const browser = context.browser();
@@ -92,7 +183,9 @@ async function seedCheckpoint(
 }
 
 let context: BrowserContext | null = null;
+let mockModelServer: MockModelServer | null = null;
 try {
+  mockModelServer = await startMockModelServer();
   context = await chromium.launchPersistentContext(userDataDir, {
     headless: false,
     viewport: { width: 1200, height: 800 },
@@ -127,6 +220,124 @@ try {
     });
   });
 
+  await panel.evaluate(async (endpoint) => {
+    await chrome.storage.local.set({
+      provider: 'ollama',
+      apiKey: '',
+      apiKey_ollama: '',
+      model: 'fixture-model',
+      customEndpoint: endpoint,
+      systemPrompt: 'Responda somente com o resultado pedido.',
+      systemPromptMode: 'custom',
+      streamResponses: false,
+      maxTokens: 64,
+      contextLimit: 64_000,
+      timeout: 10_000,
+      enableScreenshots: false,
+      visionBridge: false,
+      toolPermissions: {
+        read: true,
+        interact: false,
+        navigate: false,
+        tabs: false,
+        screenshots: false,
+      },
+    });
+    const ui = (window as unknown as { sidePanelUI: any }).sidePanelUI;
+    ui.historyPersistence = 'full';
+    await ui.startNewSession();
+  }, mockModelServer.endpoint);
+
+  await panel.fill('#userInput', 'PRIMEIRA_SOLICITACAO');
+  await panel.click('#sendBtn');
+  await panel.waitForFunction(
+    () => {
+      const ui = (window as unknown as { sidePanelUI: any }).sidePanelUI;
+      return (
+        ui.contextRevision === 1 &&
+        ui.activeRunId === null &&
+        ui.displayHistory.some((message: any) => String(message.content).includes('PRIMEIRO_FINAL_RUNTIME'))
+      );
+    },
+    { timeout: 20_000 },
+  );
+  const lineageSession = await panel.evaluate(
+    () => (window as unknown as { sidePanelUI: { sessionId: string } }).sidePanelUI.sessionId,
+  );
+
+  workerTarget = await restartWorker(context, panel, workerTarget);
+  const coldProbe = await panel.evaluate(
+    async ({ sessionId }) => {
+      const ui = (window as unknown as { sidePanelUI: any }).sidePanelUI;
+      return chrome.runtime.sendMessage({
+        type: 'user_message',
+        message: 'cold-lineage-probe',
+        sessionId,
+        contextRevision: ui.contextRevision,
+        selectedTabs: [],
+      });
+    },
+    { sessionId: lineageSession },
+  );
+  assert(coldProbe?.history_needed === true, 'Restarted worker should request full history from warm panel.');
+  assert(
+    coldProbe?.contextLineage?.state === 'cold_required',
+    `Cold worker should expose explicit lineage handshake, got ${JSON.stringify(coldProbe)}`,
+  );
+
+  await panel.fill('#userInput', 'SEGUNDA_SOLICITACAO');
+  await panel.click('#sendBtn');
+  await panel.waitForFunction(
+    () => {
+      const ui = (window as unknown as { sidePanelUI: any }).sidePanelUI;
+      return (
+        ui.contextRevision === 2 &&
+        ui.activeRunId === null &&
+        ui.displayHistory.some((message: any) => String(message.content).includes('SEGUNDO_FINAL_RUNTIME'))
+      );
+    },
+    { timeout: 20_000 },
+  );
+
+  const lineageState = await panel.evaluate(
+    async ({ sessionId }) => {
+      const ui = (window as unknown as { sidePanelUI: any }).sidePanelUI;
+      const count = (history: any[], marker: string) =>
+        history.filter((message) => JSON.stringify(message.content).includes(marker)).length;
+      await ui.flushPendingHistoryPersist();
+      const stored = await chrome.storage.local.get([`chatSession:${sessionId}`]);
+      const payload = stored[`chatSession:${sessionId}`];
+      const storedContext = payload?.contextTranscript || payload?.transcript || [];
+      return {
+        revision: ui.contextRevision,
+        displaySecond: count(ui.displayHistory, 'SEGUNDO_FINAL_RUNTIME'),
+        contextSecond: count(ui.contextHistory, 'SEGUNDO_FINAL_RUNTIME'),
+        storedSecond: count(storedContext, 'SEGUNDO_FINAL_RUNTIME'),
+      };
+    },
+    { sessionId: lineageSession },
+  );
+  assert(lineageState.revision === 2, `Cold lineage should continue at revision 2, got ${lineageState.revision}.`);
+  assert(lineageState.displaySecond === 1, 'Display transcript should contain one second final.');
+  assert(lineageState.contextSecond === 1, 'Context transcript should contain one second final.');
+  assert(lineageState.storedSecond === 1, 'Persisted context should contain one second final.');
+  assert(mockModelServer.requestCount() === 2, `Expected two model requests, got ${mockModelServer.requestCount()}.`);
+
+  const reloadedState = await panel.evaluate(
+    async ({ sessionId }) => {
+      const ui = (window as unknown as { sidePanelUI: any }).sidePanelUI;
+      const payload = await ui.readSessionPayload(sessionId);
+      await ui.loadSession(payload);
+      const count = (history: any[]) =>
+        history.filter((message) => JSON.stringify(message.content).includes('SEGUNDO_FINAL_RUNTIME')).length;
+      return { displaySecond: count(ui.displayHistory), contextSecond: count(ui.contextHistory) };
+    },
+    { sessionId: lineageSession },
+  );
+  assert(reloadedState.displaySecond === 1, 'Persisted reload should render one second final.');
+  assert(reloadedState.contextSecond === 1, 'Persisted reload should hydrate one second context final.');
+  console.log('PASS cold-lineage restart committed and reloaded one final without duplication');
+
   await seedCheckpoint(panel, 'model', 'safe-run');
   workerTarget = await restartWorker(context, panel, workerTarget);
   await panel.waitForFunction(
@@ -151,6 +362,59 @@ try {
     });
   }
   console.log('PASS safe checkpoint emitted run_resume_started');
+
+  await panel.evaluate(async () => {
+    (window as unknown as { __workerRecoveryMessages: unknown[] }).__workerRecoveryMessages = [];
+    const now = Date.now();
+    await chrome.storage.session.set({
+      glideActiveRunCheckpointV1: {
+        version: 1,
+        runId: 'lossy-context-run',
+        sessionId: 'worker-recovery-session',
+        turnId: 'lossy-context-turn',
+        phase: 'model',
+        contextRevision: 3,
+        selectedTabIds: [],
+        request: { message: 'continue long context' },
+        startedAt: now - 100,
+        updatedAt: now,
+      },
+      glideRunRecoveryContextV1: {
+        version: 1,
+        runId: 'lossy-context-run',
+        sessionId: 'worker-recovery-session',
+        contextRevision: 3,
+        messages: [],
+        loss: {
+          lossy: true,
+          reasons: [{ kind: 'total_byte_limit', originalBytes: 200000, maxBytes: 131072 }],
+        },
+      },
+    });
+  });
+  workerTarget = await restartWorker(context, panel, workerTarget);
+  await panel.waitForFunction(
+    () =>
+      (window as unknown as { __workerRecoveryMessages: Array<{ type?: string }> }).__workerRecoveryMessages.some(
+        (message) => message.type === 'run_interrupted',
+      ),
+    { timeout: 20_000 },
+  );
+  const lossyMessages = await panel.evaluate(
+    () =>
+      (
+        window as unknown as {
+          __workerRecoveryMessages: Array<{ type?: string; recoveryLoss?: { lossy?: boolean } }>;
+        }
+      ).__workerRecoveryMessages,
+  );
+  const lossyInterrupted = lossyMessages.find((message) => message.type === 'run_interrupted');
+  assert(lossyInterrupted?.recoveryLoss?.lossy === true, 'Lossy recovery should emit structured interruption loss.');
+  assert(
+    !lossyMessages.some((message) => message.type === 'run_resume_started'),
+    'Lossy recovery context must never auto-resume.',
+  );
+  console.log('PASS lossy recovery context interrupted with structured loss and no auto-resume');
 
   await panel.evaluate(() => {
     (window as unknown as { __workerRecoveryMessages: unknown[] }).__workerRecoveryMessages = [];
@@ -240,5 +504,6 @@ try {
   process.exitCode = 1;
 } finally {
   await context?.close();
+  await mockModelServer?.close();
   fs.rmSync(userDataDir, { recursive: true, force: true });
 }

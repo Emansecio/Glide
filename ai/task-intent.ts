@@ -32,7 +32,7 @@ export function stripInjectedTabContext(text: string): string {
   return text.slice(0, legacyIndex).trim();
 }
 
-function normalizeIntentText(text: unknown): string {
+export function normalizeTaskIntentText(text: unknown): string {
   const withoutDiacritics = Array.from(String(text || '').normalize('NFD'))
     .filter((char) => {
       const code = char.charCodeAt(0);
@@ -93,7 +93,7 @@ export function detectTaskIntent(
   rawText: unknown,
   options: { selectedTabCount?: number; recentToolActivity?: boolean } = {},
 ): TaskIntent {
-  const text = normalizeIntentText(stripInjectedTabContext(String(rawText || '')));
+  const text = normalizeTaskIntentText(stripInjectedTabContext(String(rawText || '')));
   const recentToolActivity = options.recentToolActivity === true;
   const hasAttachedTabs = Number(options.selectedTabCount || 0) > 0;
 

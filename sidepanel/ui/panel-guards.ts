@@ -11,6 +11,24 @@ export function shouldAppendAssistantFinalForCommit(input: {
   return !Number.isInteger(input.finalRevision) || Number(input.finalRevision) > input.contextRevision;
 }
 
+export type ContextLineageAcknowledgement = {
+  state?: string;
+  revision?: number;
+};
+
+/** Missing acknowledgement remains compatible with an older worker during extension update. */
+export function isContextLineageAcknowledged(input: {
+  contextRevision: number;
+  contextLineage?: ContextLineageAcknowledgement | null;
+}): boolean {
+  if (input.contextLineage == null) return true;
+  return (
+    (input.contextLineage.state === 'cold_adopted' || input.contextLineage.state === 'warm_confirmed') &&
+    Number.isInteger(input.contextLineage.revision) &&
+    input.contextLineage.revision === input.contextRevision
+  );
+}
+
 export function boundPanelIdSet(set: Set<string>, id: string, max = PANEL_BOOKKEEPING_SET_MAX): void {
   const trimmed = String(id || '').trim();
   if (!trimmed) return;

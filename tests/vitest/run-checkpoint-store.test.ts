@@ -192,19 +192,107 @@ describe('RunCheckpointSessionStore', () => {
     expect(serialized).not.toContain('tool-result-secret');
     expect(serialized).not.toContain('tool-argument-secret');
     expect(serialized).not.toContain('data:image');
+    expect(restored?.loss?.lossy).toBe(true);
+    expect(restored?.loss?.reasons.map((reason) => reason.kind)).toEqual(
+      expect.arrayContaining(['sensitive_redaction', 'binary_redaction']),
+    );
     expect(
       recoverCheckpoint(
         { ...checkpoint(), lastCommittedActionId: 'run-1:action:1' },
         {
           committedContextRevision: restored?.contextRevision ?? -1,
           committedActionId: restored?.lastCommittedActionId,
+          recoveryLoss: restored?.loss,
           now: 30,
         },
       ),
-    ).toBe('resume');
+    ).toBe('discard');
   });
 
-  it('returns unavailable when sanitized recovery context exceeds its byte bound', async () => {
+  it('preserves a complete long prompt while it fits the total recovery budget', async () => {
+    const storage = new MemoryStorage();
+    const store = new RunCheckpointSessionStore(storage);
+    const prompt = `Long prompt: ${'instrução completa. '.repeat(1200)}`;
+
+    expect(prompt.length).toBeGreaterThan(20_000);
+    await expect(
+      store.writeRecoveryContext({
+        version: 1,
+        runId: 'long-prompt-run',
+        sessionId: 'session-1',
+        contextRevision: 2,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    ).resolves.toBe(true);
+
+    const restored = await store.readRecoveryContext('long-prompt-run');
+    expect(restored?.messages[0].content).toBe(prompt);
+    expect(restored?.loss).toBeUndefined();
+  });
+
+  it('preserves a complete long tool result while it fits the total recovery budget', async () => {
+    const storage = new MemoryStorage();
+    const store = new RunCheckpointSessionStore(storage);
+    const report = `Tool report: ${'linha detalhada. '.repeat(1400)}`;
+    const messages: Message[] = [
+      {
+        role: 'assistant',
+        content: '',
+        toolCalls: [{ id: 'call-long', name: 'getContent', args: { selector: '#report' } }],
+      },
+      {
+        role: 'tool',
+        toolCallId: 'call-long',
+        content: [{ type: 'tool-result', toolCallId: 'call-long', output: { report } }],
+      },
+    ];
+
+    expect(report.length).toBeGreaterThan(20_000);
+    await expect(
+      store.writeRecoveryContext({
+        version: 1,
+        runId: 'long-tool-run',
+        sessionId: 'session-1',
+        contextRevision: 2,
+        messages,
+      }),
+    ).resolves.toBe(true);
+
+    const restored = await store.readRecoveryContext('long-tool-run');
+    expect(JSON.stringify(restored?.messages)).toContain(report);
+    expect(restored?.loss).toBeUndefined();
+  });
+
+  it('stores structured total-budget loss and refuses automatic resume', async () => {
+    const storage = new MemoryStorage();
+    const store = new RunCheckpointSessionStore(storage, { maxRecoveryContextBytes: 4096 });
+    await expect(
+      store.writeRecoveryContext({
+        version: 1,
+        runId: 'oversize-run',
+        sessionId: 'session-1',
+        contextRevision: 3,
+        messages: [{ role: 'user', content: 'x'.repeat(20_000) }],
+      }),
+    ).resolves.toBe(true);
+
+    const restored = await store.readRecoveryContext('oversize-run');
+    expect(restored?.messages).toEqual([]);
+    expect(restored?.loss).toMatchObject({
+      lossy: true,
+      reasons: [{ kind: 'total_byte_limit', maxBytes: 4096 }],
+    });
+    expect(
+      recoverCheckpoint(checkpoint(), {
+        committedContextRevision: 3,
+        recoveryLoss: restored?.loss,
+        now: 30,
+      }),
+    ).toBe('discard');
+    expect(store.isResumeEnabled()).toBe(true);
+  });
+
+  it('returns unavailable when even structured recovery metadata exceeds its byte bound', async () => {
     const storage = new MemoryStorage();
     const store = new RunCheckpointSessionStore(storage, { maxRecoveryContextBytes: 128 });
     const available = await store.writeRecoveryContext({

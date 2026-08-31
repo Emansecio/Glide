@@ -15,6 +15,18 @@ export type PlanUpdateDecision = {
   error?: string;
 };
 
+export type ModelPlanUpdate = {
+  stepIndex: number;
+  status: PlanStatus;
+};
+
+export type ModelPlanUpdateDecision = {
+  plan: RunPlan;
+  applied: boolean;
+  protectedByManualState: boolean;
+  error?: string;
+};
+
 function canonicalVersion(plan: RunPlan): number {
   return Math.max(1, Number(plan.version || 1));
 }
@@ -56,10 +68,48 @@ export function applyManualPlanUpdate(plan: RunPlan, update: ManualPlanUpdate): 
     steps: plan.steps.map((step) => ({ ...step })),
   };
   next.steps[index].status = update.status;
+  next.steps[index].statusProvenance = 'manual';
   if (update.status === 'pending') {
     for (let cursor = index + 1; cursor < next.steps.length; cursor += 1) {
-      if (next.steps[cursor].status === 'done') next.steps[cursor].status = 'pending';
+      if (next.steps[cursor].status === 'done') {
+        next.steps[cursor].status = 'pending';
+        next.steps[cursor].statusProvenance = 'manual';
+      }
     }
   }
   return decision(next, true);
+}
+
+/** Applies model progress without overriding an acknowledged manual status. */
+export function applyModelPlanUpdate(
+  plan: RunPlan,
+  update: ModelPlanUpdate,
+  now = Date.now(),
+): ModelPlanUpdateDecision {
+  if (!Number.isInteger(update.stepIndex) || update.stepIndex < 0 || update.stepIndex >= plan.steps.length) {
+    return {
+      plan,
+      applied: false,
+      protectedByManualState: false,
+      error: `Invalid step_index: ${update.stepIndex}.`,
+    };
+  }
+
+  const current = plan.steps[update.stepIndex];
+  if (current.status === update.status) {
+    return { plan, applied: false, protectedByManualState: false };
+  }
+  if (current.statusProvenance === 'manual') {
+    return { plan, applied: false, protectedByManualState: true };
+  }
+
+  const next: RunPlan = {
+    ...plan,
+    version: canonicalVersion(plan) + 1,
+    updatedAt: now,
+    steps: plan.steps.map((step) => ({ ...step })),
+  };
+  next.steps[update.stepIndex].status = update.status;
+  next.steps[update.stepIndex].statusProvenance = 'model';
+  return { plan: next, applied: true, protectedByManualState: false };
 }

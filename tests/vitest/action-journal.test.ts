@@ -54,4 +54,29 @@ describe('ActionJournal', () => {
     await journal.commit(prepared.actionId, { success: true });
     expect(states).toEqual(['prepared', 'in_flight', 'committed']);
   });
+
+  it('bounds terminal action retention while keeping recent idempotency', async () => {
+    const journal = new ActionJournal([], undefined, { maxTerminalEntries: 2 });
+    for (let index = 1; index <= 4; index += 1) {
+      const action = { ...prepared, actionId: `run-1:action:${index}`, toolCallId: `call-${index}` };
+      await journal.prepare(action);
+      await journal.markInFlight(action.actionId);
+      await journal.commit(action.actionId, { success: true, index });
+    }
+
+    expect(journal.retentionCardinality()).toEqual({ entries: 2, terminalEntries: 2 });
+    expect(journal.get('run-1:action:1')).toBeNull();
+    const duplicate = await journal.markInFlight('run-1:action:4');
+    expect(duplicate).toMatchObject({ shouldDispatch: false, entry: { state: 'committed' } });
+  });
+
+  it('cleans all action state for a completed run only', async () => {
+    const journal = new ActionJournal();
+    await journal.prepare(prepared);
+    await journal.prepare({ ...prepared, actionId: 'run-2:action:1', runId: 'run-2' });
+
+    expect(journal.clearRun('run-1')).toBe(1);
+    expect(journal.get(prepared.actionId)).toBeNull();
+    expect(journal.get('run-2:action:1')).not.toBeNull();
+  });
 });

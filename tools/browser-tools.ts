@@ -49,6 +49,15 @@ export type RunInTabOptions = {
   world?: chrome.scripting.ExecutionWorld;
 };
 
+/** Reads duration emitted at actual content-side postcondition polling boundary. */
+export function getToolPostconditionDurationMs(result: unknown): number {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return 0;
+  const postcondition = (result as { postcondition?: unknown }).postcondition;
+  if (!postcondition || typeof postcondition !== 'object' || Array.isArray(postcondition)) return 0;
+  const durationMs = Number((postcondition as { durationMs?: unknown }).durationMs);
+  return Number.isFinite(durationMs) && durationMs >= 0 ? durationMs : 0;
+}
+
 function normalizeRunInTabOptions(
   optionsOrAllFrames?: RunInTabOptions | boolean,
   legacyWorld?: chrome.scripting.ExecutionWorld,

@@ -13,6 +13,8 @@ export type PostconditionObservation = {
   [key: string]: unknown;
 };
 
+export type TimedActionPostcondition = ActionPostcondition & { durationMs: number };
+
 const matches = (condition: ActionPostcondition, observed: PostconditionObservation): boolean => {
   if (condition.kind === 'url_changed') {
     return typeof condition.from === 'string' && Boolean(observed.url && observed.url !== condition.from);
@@ -34,11 +36,11 @@ export async function verifyActionPostcondition(
     baselineUrl?: string;
   } = {},
 ): Promise<
-  | { verified: true; postcondition: ActionPostcondition; evidence: PostconditionObservation }
+  | { verified: true; postcondition: TimedActionPostcondition; evidence: PostconditionObservation }
   | {
       verified: false;
       code: 'POSTCONDITION_FAILED';
-      postcondition: ActionPostcondition;
+      postcondition: TimedActionPostcondition;
       observed: PostconditionObservation;
     }
 > {
@@ -46,6 +48,11 @@ export async function verifyActionPostcondition(
     condition.kind === 'url_changed' && condition.from === undefined && options.baselineUrl !== undefined
       ? { ...condition, from: options.baselineUrl }
       : condition;
+  const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  const withDuration = (): TimedActionPostcondition => ({
+    ...resolvedCondition,
+    durationMs: Math.max(0, (typeof performance !== 'undefined' ? performance.now() : Date.now()) - startedAt),
+  });
   const deadline = options.deadline ?? Date.now() + Math.max(1, options.timeoutMs ?? 3000);
   const pollMs = Math.max(10, options.pollMs ?? 100);
   let observed: PostconditionObservation = {};
@@ -53,11 +60,11 @@ export async function verifyActionPostcondition(
     if (options.signal?.aborted) break;
     observed = await observe();
     if (matches(resolvedCondition, observed)) {
-      return { verified: true, postcondition: resolvedCondition, evidence: observed };
+      return { verified: true, postcondition: withDuration(), evidence: observed };
     }
     const remaining = deadline - Date.now();
     if (remaining <= 0) break;
     await new Promise((resolve) => setTimeout(resolve, Math.min(pollMs, remaining)));
   } while (Date.now() <= deadline);
-  return { verified: false, code: 'POSTCONDITION_FAILED', postcondition: resolvedCondition, observed };
+  return { verified: false, code: 'POSTCONDITION_FAILED', postcondition: withDuration(), observed };
 }

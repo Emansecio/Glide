@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { verifyActionPostcondition } from '../../tools/action-postcondition.js';
+import { getToolPostconditionDurationMs } from '../../tools/browser-tools.js';
 import { emitFrontierTrace } from '../evals/frontier-trace.js';
 
 describe('action postconditions', () => {
@@ -63,8 +64,27 @@ describe('action postconditions', () => {
       verified: false,
       code: 'POSTCONDITION_FAILED',
       observed: { visible: false },
+      postcondition: { durationMs: 50 },
     });
     expect(observe).toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it('reports actual polling time through browser-tool telemetry seam', async () => {
+    vi.useFakeTimers();
+    let observations = 0;
+    const pending = verifyActionPostcondition(
+      { kind: 'visible', selector: '#ready' },
+      () => ({ visible: ++observations >= 3 }),
+      { timeoutMs: 100, pollMs: 20 },
+    );
+
+    await vi.advanceTimersByTimeAsync(40);
+    const result = await pending;
+
+    expect(result).toMatchObject({ verified: true, postcondition: { durationMs: 40 } });
+    expect(getToolPostconditionDurationMs(result)).toBe(40);
+    expect(getToolPostconditionDurationMs({ success: true })).toBe(0);
     vi.useRealTimers();
   });
 });

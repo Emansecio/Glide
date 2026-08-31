@@ -53,4 +53,17 @@ describe('RunCoordinator', () => {
     terminal.selectedTabIds.push(99);
     expect(coordinator.get(meta.runId)?.selectedTabIds).toEqual([7]);
   });
+
+  it('deletes terminal runtime state during checkpoint cleanup', async () => {
+    const coordinator = new RunCoordinator();
+    for (let index = 0; index < 25; index += 1) {
+      const runId = `run-${index}`;
+      coordinator.start({ ...meta, runId }, input);
+      coordinator.transition(runId, 'model');
+      coordinator.terminal(runId, 'completed');
+      await coordinator.clear(runId);
+    }
+
+    expect(coordinator.size()).toBe(0);
+  });
 });

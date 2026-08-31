@@ -174,7 +174,7 @@ import {
   isVisionBridgeSync,
   resolveVisualDeliveryMode,
 } from './background/vision-queue.js';
-import { BrowserTools } from './tools/browser-tools.js';
+import { BrowserTools, getToolPostconditionDurationMs } from './tools/browser-tools.js';
 import { cdpDetach, cdpDetachAll } from './tools/cdp-session.js';
 import type { ToolExecutionContext } from './tools/tool-context.js';
 import { clampIntUnknown, isHttpUrl } from './tools/validation.js';
@@ -499,6 +499,7 @@ class BackgroundService {
     this.runPhase = 'stopped';
     if (this.runCoordinator.get(runId)) {
       this.runCoordinator.terminal(runId, 'stopped');
+      this.actionJournal.clearRun(runId);
       void this.runCoordinator.clear(runId);
     }
     this.releaseRunExclusiveLock(runId);
@@ -2707,9 +2708,11 @@ class BackgroundService {
         qualityReport,
         finishReason,
       });
+      contextTransactionStore.releaseTerminalCommitPayload(runMeta.runId, runMeta.turnId);
       // Turn terminal: libera o lock após assistant_final. Compaction/warnings
       // terminam antes do evento terminal para o painel não descartá-los.
       this.runCoordinator.terminal(runMeta.runId, finishReason);
+      this.actionJournal.clearRun(runMeta.runId);
       await this.runCoordinator.clear(runMeta.runId);
       this.releaseRunExclusiveLock(runMeta.runId);
     } catch (error) {
@@ -2747,6 +2750,7 @@ class BackgroundService {
       await this.clearActiveRunSentinel(runMeta.runId);
       const finalCoordinatorState = this.runCoordinator.get(runMeta.runId);
       if (finalCoordinatorState?.terminalReason && finalCoordinatorState.terminalReason !== 'ambiguous_action') {
+        this.actionJournal.clearRun(runMeta.runId);
         await this.runCoordinator.clear(runMeta.runId);
       }
       this.runAbortRegistry.dispose(runMeta.runId);
@@ -3275,6 +3279,7 @@ class BackgroundService {
       }
 
       result = this.normalizeToolResultContract(toolName, result);
+      measuredVerifyMs = getToolPostconditionDurationMs(result);
       let ambiguousAction = false;
       try {
         if (journalActionId) {
@@ -3450,7 +3455,6 @@ class BackgroundService {
       const evidenceFrameId = typeof toolArgs?.frameId === 'number' ? toolArgs.frameId : 0;
       const domRevision = Number(result?.domRevision ?? result?.revision ?? queuedAt);
       const navigationRevision = Number(result?.navigationRevision ?? 0);
-      const verificationStartedAt = performance.now();
       if (isMutativeBrowserEffect(toolName, toolArgs) && result?.success !== false) {
         this.verificationState.recordEffect({
           actionId: journalActionId || callId,
@@ -3485,7 +3489,6 @@ class BackgroundService {
           navigationRevision,
         };
       }
-      measuredVerifyMs = Math.max(0, performance.now() - verificationStartedAt);
 
       const finalResult: Record<string, any> = {
         ...(result as Record<string, any>),

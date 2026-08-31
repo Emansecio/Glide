@@ -64,7 +64,15 @@ export class RunCoordinator {
   }
 
   async clear(runId: string): Promise<void> {
-    await this.checkpointStore?.clear(runId);
+    const state = this.states.get(runId);
+    try {
+      await this.checkpointStore?.clear(runId);
+    } finally {
+      if (state && TERMINAL_PHASES.has(state.phase)) {
+        this.states.delete(runId);
+        this.persistenceFailureNotified.delete(runId);
+      }
+    }
   }
 
   async recordAction(entry: RunState['inFlightAction']): Promise<boolean> {
@@ -145,6 +153,11 @@ export class RunCoordinator {
   get(runId: string): RunState | null {
     const state = this.states.get(runId);
     return state ? cloneState(state) : null;
+  }
+
+  /** Test-only runtime-retention introspection. */
+  size(): number {
+    return this.states.size;
   }
 }
 

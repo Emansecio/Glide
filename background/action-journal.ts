@@ -60,6 +60,12 @@ export type InFlightDecision = {
 
 type PersistEntry = (entry: ActionJournalEntry) => Promise<unknown> | unknown;
 
+export const MAX_RETAINED_TERMINAL_ACTIONS = 100;
+
+export type ActionJournalRetentionOptions = {
+  maxTerminalEntries?: number;
+};
+
 const stableValue = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(stableValue);
   if (!value || typeof value !== 'object') return value;
@@ -87,15 +93,33 @@ const cloneEntry = (entry: ActionJournalEntry): ActionJournalEntry => ({
 
 export class ActionJournal {
   private entries = new Map<string, ActionJournalEntry>();
+  private terminalOrder: string[] = [];
+  private readonly maxTerminalEntries: number;
 
   constructor(
     restoredEntries: ActionJournalEntry[] = [],
     private persistEntry?: PersistEntry,
+    options: ActionJournalRetentionOptions = {},
   ) {
+    this.maxTerminalEntries =
+      Number.isInteger(options.maxTerminalEntries) && Number(options.maxTerminalEntries) >= 0
+        ? Number(options.maxTerminalEntries)
+        : MAX_RETAINED_TERMINAL_ACTIONS;
     for (const restored of restoredEntries) {
       const entry = cloneEntry(restored);
       if (entry.state === 'in_flight') entry.state = 'ambiguous';
       this.entries.set(entry.actionId, entry);
+      this.trackTerminal(entry);
+    }
+  }
+
+  private trackTerminal(entry: ActionJournalEntry): void {
+    if (entry.state !== 'committed' && entry.state !== 'ambiguous') return;
+    this.terminalOrder = this.terminalOrder.filter((actionId) => actionId !== entry.actionId);
+    this.terminalOrder.push(entry.actionId);
+    while (this.terminalOrder.length > this.maxTerminalEntries) {
+      const oldest = this.terminalOrder.shift();
+      if (oldest) this.entries.delete(oldest);
     }
   }
 
@@ -106,6 +130,7 @@ export class ActionJournal {
 
   private async save(entry: ActionJournalEntry): Promise<ActionJournalEntry> {
     this.entries.set(entry.actionId, entry);
+    this.trackTerminal(entry);
     await this.persistEntry?.(cloneEntry(entry));
     return cloneEntry(entry);
   }
@@ -152,5 +177,23 @@ export class ActionJournal {
     if (entry.state === 'committed') return cloneEntry(entry);
     if (entry.state === 'ambiguous') return cloneEntry(entry);
     return this.save({ ...entry, state: 'ambiguous', completedAt: Date.now() });
+  }
+
+  clearRun(runId: string): number {
+    const id = String(runId || '').trim();
+    if (!id) return 0;
+    let removed = 0;
+    for (const [actionId, entry] of this.entries) {
+      if (entry.runId !== id) continue;
+      this.entries.delete(actionId);
+      removed += 1;
+    }
+    this.terminalOrder = this.terminalOrder.filter((actionId) => this.entries.has(actionId));
+    return removed;
+  }
+
+  /** Test-only bounded-retention introspection. */
+  retentionCardinality(): { entries: number; terminalEntries: number } {
+    return { entries: this.entries.size, terminalEntries: this.terminalOrder.length };
   }
 }

@@ -94,6 +94,40 @@ describe('ContextTransactionStore', () => {
     });
     expect(store.read('session-1').messages[0].content).toBe('canonical');
   });
+
+  it('bounds session snapshots and terminal commit retention with LRU eviction', () => {
+    const store = new ContextTransactionStore({
+      maxSessions: 2,
+      maxTerminalDigests: 3,
+      maxTerminalPayloads: 1,
+    });
+    for (let index = 1; index <= 4; index += 1) {
+      store.commit(
+        input({
+          sessionId: `session-${index}`,
+          runId: `run-${index}`,
+          turnId: `turn-${index}`,
+          messages: [message(`payload-${index}`)],
+        }),
+      );
+    }
+
+    expect(store.retentionCardinality()).toEqual({ sessions: 2, terminalDigests: 3, terminalPayloads: 1 });
+    expect(store.read('session-1')).toEqual({ revision: 0, messages: [] });
+    expect(store.read('session-4').revision).toBe(1);
+  });
+
+  it('keeps exact terminal commit idempotency after releasing full payload', () => {
+    const store = new ContextTransactionStore({ maxTerminalPayloads: 1 });
+    const commitInput = input({ messages: [message('large terminal payload '.repeat(1_000))] });
+    const first = store.commit(commitInput);
+
+    store.releaseTerminalCommitPayload(first.runId, first.turnId);
+
+    expect(store.retentionCardinality().terminalPayloads).toBe(0);
+    expect(store.commit(commitInput)).toEqual(first);
+    expect(() => store.commit({ ...commitInput, messages: [message('changed')] })).toThrow(/already committed/i);
+  });
 });
 
 describe('panel context ordering', () => {

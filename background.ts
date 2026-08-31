@@ -2777,6 +2777,7 @@ class BackgroundService {
     const callId = toolCallId || `tool_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const queuedAt = Date.now();
     let dispatchedAt = queuedAt;
+    let measuredVerifyMs = 0;
     const normalizedArgsResult = this.normalizeToolCallArgs(toolName, args);
     const safeArgs = normalizedArgsResult.ok ? normalizedArgsResult.args : {};
     // NB: a marca de "fechamento iniciado pelo agente" (agentInitiatedTabCloses)
@@ -2827,6 +2828,7 @@ class BackgroundService {
         result,
         queuedAt,
         dispatchedAt,
+        verifyMs: measuredVerifyMs,
         recoveryStage: runtimeMeta.recoveryStage,
       });
       const { runId: _telemetryRunId, tool: _telemetryTool, ...telemetryFields } = telemetry;
@@ -3375,6 +3377,7 @@ class BackgroundService {
       const evidenceFrameId = typeof toolArgs?.frameId === 'number' ? toolArgs.frameId : 0;
       const domRevision = Number(result?.domRevision ?? result?.revision ?? queuedAt);
       const navigationRevision = Number(result?.navigationRevision ?? 0);
+      const verificationStartedAt = performance.now();
       if (MUTATIVE_BROWSER_EFFECT_TOOLS.has(toolName) && result?.success !== false) {
         this.verificationState.recordEffect({
           actionId: journalActionId || callId,
@@ -3409,6 +3412,7 @@ class BackgroundService {
           navigationRevision,
         };
       }
+      measuredVerifyMs = Math.max(0, performance.now() - verificationStartedAt);
 
       const finalResult: Record<string, any> = {
         ...(result as Record<string, any>),
@@ -4141,6 +4145,7 @@ class BackgroundService {
       result?: unknown;
       queuedAt: number;
       dispatchedAt: number;
+      verifyMs?: number;
       recoveryStage?: RecoveryStage;
     },
   ): ToolTelemetry {
@@ -4151,7 +4156,7 @@ class BackgroundService {
         : undefined;
     const state = this.runCoordinator.get(runMeta.runId);
     const verifyMs = this.normalizeTelemetryMetric(
-      resultRecord?.verification?.durationMs ?? resultRecord?.postcondition?.durationMs,
+      payload.verifyMs ?? resultRecord?.verification?.durationMs ?? resultRecord?.postcondition?.durationMs,
     );
     const queueMs = this.normalizeTelemetryMetric(payload.dispatchedAt - payload.queuedAt);
     const totalMs = this.normalizeTelemetryMetric(endedAt - payload.queuedAt);

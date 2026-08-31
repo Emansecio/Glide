@@ -64,6 +64,7 @@ import {
 } from './background/context-transaction.js';
 import { shouldForceToolContinuation, textAwaitsUser } from './background/continuation-intent.js';
 import { DomCacheLru } from './background/dom-cache.js';
+import { ExecutionTelemetryBuffer, type ToolTelemetry } from './background/execution-telemetry.js';
 import {
   FailureRecoveryTracker,
   advanceFailedToolRecovery,
@@ -114,7 +115,6 @@ import {
   DEFAULT_CONTEXT_LIMIT,
   DEFAULT_MODEL_MAX_TOKENS,
   EXECUTION_EVENTS_KEY,
-  EXECUTION_PREVIEW_LIMIT,
   EXECUTION_TEXT_LIMIT,
   type EvidenceConfidence,
   type EvidenceEntry,
@@ -230,6 +230,7 @@ class BackgroundService {
   sidePanelTabId: number | null;
   private pendingSidePanelOpenTabId: number | null;
   executionEvents: ExecutionEvent[];
+  private executionTelemetry: ExecutionTelemetryBuffer;
   executionEventsHydrated: boolean;
   private executionEventsHydration: Promise<void> | null = null;
   executionEventsFlushTimerId: ReturnType<typeof setTimeout> | null;
@@ -688,6 +689,7 @@ class BackgroundService {
     this.sidePanelTabId = null;
     this.pendingSidePanelOpenTabId = null;
     this.executionEvents = [];
+    this.executionTelemetry = new ExecutionTelemetryBuffer();
     this.executionEventsHydrated = false;
     this.executionEventsFlushTimerId = null;
     // State tracking for enforcement
@@ -2773,7 +2775,8 @@ class BackgroundService {
     const lockedTabId = typeof options.lockedTabId === 'number' ? options.lockedTabId : null;
     const toolContext = this.buildToolExecutionContext(options.runMeta, lockedTabId);
     const callId = toolCallId || `tool_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-    const startedAt = Date.now();
+    const queuedAt = Date.now();
+    let dispatchedAt = queuedAt;
     const normalizedArgsResult = this.normalizeToolCallArgs(toolName, args);
     const safeArgs = normalizedArgsResult.ok ? normalizedArgsResult.args : {};
     // NB: a marca de "fechamento iniciado pelo agente" (agentInitiatedTabCloses)
@@ -2795,13 +2798,19 @@ class BackgroundService {
       }
       return redacted;
     };
-    const sendStart = () =>
+    const sendStart = () => {
+      dispatchedAt = Date.now();
+      const state = this.runCoordinator.get(options.runMeta.runId);
       this.sendRuntime(options.runMeta, {
         type: 'tool_execution_start',
         tool: toolName,
         id: callId,
         args: redactArgsForRuntime(safeArgs),
+        queueMs: Math.max(0, dispatchedAt - queuedAt),
+        checkpointPhase: state?.phase || 'unavailable',
+        contextRevision: state?.contextRevision ?? 0,
       });
+    };
     const sendResult = (
       result: unknown,
       eventArgs: Record<string, any> = safeArgs,
@@ -2811,6 +2820,16 @@ class BackgroundService {
         failureClass?: FailureClass;
       } = {},
     ) => {
+      const telemetry = this.buildToolTelemetry(options.runMeta, {
+        toolName,
+        callId,
+        args: eventArgs,
+        result,
+        queuedAt,
+        dispatchedAt,
+        recoveryStage: runtimeMeta.recoveryStage,
+      });
+      const { runId: _telemetryRunId, tool: _telemetryTool, ...telemetryFields } = telemetry;
       this.sendRuntime(options.runMeta, {
         type: 'tool_execution_result',
         tool: toolName,
@@ -2818,13 +2837,15 @@ class BackgroundService {
         args: redactArgsForRuntime(eventArgs),
         result,
         ...runtimeMeta,
+        ...telemetryFields,
       });
       this.recordExecutionEvent(options.runMeta, {
         toolName,
         callId,
         args: eventArgs,
         result,
-        startedAt,
+        startedAt: queuedAt,
+        telemetry,
       });
     };
 
@@ -3352,7 +3373,7 @@ class BackgroundService {
           ? toolArgs.tabId
           : (this.browserTools.getCurrentSessionTabId() ?? lockedTabId ?? null);
       const evidenceFrameId = typeof toolArgs?.frameId === 'number' ? toolArgs.frameId : 0;
-      const domRevision = Number(result?.domRevision ?? result?.revision ?? startedAt);
+      const domRevision = Number(result?.domRevision ?? result?.revision ?? queuedAt);
       const navigationRevision = Number(result?.navigationRevision ?? 0);
       if (MUTATIVE_BROWSER_EFFECT_TOOLS.has(toolName) && result?.success !== false) {
         this.verificationState.recordEffect({
@@ -3389,7 +3410,10 @@ class BackgroundService {
         };
       }
 
-      const finalResult: Record<string, any> = { ...(result as Record<string, any>) };
+      const finalResult: Record<string, any> = {
+        ...(result as Record<string, any>),
+        ...(journalActionId ? { actionId: journalActionId } : {}),
+      };
       let recoveryStage: RecoveryStage = 'none';
 
       // Layer 4: Auto-screenshot on browser action failure (budgeted; vision async by default).
@@ -3657,11 +3681,22 @@ class BackgroundService {
       endedAt: Number.isFinite(endedAt) ? endedAt : Date.now(),
       durationMs: Math.max(0, Number(raw.durationMs || endedAt - startedAt || 0)),
       tabId,
-      url: this.trimExecutionText(String(raw.url || ''), EXECUTION_TEXT_LIMIT),
+      url: this.resolveExecutionUrl(undefined, { url: String(raw.url || '') }),
       success,
       errorCode: this.trimExecutionText(String(raw.errorCode || ''), 80),
-      errorMessage: this.trimExecutionText(String(raw.errorMessage || ''), EXECUTION_TEXT_LIMIT),
-      resultPreview: this.trimExecutionText(String(raw.resultPreview || ''), EXECUTION_PREVIEW_LIMIT),
+      errorMessage: '',
+      resultPreview: '',
+      actionId: typeof raw.actionId === 'string' ? this.trimExecutionText(raw.actionId, 80) : undefined,
+      frameId: typeof raw.frameId === 'number' && Number.isInteger(raw.frameId) ? raw.frameId : undefined,
+      queueMs: this.normalizeTelemetryMetric(raw.queueMs),
+      executeMs: this.normalizeTelemetryMetric(raw.executeMs),
+      verifyMs: this.normalizeTelemetryMetric(raw.verifyMs),
+      totalMs: this.normalizeTelemetryMetric(raw.totalMs),
+      resultBytes: this.normalizeTelemetryMetric(raw.resultBytes),
+      recoveryStage: typeof raw.recoveryStage === 'string' ? this.trimExecutionText(raw.recoveryStage, 80) : undefined,
+      checkpointPhase:
+        typeof raw.checkpointPhase === 'string' ? this.trimExecutionText(raw.checkpointPhase, 80) : undefined,
+      contextRevision: this.normalizeTelemetryMetric(raw.contextRevision),
     };
   }
 
@@ -3690,21 +3725,6 @@ class BackgroundService {
 
   sanitizeTelemetryValue(value: unknown, key = '', depth = 0): unknown {
     return compactValue(value, 'telemetry', key, depth);
-  }
-
-  stringifyExecutionPreview(value: unknown) {
-    try {
-      if (typeof value === 'string') {
-        return this.trimExecutionText(value, EXECUTION_PREVIEW_LIMIT);
-      }
-      if (value && typeof value === 'object') {
-        const sanitized = this.sanitizeTelemetryValue(value, '', 0);
-        return this.trimExecutionText(JSON.stringify(sanitized), EXECUTION_PREVIEW_LIMIT);
-      }
-      return this.trimExecutionText(JSON.stringify(value), EXECUTION_PREVIEW_LIMIT);
-    } catch {
-      return this.trimExecutionText(String(value), EXECUTION_PREVIEW_LIMIT);
-    }
   }
 
   getScreenshotRetentionMode(
@@ -4084,17 +4104,78 @@ class BackgroundService {
   }
 
   resolveExecutionUrl(args: Record<string, any> | undefined, result: Record<string, any> | undefined) {
-    if (typeof args?.url === 'string' && args.url.trim()) return this.trimExecutionText(args.url, EXECUTION_TEXT_LIMIT);
-    if (typeof result?.resolvedUrl === 'string' && result.resolvedUrl.trim()) {
-      return this.trimExecutionText(result.resolvedUrl, EXECUTION_TEXT_LIMIT);
+    const candidate =
+      (typeof args?.url === 'string' && args.url.trim() && args.url) ||
+      (typeof result?.resolvedUrl === 'string' && result.resolvedUrl.trim() && result.resolvedUrl) ||
+      (typeof result?.url === 'string' && result.url.trim() && result.url) ||
+      (typeof result?.policy?.domain === 'string' && result.policy.domain.trim() && result.policy.domain) ||
+      '';
+    if (!candidate) return '';
+    try {
+      const parsed = new URL(candidate);
+      return this.trimExecutionText(`${parsed.origin}${parsed.pathname}`, EXECUTION_TEXT_LIMIT);
+    } catch {
+      return this.trimExecutionText(String(candidate).split(/[?#]/, 1)[0], EXECUTION_TEXT_LIMIT);
     }
-    if (typeof result?.url === 'string' && result.url.trim()) {
-      return this.trimExecutionText(result.url, EXECUTION_TEXT_LIMIT);
+  }
+
+  normalizeTelemetryMetric(value: unknown) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
+  }
+
+  measureResultBytes(result: unknown) {
+    try {
+      return new TextEncoder().encode(JSON.stringify(result)).byteLength;
+    } catch {
+      return 0;
     }
-    if (typeof result?.policy?.domain === 'string' && result.policy.domain.trim()) {
-      return this.trimExecutionText(result.policy.domain, EXECUTION_TEXT_LIMIT);
-    }
-    return '';
+  }
+
+  buildToolTelemetry(
+    runMeta: RunMeta,
+    payload: {
+      toolName: string;
+      callId: string;
+      args?: Record<string, any>;
+      result?: unknown;
+      queuedAt: number;
+      dispatchedAt: number;
+      recoveryStage?: RecoveryStage;
+    },
+  ): ToolTelemetry {
+    const endedAt = Date.now();
+    const resultRecord =
+      payload.result && typeof payload.result === 'object' && !Array.isArray(payload.result)
+        ? (payload.result as Record<string, any>)
+        : undefined;
+    const state = this.runCoordinator.get(runMeta.runId);
+    const verifyMs = this.normalizeTelemetryMetric(
+      resultRecord?.verification?.durationMs ?? resultRecord?.postcondition?.durationMs,
+    );
+    const queueMs = this.normalizeTelemetryMetric(payload.dispatchedAt - payload.queuedAt);
+    const totalMs = this.normalizeTelemetryMetric(endedAt - payload.queuedAt);
+    const frameIdCandidate =
+      payload.args?.frameId ?? payload.args?.handle?.frameId ?? resultRecord?.frameId ?? resultRecord?.resolvedFrameId;
+    const telemetry: ToolTelemetry = {
+      runId: runMeta.runId,
+      ...(typeof resultRecord?.actionId === 'string' ? { actionId: resultRecord.actionId } : {}),
+      tool: payload.toolName,
+      ...(this.resolveExecutionTabId(payload.args, resultRecord) !== null
+        ? { tabId: this.resolveExecutionTabId(payload.args, resultRecord) as number }
+        : {}),
+      ...(typeof frameIdCandidate === 'number' ? { frameId: frameIdCandidate } : {}),
+      queueMs,
+      executeMs: Math.max(0, totalMs - queueMs - verifyMs),
+      verifyMs,
+      totalMs,
+      resultBytes: this.measureResultBytes(payload.result),
+      recoveryStage: payload.recoveryStage || String(resultRecord?.recoveryStage || 'none'),
+      checkpointPhase: state?.phase || 'unavailable',
+      contextRevision: state?.contextRevision ?? contextTransactionStore.read(runMeta.sessionId).revision,
+    };
+    this.executionTelemetry.append(telemetry);
+    return this.executionTelemetry.snapshot().at(-1) as ToolTelemetry;
   }
 
   recordExecutionEvent(
@@ -4105,6 +4186,7 @@ class BackgroundService {
       args?: Record<string, any>;
       result?: unknown;
       startedAt: number;
+      telemetry: ToolTelemetry;
     },
   ) {
     const endedAt = Date.now();
@@ -4114,16 +4196,13 @@ class BackgroundService {
         : undefined;
 
     const success = !(resultRecord?.success === false || resultRecord?.error);
+    const { runId: _telemetryRunId, tool: _telemetryTool, ...telemetryFields } = payload.telemetry;
     const errorCode =
       typeof resultRecord?.code === 'string'
         ? this.trimExecutionText(resultRecord.code, 80)
         : success
           ? ''
           : 'TOOL_ERROR';
-    const errorMessage = success
-      ? ''
-      : this.trimExecutionText(String(resultRecord?.error || 'Tool execution failed'), EXECUTION_TEXT_LIMIT);
-
     const executionEvent: ExecutionEvent = {
       id: `evt_${endedAt}_${Math.random().toString(36).slice(2, 8)}`,
       runId: runMeta.runId,
@@ -4138,8 +4217,9 @@ class BackgroundService {
       url: this.resolveExecutionUrl(payload.args, resultRecord),
       success,
       errorCode,
-      errorMessage,
-      resultPreview: this.stringifyExecutionPreview(payload.result),
+      errorMessage: '',
+      resultPreview: '',
+      ...telemetryFields,
     };
 
     this.executionEvents.push(executionEvent);

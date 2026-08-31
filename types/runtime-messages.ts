@@ -34,30 +34,74 @@ export type AssistantStreamStop = RuntimeMessageBase & {
   type: 'assistant_stream_stop';
 };
 
-export type ToolExecutionStart = RuntimeMessageBase & {
-  type: 'tool_execution_start';
-  tool: string;
-  id?: string;
-  args: Record<string, unknown>;
+export type ToolTelemetryFields = {
+  actionId?: string;
+  tabId?: number;
+  frameId?: number;
+  queueMs?: number;
+  executeMs?: number;
+  verifyMs?: number;
+  totalMs?: number;
+  resultBytes?: number;
+  checkpointPhase?: string;
+  contextRevision?: number;
 };
 
-export type ToolExecutionResult = RuntimeMessageBase & {
-  type: 'tool_execution_result';
-  tool: string;
-  id?: string;
-  args?: Record<string, unknown>;
-  result: unknown;
-  recoveryStage?: ToolRecoveryStage;
-  evidenceConfidence?: ToolEvidenceConfidence;
-  failureClass?: ToolFailureClass;
-};
+export type ToolExecutionStart = RuntimeMessageBase &
+  ToolTelemetryFields & {
+    type: 'tool_execution_start';
+    tool: string;
+    id?: string;
+    args: Record<string, unknown>;
+  };
+
+export type ToolExecutionResult = RuntimeMessageBase &
+  ToolTelemetryFields & {
+    type: 'tool_execution_result';
+    tool: string;
+    id?: string;
+    args?: Record<string, unknown>;
+    result: unknown;
+    recoveryStage?: ToolRecoveryStage;
+    evidenceConfidence?: ToolEvidenceConfidence;
+    failureClass?: ToolFailureClass;
+  };
 
 /** Nested tool event — inherits runId/sessionId/turnId from the batch envelope. */
 export type ToolBatchEvent =
-  | Pick<ToolExecutionStart, 'type' | 'tool' | 'id' | 'args'>
+  | Pick<
+      ToolExecutionStart,
+      | 'type'
+      | 'tool'
+      | 'id'
+      | 'args'
+      | 'actionId'
+      | 'tabId'
+      | 'frameId'
+      | 'queueMs'
+      | 'checkpointPhase'
+      | 'contextRevision'
+    >
   | Pick<
       ToolExecutionResult,
-      'type' | 'tool' | 'id' | 'args' | 'result' | 'recoveryStage' | 'evidenceConfidence' | 'failureClass'
+      | 'type'
+      | 'tool'
+      | 'id'
+      | 'args'
+      | 'result'
+      | 'recoveryStage'
+      | 'evidenceConfidence'
+      | 'failureClass'
+      | 'actionId'
+      | 'tabId'
+      | 'frameId'
+      | 'queueMs'
+      | 'executeMs'
+      | 'verifyMs'
+      | 'totalMs'
+      | 'resultBytes'
+      | 'checkpointPhase'
+      | 'contextRevision'
     >;
 
 export type ToolEventsBatch = RuntimeMessageBase & {

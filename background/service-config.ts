@@ -25,6 +25,16 @@ export type ExecutionEvent = {
   errorCode: string;
   errorMessage: string;
   resultPreview: string;
+  actionId?: string;
+  frameId?: number;
+  queueMs?: number;
+  executeMs?: number;
+  verifyMs?: number;
+  totalMs?: number;
+  resultBytes?: number;
+  recoveryStage?: string;
+  checkpointPhase?: string;
+  contextRevision?: number;
 };
 
 export const DEFAULT_REQUEST_TIMEOUT_MS = 30000;

@@ -1482,14 +1482,15 @@ class BackgroundService {
         },
         ...(runMeta.resumedFromRunId ? { resumedFromRunId: runMeta.resumedFromRunId } : {}),
       });
-      await this.checkpointStore.writeRecoveryContext({
+      const recoveryContextAvailable = await this.checkpointStore.writeRecoveryContext({
         version: 1,
         runId: runMeta.runId,
         sessionId,
         contextRevision: startingRevision,
         messages: normalizedHistory,
       });
-      if (!(await this.runCoordinator.persist(runMeta.runId))) {
+      const checkpointAvailable = await this.runCoordinator.persist(runMeta.runId);
+      if (!recoveryContextAvailable || !checkpointAvailable) {
         this.sendRuntime(runMeta, {
           type: 'run_warning',
           message: 'Checkpoint indisponível; execução atual continua sem retomada automática.',

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { textAwaitsUser } from '../../background/continuation-intent.js';
 import { resolveRunTerminalReason } from '../../background/run-terminal-reason.js';
+import { getTerminalStatusPresentation } from '../../sidepanel/ui/panel-status.js';
 
 const reasonForText = (text: string) =>
   resolveRunTerminalReason({ awaitsUser: textAwaitsUser(text), stopped: false, ambiguous: false, failed: false });
@@ -18,5 +19,9 @@ describe('run terminal reasons', () => {
 
   it('maps valid normal final to completed', () => {
     expect(reasonForText('Tarefa concluída com sucesso.')).toBe('completed');
+  });
+
+  it('uses required stopped terminal label', () => {
+    expect(getTerminalStatusPresentation('stopped')).toEqual({ text: 'Interrompida', tone: 'warning' });
   });
 });

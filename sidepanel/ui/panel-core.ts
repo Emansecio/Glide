@@ -7,6 +7,7 @@ import { createModalController } from './modal-controller.js';
 import { shouldAcceptContextCompaction, shouldAppendAssistantFinalForCommit } from './panel-guards.js';
 import { bindSidebarNavigation } from './panel-navigation.js';
 import { connectPanelPort } from './panel-port.js';
+import { getTerminalStatusPresentation } from './panel-status.js';
 import { SidePanelUI } from './panel-ui.js';
 import { enqueueStreamMessage } from './stream-queue.js';
 
@@ -634,7 +635,8 @@ SidePanelUI.prototype.handleRuntimeMessage = function handleRuntimeMessage(messa
     applyRunTransientNoticesClear(this, { sweepTools: true, toolError: !stopped });
     if (stopped) {
       this.showWarningBanner(message.message || 'Execução interrompida.');
-      this.updateStatus('Execução interrompida', 'warning');
+      const stoppedStatus = getTerminalStatusPresentation('stopped');
+      this.updateStatus(stoppedStatus.text, stoppedStatus.tone);
     } else {
       // Erro de credencial/configuração ganha um atalho direto para as Configurações
       // em vez de só um texto — é o caminho que o usuário precisa seguir.

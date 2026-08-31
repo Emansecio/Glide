@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { ACTIVE_RUN_CHECKPOINT_KEY, RunCheckpointSessionStore } from '../../background/run-checkpoint-store.js';
+import type { Message } from '../../ai/message-schema.js';
+import { buildToolTurnMessages } from '../../ai/tool-history.js';
+import {
+  ACTIVE_RUN_CHECKPOINT_KEY,
+  RUN_RECOVERY_CONTEXT_KEY,
+  RunCheckpointSessionStore,
+} from '../../background/run-checkpoint-store.js';
+import { recoverCheckpoint } from '../../background/run-recovery.js';
 import type { RunCheckpoint } from '../../background/run-types.js';
 
 class MemoryStorage {
@@ -65,5 +72,77 @@ describe('RunCheckpointSessionStore', () => {
     await store.write({ ...checkpoint(), request: { message: 'x'.repeat(500) } });
     expect(store.isResumeEnabled()).toBe(false);
     expect(storage.data[ACTIVE_RUN_CHECKPOINT_KEY]).toBeUndefined();
+  });
+
+  it('persists sanitized paired tool history for safe resume', async () => {
+    const storage = new MemoryStorage();
+    const store = new RunCheckpointSessionStore(storage);
+    const messages: Message[] = [
+      { role: 'user', content: 'inspect page' },
+      ...buildToolTurnMessages(
+        'Done.',
+        null,
+        [
+          {
+            type: 'tool-result',
+            toolCallId: 'call-1',
+            toolName: 'getContent',
+            output: {
+              type: 'json',
+              value: {
+                ok: true,
+                token: 'tool-result-secret',
+                dataUrl: 'data:image/png;base64,SCREENSHOT',
+              },
+            },
+          },
+        ],
+        [
+          {
+            toolCallId: 'call-1',
+            toolName: 'getContent',
+            input: { selector: '#main', password: 'tool-argument-secret' },
+          },
+        ],
+      ),
+    ];
+
+    await expect(
+      store.writeRecoveryContext({
+        version: 1,
+        runId: 'run-1',
+        sessionId: 'session-1',
+        contextRevision: 3,
+        messages,
+      }),
+    ).resolves.toBe(true);
+
+    const restored = await store.readRecoveryContext('run-1');
+    expect(restored?.messages.map((message) => message.role)).toEqual(['user', 'assistant', 'tool', 'assistant']);
+    const pairedCall = restored?.messages[1]?.toolCalls?.[0];
+    const toolParts = restored?.messages[2]?.content as Array<{ toolCallId?: string }>;
+    expect(pairedCall?.id).toBe('call-1');
+    expect(toolParts[0]?.toolCallId).toBe(pairedCall?.id);
+    const serialized = JSON.stringify(restored?.messages);
+    expect(serialized).not.toContain('tool-result-secret');
+    expect(serialized).not.toContain('tool-argument-secret');
+    expect(serialized).not.toContain('data:image');
+    expect(
+      recoverCheckpoint(checkpoint(), { committedContextRevision: restored?.contextRevision ?? -1, now: 30 }),
+    ).toBe('resume');
+  });
+
+  it('returns unavailable when sanitized recovery context exceeds its byte bound', async () => {
+    const storage = new MemoryStorage();
+    const store = new RunCheckpointSessionStore(storage, { maxRecoveryContextBytes: 128 });
+    const available = await store.writeRecoveryContext({
+      version: 1,
+      runId: 'run-1',
+      sessionId: 'session-1',
+      contextRevision: 3,
+      messages: [{ role: 'user', content: 'x'.repeat(500) }],
+    });
+    expect(available).toBe(false);
+    expect(storage.data[RUN_RECOVERY_CONTEXT_KEY]).toBeUndefined();
   });
 });

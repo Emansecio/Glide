@@ -1,5 +1,6 @@
 import type { Message } from '../ai/message-schema.js';
 import { cloneConversationHistory, normalizeConversationHistory } from '../ai/message-schema.js';
+import { sanitizeMessageForPersistence } from '../ai/persist-serialization.js';
 import type { RunCheckpoint, RunPhase } from './run-types.js';
 import type { SessionStorageArea } from './storage-access.js';
 import { getSessionStorageArea } from './storage-access.js';
@@ -60,6 +61,51 @@ const isCheckpoint = (value: unknown): value is RunCheckpoint => {
   );
 };
 
+const RECOVERY_SENSITIVE_KEY_RE =
+  /apikey|api_key|token|secret|password|authorization|credential|cookie|csrftoken|set-cookie/i;
+const RECOVERY_IMAGE_KEY_RE = /^(dataurl|image|screenshot)$/i;
+
+const redactRecoveryValue = (value: unknown, key = '', parentType = ''): unknown => {
+  if (typeof value === 'string') {
+    if (
+      RECOVERY_SENSITIVE_KEY_RE.test(key) ||
+      RECOVERY_IMAGE_KEY_RE.test(key) ||
+      (key === 'data' && /base64/i.test(parentType)) ||
+      /^data:[^;]+;base64,/i.test(value) ||
+      /;base64,/i.test(value)
+    ) {
+      return `<redacted:${value.length} chars>`;
+    }
+    return value;
+  }
+  if (Array.isArray(value)) return value.map((item) => redactRecoveryValue(item));
+  if (!value || typeof value !== 'object') return value;
+  const record = value as Record<string, unknown>;
+  const type = typeof record.type === 'string' ? record.type : '';
+  return Object.fromEntries(
+    Object.entries(record).map(([nestedKey, nestedValue]) => [
+      nestedKey,
+      redactRecoveryValue(nestedValue, nestedKey, type),
+    ]),
+  );
+};
+
+const sanitizeRecoveryMessages = (messages: Message[]): Message[] => {
+  const normalized = normalizeConversationHistory(messages);
+  return normalized.flatMap((message) => {
+    const sanitized = sanitizeMessageForPersistence(
+      message,
+      {
+        maxCharsPerTextField: 4000,
+        maxImageDataChars: 0,
+        maxStructuredPartBytes: 12_000,
+      },
+      'redacted',
+    );
+    return sanitized ? [redactRecoveryValue(sanitized) as Message] : [];
+  });
+};
+
 const serializeBounded = (state: RunCheckpoint, maxBytes: number): RunCheckpoint => {
   const payload: RunCheckpoint = {
     version: 1,
@@ -91,7 +137,7 @@ export class RunCheckpointSessionStore implements RunCheckpointStore {
 
   constructor(
     private storage: SessionStorageArea = getSessionStorageArea(),
-    private options: { maxBytes?: number } = {},
+    private options: { maxBytes?: number; maxRecoveryContextBytes?: number } = {},
   ) {}
 
   isResumeEnabled(): boolean {
@@ -129,12 +175,11 @@ export class RunCheckpointSessionStore implements RunCheckpointStore {
 
   async writeRecoveryContext(snapshot: RunRecoveryContext): Promise<boolean> {
     try {
-      const messages = normalizeConversationHistory(snapshot.messages);
+      const messages = sanitizeRecoveryMessages(snapshot.messages);
       const serialized = JSON.stringify(messages);
       if (
-        new TextEncoder().encode(serialized).byteLength > MAX_RECOVERY_CONTEXT_BYTES ||
-        /data:image|;base64,/i.test(serialized) ||
-        messages.some((message) => message.role === 'tool')
+        new TextEncoder().encode(serialized).byteLength >
+        (this.options.maxRecoveryContextBytes ?? MAX_RECOVERY_CONTEXT_BYTES)
       ) {
         return false;
       }

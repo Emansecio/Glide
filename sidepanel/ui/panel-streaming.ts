@@ -2,6 +2,7 @@ import type { RunPlan } from '../../types/plan.js';
 import { shouldWriteThinkingTimerLabel } from './history-storage.js';
 import {
   cancelMarkdownIdleWork,
+  digestMarkdownSource,
   scheduleMarkdownIdleWork,
   shouldDeferMarkdownRender,
 } from './markdown-render-defer.js';
@@ -43,7 +44,12 @@ SidePanelUI.prototype.scheduleDeferredMarkdownRender = function scheduleDeferred
   this.cancelPendingMarkdownRender();
   const token = this.markdownRenderToken;
   el.dataset.mdRenderToken = String(token);
-  this.pendingMarkdownRender = { el, token, buffer };
+  this.pendingMarkdownRender = {
+    el,
+    token,
+    buffer,
+    sourceDigest: digestMarkdownSource(buffer),
+  };
 
   const run = () => {
     this.pendingMarkdownIdleHandle = null;
@@ -57,12 +63,36 @@ SidePanelUI.prototype.scheduleDeferredMarkdownRender = function scheduleDeferred
     pending.el.innerHTML = this.renderMarkdown(pending.buffer);
     delete pending.el.dataset.mdRenderToken;
     this.pendingMarkdownRender = null;
+    pending.onRendered?.();
     if (stickBottom) {
       this.scrollToBottom();
     }
   };
 
   this.pendingMarkdownIdleHandle = scheduleMarkdownIdleWork(run);
+};
+
+SidePanelUI.prototype.reconcileTerminalMarkdownRender = function reconcileTerminalMarkdownRender(
+  el: HTMLElement,
+  finalContent: string,
+  onRendered?: () => void,
+) {
+  const pending = this.pendingMarkdownRender;
+  const finalDigest = digestMarkdownSource(finalContent);
+  if (pending?.el === el && pending.sourceDigest === finalDigest) {
+    pending.onRendered = onRendered;
+    return;
+  }
+
+  this.cancelPendingMarkdownRender();
+  if (shouldDeferMarkdownRender(finalContent.length)) {
+    this.scheduleDeferredMarkdownRender(el, finalContent);
+    if (this.pendingMarkdownRender) this.pendingMarkdownRender.onRendered = onRendered;
+    return;
+  }
+  if (!el.isConnected) return;
+  el.innerHTML = this.renderMarkdown(finalContent);
+  onRendered?.();
 };
 
 SidePanelUI.prototype.handleAssistantStream = function handleAssistantStream(event: any) {

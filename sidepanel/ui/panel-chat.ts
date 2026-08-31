@@ -464,15 +464,11 @@ SidePanelUI.prototype.displayAssistantMessage = function displayAssistantMessage
     header.innerHTML = this.buildAssistantHeaderHtml(messageMeta);
     this.bindAssistantActions(header, content);
 
-    if (
-      content &&
-      content.trim() !== '' &&
-      streamMainTextEl &&
-      (content !== streamResult?.renderedContent || this.hasPendingMarkdownRender(streamMainTextEl))
-    ) {
-      // Final path wins over idle stream_stop parse — cancel deferred swap first.
-      this.cancelPendingMarkdownRender();
-      streamMainTextEl.innerHTML = this.renderMarkdown(content);
+    if (content && content.trim() !== '' && streamMainTextEl) {
+      const finalDiffersFromStream = content !== streamResult?.renderedContent;
+      if (finalDiffersFromStream || this.hasPendingMarkdownRender(streamMainTextEl)) {
+        this.reconcileTerminalMarkdownRender(streamMainTextEl, content);
+      }
     }
     this.renderExecutionSemanticSummary?.(executionSummary, streamedContainer);
     this.finalizeExecutionDetails?.(executionSummary, streamedContainer);

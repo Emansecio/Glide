@@ -82,6 +82,8 @@ export class SidePanelUI {
     el: HTMLElement;
     token: number;
     buffer: string;
+    sourceDigest: string;
+    onRendered?: () => void;
   } | null;
   /** Monotonic token — bumped on schedule/cancel so stale idle callbacks no-op. */
   markdownRenderToken: number;
@@ -542,6 +544,7 @@ export interface SidePanelUI {
   readSessionPayload(...args: any[]): any;
   removeHistorySessionKeys(...args: any[]): any;
   recomputeContextCharCount(...args: any[]): any;
+  reconcileTerminalMarkdownRender(el: HTMLElement, finalContent: string, onRendered?: () => void): void;
   recordScrollPosition(): void;
   refreshAvailableModels(...args: any[]): any;
   removePendingAttachment(...args: any[]): any;

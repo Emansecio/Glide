@@ -7,6 +7,21 @@ export function shouldDeferMarkdownRender(length: number): boolean {
   return length >= MARKDOWN_DEFER_MIN_CHARS;
 }
 
+export function normalizeMarkdownSource(source: string): string {
+  return String(source ?? '').replace(/\r\n?/g, '\n');
+}
+
+/** Small stable digest used only to reconcile equivalent stream/final content. */
+export function digestMarkdownSource(source: string): string {
+  const normalized = normalizeMarkdownSource(source);
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < normalized.length; index += 1) {
+    hash ^= normalized.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `${normalized.length}:${(hash >>> 0).toString(16)}`;
+}
+
 export type MarkdownIdleHandle = {
   kind: 'idle' | 'timeout';
   id: number;

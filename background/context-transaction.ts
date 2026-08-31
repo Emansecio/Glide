@@ -58,6 +58,14 @@ export class ContextTransactionStore {
   private sessions = new Map<string, SessionSnapshot>();
   private terminalCommits = new Map<string, { fingerprint: string; commit: ContextCommit }>();
 
+  hydrate(sessionId: string, revision: number, messages: Message[]): void {
+    const id = String(sessionId || '').trim();
+    if (!id || !Number.isInteger(revision) || revision < 0) return;
+    const current = this.sessions.get(id);
+    if (current && current.revision > revision) return;
+    this.sessions.set(id, { revision, messages: cloneConversationHistory(normalizeConversationHistory(messages)) });
+  }
+
   read(sessionId: string): SessionSnapshot {
     const snapshot = this.sessions.get(String(sessionId || '').trim());
     return snapshot

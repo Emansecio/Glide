@@ -6,6 +6,7 @@ export type RunMeta = {
   runId: string;
   turnId: string;
   sessionId: string;
+  resumedFromRunId?: string;
 };
 
 export type ExecutionEvent = {

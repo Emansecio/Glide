@@ -446,6 +446,10 @@ SidePanelUI.prototype.handleRuntimeMessage = function handleRuntimeMessage(messa
   const sessionOk =
     !message.sessionId || this.acceptedSessionIds.has(message.sessionId) || message.sessionId === this.sessionId;
   const incomingRunId = typeof message.runId === 'string' && message.runId.trim() ? message.runId.trim() : null;
+  const resumesActiveRun =
+    message.type === 'run_resume_started' &&
+    typeof message.resumedFromRunId === 'string' &&
+    message.resumedFromRunId === this.activeRunId;
 
   let runOk = false;
   if (!incomingRunId) {
@@ -455,16 +459,43 @@ SidePanelUI.prototype.handleRuntimeMessage = function handleRuntimeMessage(messa
   } else if (this.activeRunId === null) {
     runOk = sessionOk;
   } else {
-    runOk = incomingRunId === this.activeRunId;
+    runOk = incomingRunId === this.activeRunId || resumesActiveRun;
   }
 
   if (!sessionOk || !runOk) return;
 
-  if (incomingRunId && this.activeRunId === null) {
+  if (incomingRunId && (this.activeRunId === null || resumesActiveRun)) {
     this.activeRunId = incomingRunId;
   }
   // Qualquer sinal do run reinicia a janela de silêncio do watchdog do painel.
   this.touchRunLiveness?.();
+  if (message.type === 'run_resume_started') {
+    this.awaitingRunAcceptance = false;
+    this.setComposerBusy(true);
+    this.startRunLiveness();
+    this.updateStatus('Retomando execução…', 'active');
+    return;
+  }
+  if (message.type === 'run_resume_required' || message.type === 'run_interrupted') {
+    this.awaitingRunAcceptance = false;
+    this.stopThinkingTimer?.();
+    this.stopRunLiveness?.();
+    this.pendingToolCount = 0;
+    this.isStreaming = false;
+    this.activeToolName = null;
+    this.finishStreamingMessage?.();
+    this.setComposerBusy(false);
+    applyRunTransientNoticesClear(this, { sweepTools: true });
+    if (message.type === 'run_resume_required') {
+      this.showWarningBanner(message.message);
+      this.updateStatus('Ação precisa de confirmação', 'warning');
+    } else {
+      this.showWarningBanner(message.message);
+      this.updateStatus('Interrompida', 'warning');
+    }
+    this.finishActiveRun?.();
+    return;
+  }
   if (message.type === 'assistant_stream_start') {
     this.awaitingRunAcceptance = false;
     this.pendingUserTurn = null;

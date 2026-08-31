@@ -1,9 +1,21 @@
+import type { Message } from '../ai/message-schema.js';
+import { cloneConversationHistory, normalizeConversationHistory } from '../ai/message-schema.js';
 import type { SessionStorageArea } from './storage-access.js';
 import { getSessionStorageArea } from './storage-access.js';
 import type { RunCheckpoint, RunPhase } from './run-types.js';
 
 export const ACTIVE_RUN_CHECKPOINT_KEY = 'glideActiveRunCheckpointV1';
+export const RUN_RECOVERY_CONTEXT_KEY = 'glideRunRecoveryContextV1';
 export const DEFAULT_MAX_CHECKPOINT_BYTES = 32 * 1024;
+export const MAX_RECOVERY_CONTEXT_BYTES = 128 * 1024;
+
+export type RunRecoveryContext = {
+  version: 1;
+  runId: string;
+  sessionId: string;
+  contextRevision: number;
+  messages: Message[];
+};
 
 const TERMINAL_PHASES = new Set<RunPhase>(['awaiting_user', 'completed', 'failed', 'stopped', 'ambiguous']);
 const PHASES = new Set<RunPhase>([
@@ -115,13 +127,70 @@ export class RunCheckpointSessionStore implements RunCheckpointStore {
     }
   }
 
+  async writeRecoveryContext(snapshot: RunRecoveryContext): Promise<boolean> {
+    try {
+      const messages = normalizeConversationHistory(snapshot.messages);
+      const serialized = JSON.stringify(messages);
+      if (
+        new TextEncoder().encode(serialized).byteLength > MAX_RECOVERY_CONTEXT_BYTES ||
+        /data:image|;base64,/i.test(serialized) ||
+        messages.some((message) => message.role === 'tool')
+      ) {
+        return false;
+      }
+      await this.storage.set({
+        [RUN_RECOVERY_CONTEXT_KEY]: {
+          version: 1,
+          runId: snapshot.runId,
+          sessionId: snapshot.sessionId,
+          contextRevision: snapshot.contextRevision,
+          messages,
+        },
+      });
+      return true;
+    } catch {
+      this.resumeEnabled = false;
+      return false;
+    }
+  }
+
+  async readRecoveryContext(runId: string): Promise<RunRecoveryContext | null> {
+    try {
+      const stored = await this.storage.get(RUN_RECOVERY_CONTEXT_KEY);
+      const value = stored?.[RUN_RECOVERY_CONTEXT_KEY];
+      if (!value || typeof value !== 'object') return null;
+      const snapshot = value as RunRecoveryContext;
+      if (
+        snapshot.version !== 1 ||
+        snapshot.runId !== runId ||
+        typeof snapshot.sessionId !== 'string' ||
+        !Number.isInteger(snapshot.contextRevision) ||
+        !Array.isArray(snapshot.messages)
+      ) {
+        return null;
+      }
+      return { ...snapshot, messages: cloneConversationHistory(snapshot.messages) };
+    } catch {
+      return null;
+    }
+  }
+
   async clear(runId: string): Promise<void> {
     try {
-      const stored = await this.storage.get(ACTIVE_RUN_CHECKPOINT_KEY);
-      const value = stored?.[ACTIVE_RUN_CHECKPOINT_KEY];
-      if (!value || (typeof value === 'object' && (value as { runId?: string }).runId === runId)) {
-        await this.storage.remove(ACTIVE_RUN_CHECKPOINT_KEY);
+      const stored = await this.storage.get([ACTIVE_RUN_CHECKPOINT_KEY, RUN_RECOVERY_CONTEXT_KEY]);
+      const checkpoint = stored?.[ACTIVE_RUN_CHECKPOINT_KEY];
+      const recoveryContext = stored?.[RUN_RECOVERY_CONTEXT_KEY];
+      const removals: string[] = [];
+      if (!checkpoint || (typeof checkpoint === 'object' && (checkpoint as { runId?: string }).runId === runId)) {
+        removals.push(ACTIVE_RUN_CHECKPOINT_KEY);
       }
+      if (
+        !recoveryContext ||
+        (typeof recoveryContext === 'object' && (recoveryContext as { runId?: string }).runId === runId)
+      ) {
+        removals.push(RUN_RECOVERY_CONTEXT_KEY);
+      }
+      if (removals.length) await this.storage.remove(removals);
     } catch {
       this.resumeEnabled = false;
     }

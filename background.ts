@@ -92,6 +92,7 @@ import { installProviderNetRequestRules } from './background/provider-net-rules.
 import { RunAbortRegistry } from './background/run-abort-registry.js';
 import { RunCheckpointSessionStore } from './background/run-checkpoint-store.js';
 import { RunCoordinator } from './background/run-coordinator.js';
+import { buildRecoveryExecutionNote, recoverCheckpoint } from './background/run-recovery.js';
 import { RunEventSequencer } from './background/run-event-sequencer.js';
 import { RunPassCache } from './background/run-pass-cache.js';
 import {
@@ -192,6 +193,7 @@ class BackgroundService {
   activeRunMeta: RunMeta | null;
   activeRunAbortController: AbortController | null;
   private runAbortRegistry: RunAbortRegistry;
+  private checkpointStore: RunCheckpointSessionStore;
   private runCoordinator: RunCoordinator;
   private actionJournal: ActionJournal;
   private actionSequenceByRun: Map<string, number>;
@@ -544,36 +546,99 @@ class BackgroundService {
   private async recoverOrphanedRun(): Promise<void> {
     try {
       if (typeof chrome === 'undefined' || !chrome?.storage?.session) return;
-      const stored = await chrome.storage.session.get(['glideActiveRun']);
+      const [checkpoint, stored] = await Promise.all([
+        this.checkpointStore.readActive(),
+        chrome.storage.session.get(['glideActiveRun']),
+      ]);
       const sentinel = stored?.glideActiveRun;
-      if (!sentinel || typeof sentinel.runId !== 'string') return;
-      // Re-checa DEPOIS do await: um user_message pode ter iniciado um run novo
-      // nesta janela de boot (o write do sentinel dele é fire-and-forget). Sem
-      // este guard a recovery removia o sentinel do run VIVO e emitia run_error
-      // para ele — o painel desbloqueava no meio de uma execução legítima.
+      if (!checkpoint && (!sentinel || typeof sentinel.runId !== 'string')) return;
       if (this.activeRunId) return;
-      const knownToken = this.activeRunSentinelRegistry.expectedToken(sentinel.runId);
-      if (knownToken && knownToken === sentinel.token) return;
+      if (sentinel && typeof sentinel.runId === 'string') {
+        const knownToken = this.activeRunSentinelRegistry.expectedToken(sentinel.runId);
+        if (knownToken && knownToken === sentinel.token) return;
+      }
       await chrome.storage.session.remove('glideActiveRun');
-      // O SW reiniciou no meio de um run: destrava a UI (best-effort — o painel
-      // pode estar fechado; a mensagem é ignorada com segurança nesse caso).
-      const runMeta: RunMeta = {
-        runId: sentinel.runId,
-        turnId: String(sentinel.turnId || sentinel.runId),
-        sessionId: String(sentinel.sessionId || ''),
-      };
-      this.sendRuntime(runMeta, {
-        type: 'run_error',
-        message: 'O run anterior foi interrompido porque a extensão reiniciou. Envie a mensagem novamente.',
-        details: {
-          runId: runMeta.runId,
-          sessionId: runMeta.sessionId,
-          timestamp: Date.now(),
-          recovered: true,
-        },
+
+      if (!checkpoint) {
+        const interruptedMeta: RunMeta = {
+          runId: String(sentinel.runId),
+          turnId: String(sentinel.turnId || sentinel.runId),
+          sessionId: String(sentinel.sessionId || ''),
+        };
+        this.sendRuntime(interruptedMeta, {
+          type: 'run_interrupted',
+          message: 'Execução anterior interrompida após reinício da extensão.',
+          finishReason: 'interrupted',
+        });
+        return;
+      }
+
+      const recoveryContext = await this.checkpointStore.readRecoveryContext(checkpoint.runId);
+      const decision = recoverCheckpoint(checkpoint, {
+        committedContextRevision: recoveryContext?.contextRevision ?? -1,
       });
-    } catch {
-      // ignore
+      const previousMeta: RunMeta = {
+        runId: checkpoint.runId,
+        turnId: checkpoint.turnId,
+        sessionId: checkpoint.sessionId,
+      };
+      if (decision === 'confirm') {
+        const action = checkpoint.inFlightAction;
+        this.sendRuntime(previousMeta, {
+          type: 'run_resume_required',
+          resumedFromRunId: checkpoint.runId,
+          message: action
+            ? `A ação ${action.tool} pode ter sido executada antes do reinício. Confirme o estado da página antes de continuar.`
+            : 'Uma ação pode ter sido executada antes do reinício. Confirme o estado da página antes de continuar.',
+          ...(action ? { action: { actionId: action.actionId, tool: action.tool } } : {}),
+        });
+        return;
+      }
+      if (decision !== 'resume' || !recoveryContext) {
+        await this.checkpointStore.clear(checkpoint.runId);
+        this.sendRuntime(previousMeta, {
+          type: 'run_interrupted',
+          message: 'Execução anterior não tinha checkpoint seguro para retomada.',
+          finishReason: 'interrupted',
+        });
+        return;
+      }
+
+      contextTransactionStore.hydrate(
+        recoveryContext.sessionId,
+        recoveryContext.contextRevision,
+        recoveryContext.messages,
+      );
+      sessionContextStore.adopt(recoveryContext.sessionId, recoveryContext.messages);
+      const selectedTabs = (
+        await Promise.all(
+          checkpoint.selectedTabIds.map((tabId) => chrome.tabs.get(tabId).catch(() => null)),
+        )
+      ).filter((tab): tab is chrome.tabs.Tab => Boolean(tab));
+      const resumedMeta: RunMeta = {
+        runId: `run-${Date.now()}-resume`,
+        turnId: `turn-${Date.now()}-resume`,
+        sessionId: checkpoint.sessionId,
+        resumedFromRunId: checkpoint.runId,
+      };
+      this.sendRuntime(resumedMeta, {
+        type: 'run_resume_started',
+        resumedFromRunId: checkpoint.runId,
+        message: 'Retomando execução após reinício da extensão.',
+      });
+      const resumedHistory = normalizeConversationHistory([
+        ...recoveryContext.messages,
+        { role: 'system', content: buildRecoveryExecutionNote(checkpoint) },
+      ]);
+      void this.processUserMessage(
+        resumedHistory,
+        selectedTabs,
+        checkpoint.sessionId,
+        checkpoint.request.panelTabId,
+        resumedMeta,
+      );
+    } catch (error) {
+      console.warn('[Glide] Run recovery failed:', error);
     }
   }
 
@@ -585,7 +650,8 @@ class BackgroundService {
     this.activeRunMeta = null;
     this.activeRunAbortController = null;
     this.runAbortRegistry = new RunAbortRegistry();
-    this.runCoordinator = new RunCoordinator(new RunCheckpointSessionStore());
+    this.checkpointStore = new RunCheckpointSessionStore();
+    this.runCoordinator = new RunCoordinator(this.checkpointStore);
     this.actionJournal = new ActionJournal([], (entry) => this.runCoordinator.recordAction(entry));
     this.actionSequenceByRun = new Map();
     this.effectDispatchTailByRun = new Map();
@@ -1369,12 +1435,15 @@ class BackgroundService {
     selectedTabs: chrome.tabs.Tab[],
     sessionId: string,
     panelTabId?: number | null,
+    resumedRunMeta?: RunMeta,
   ) {
-    const runMeta: RunMeta = {
-      runId: `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      turnId: `turn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      sessionId,
-    };
+    const runMeta: RunMeta =
+      resumedRunMeta ||
+      ({
+        runId: `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        turnId: `turn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        sessionId,
+      } satisfies RunMeta);
     let lockedTabId: number | null = null;
 
     try {
@@ -1404,13 +1473,22 @@ class BackgroundService {
       void this.writeActiveRunSentinel(runMeta);
       const normalizedHistory = normalizeConversationHistory(conversationHistory || []);
       const latestUserText = this.getLatestUserText(normalizedHistory);
+      const startingRevision = contextTransactionStore.read(sessionId).revision;
       this.runCoordinator.start(runMeta, {
-        contextRevision: contextTransactionStore.read(sessionId).revision,
+        contextRevision: startingRevision,
         selectedTabIds: selectedTabs.flatMap((tab) => (typeof tab.id === 'number' ? [tab.id] : [])),
         request: {
           message: latestUserText,
           ...(typeof panelTabId === 'number' ? { panelTabId } : {}),
         },
+        ...(runMeta.resumedFromRunId ? { resumedFromRunId: runMeta.resumedFromRunId } : {}),
+      });
+      await this.checkpointStore.writeRecoveryContext({
+        version: 1,
+        runId: runMeta.runId,
+        sessionId,
+        contextRevision: startingRevision,
+        messages: normalizedHistory,
       });
       if (!(await this.runCoordinator.persist(runMeta.runId))) {
         this.sendRuntime(runMeta, {

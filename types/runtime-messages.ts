@@ -1,3 +1,4 @@
+import type { RunTerminalReason } from '../background/run-types.js';
 import type { RunPlan } from './plan.js';
 
 export const RUNTIME_MESSAGE_SCHEMA_VERSION = 2 as const;
@@ -116,6 +117,25 @@ export type RunStopped = RuntimeMessageBase & {
   details?: Record<string, unknown>;
 };
 
+export type RunResumeStarted = RuntimeMessageBase & {
+  type: 'run_resume_started';
+  resumedFromRunId: string;
+  message: string;
+};
+
+export type RunResumeRequired = RuntimeMessageBase & {
+  type: 'run_resume_required';
+  resumedFromRunId: string;
+  message: string;
+  action?: { actionId: string; tool: string };
+};
+
+export type RunInterrupted = RuntimeMessageBase & {
+  type: 'run_interrupted';
+  message: string;
+  finishReason: RunTerminalReason;
+};
+
 export type ContextCommitMessage = RuntimeMessageBase & {
   type: 'context_commit';
   previousSessionId?: string;
@@ -164,6 +184,9 @@ export type RuntimeMessage =
   | RunError
   | RunWarning
   | RunStopped
+  | RunResumeStarted
+  | RunResumeRequired
+  | RunInterrupted
   | ContextCommitMessage
   | ContextCompacted
   | VisionContextReady;
@@ -181,6 +204,9 @@ export const runtimeMessageTypes = [
   'run_error',
   'run_warning',
   'run_stopped',
+  'run_resume_started',
+  'run_resume_required',
+  'run_interrupted',
   'context_commit',
   'context_compacted',
   'vision_context_ready',
@@ -374,6 +400,24 @@ const validateRuntimeMessageShape = (message: GenericRecord): RuntimeMessageVali
     case 'run_stopped':
       if (!isString(message.message)) return { ok: false, reason: `${type}.message must be a string.` };
       if (!isOptionalRecord(message.details)) return { ok: false, reason: `${type}.details must be an object.` };
+      return { ok: true, message: message as RuntimeMessage };
+    case 'run_resume_started':
+      if (!isString(message.message) || !isNonEmptyString(message.resumedFromRunId)) {
+        return { ok: false, reason: 'run_resume_started fields are invalid.' };
+      }
+      return { ok: true, message: message as RuntimeMessage };
+    case 'run_resume_required':
+      if (!isString(message.message) || !isNonEmptyString(message.resumedFromRunId)) {
+        return { ok: false, reason: 'run_resume_required fields are invalid.' };
+      }
+      if (message.action !== undefined && !isRecord(message.action)) {
+        return { ok: false, reason: 'run_resume_required.action must be an object.' };
+      }
+      return { ok: true, message: message as RuntimeMessage };
+    case 'run_interrupted':
+      if (!isString(message.message) || !isNonEmptyString(message.finishReason)) {
+        return { ok: false, reason: 'run_interrupted fields are invalid.' };
+      }
       return { ok: true, message: message as RuntimeMessage };
     case 'context_commit':
       if (!Number.isInteger(message.revision) || Number(message.revision) <= 0) {

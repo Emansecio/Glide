@@ -108,3 +108,22 @@ No blocker found in final diff. No staged files expected after report commit.
 - One aggregate Playwright worker-recovery run timed out once; immediate isolated rerun passed all recovery invariants. Treat as harness flake unless repeated.
 - Plan requested layout assertions in `tests/e2e/run-e2e.ts`; equivalent DOM/CSS assertions were added in `tests/vitest/message-layout.test.ts`, while existing production E2E was run unchanged. Runtime coverage exists, but file-level plan wording was not followed exactly.
 - Image pixel-limit path depends on browser image metadata decode. Unit policy covers rejection-before-read for byte limits; production E2E does not synthesize a >20 MP image.
+
+## Fix 1 — consolidated review closure
+
+Commit `42935ff` closes every finding from `task-5-review.md`:
+
+1. `buildRunPlan()` now preserves explicit IDs and semantically matches prior titles one-to-one before assigning collision-free IDs. A prepended/reordered model plan keeps acknowledged `done` state and prior identity.
+2. `fitSessionToBudget()` now measures the whole compacted session before trimming. Over-budget distinct transcripts receive adaptive budgets based on actual serialized sizes; tool payload compaction still precedes text truncation.
+3. Rejected Markdown links carry opener metadata. Matching close-token lookup now handles nested inline markup without mismatched `</a>` output.
+
+Regression coverage added to `plan-controller.test.ts`, `history-budget.test.ts`, and `markdown-renderer.test.ts`.
+
+Validation:
+
+- Focused milestone Vitest: 8 files, 32 tests passed.
+- `npm run check`: TypeScript and Biome passed.
+- `npm run test:frontier`: production build passed; Vitest 30 files/128 tests; legacy unit 335; validator 33; panel E2E 16; frontier actions 3; worker recovery 3 — all passed.
+- `git diff --check`: passed before commit.
+
+Detailed evidence: `task-5-fix-1-report.md`.

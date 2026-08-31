@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { Message } from '../../ai/message-schema.js';
 import { buildToolTurnMessages } from '../../ai/tool-history.js';
+import { ActionJournal } from '../../background/action-journal.js';
 import {
   ACTIVE_RUN_CHECKPOINT_KEY,
   RUN_RECOVERY_CONTEXT_KEY,
   RunCheckpointSessionStore,
 } from '../../background/run-checkpoint-store.js';
+import { RunCoordinator } from '../../background/run-coordinator.js';
 import { recoverCheckpoint } from '../../background/run-recovery.js';
 import type { RunCheckpoint } from '../../background/run-types.js';
 
@@ -58,12 +60,73 @@ describe('RunCheckpointSessionStore', () => {
     expect(storage.data[ACTIVE_RUN_CHECKPOINT_KEY]).toBeUndefined();
   });
 
-  it('disables resume after write failure without throwing', async () => {
+  it('disables resume and clears stale recovery state after write failure without throwing', async () => {
     const storage = new MemoryStorage();
+    storage.data[ACTIVE_RUN_CHECKPOINT_KEY] = checkpoint();
+    storage.data[RUN_RECOVERY_CONTEXT_KEY] = {
+      version: 1,
+      runId: 'run-1',
+      sessionId: 'session-1',
+      contextRevision: 3,
+      messages: [{ role: 'user', content: 'stale context' }],
+    };
     storage.failWrites = true;
     const store = new RunCheckpointSessionStore(storage);
-    await expect(store.write(checkpoint())).resolves.toBeUndefined();
+    await expect(store.write({ ...checkpoint(), contextRevision: 4 })).resolves.toBeUndefined();
     expect(store.isResumeEnabled()).toBe(false);
+    expect(storage.data[ACTIVE_RUN_CHECKPOINT_KEY]).toBeUndefined();
+    expect(storage.data[RUN_RECOVERY_CONTEXT_KEY]).toBeUndefined();
+  });
+
+  it('prevents restart from resuming a stale safe checkpoint after an action-phase write failure', async () => {
+    const storage = new MemoryStorage();
+    const store = new RunCheckpointSessionStore(storage);
+    const warnings: string[] = [];
+    const coordinator = new RunCoordinator(store, (state) => warnings.push(state.runId));
+    coordinator.start(
+      { runId: 'run-1', sessionId: 'session-1', turnId: 'turn-1' },
+      {
+        contextRevision: 3,
+        selectedTabIds: [7],
+        request: { message: 'continue', panelTabId: 2 },
+      },
+    );
+    coordinator.transition('run-1', 'model');
+    await store.writeRecoveryContext({
+      version: 1,
+      runId: 'run-1',
+      sessionId: 'session-1',
+      contextRevision: 3,
+      messages: [{ role: 'user', content: 'continue' }],
+    });
+    expect(await coordinator.persist('run-1')).toBe(true);
+    const safeCheckpoint = await store.readActive();
+    expect(safeCheckpoint?.phase).toBe('model');
+    expect(
+      recoverCheckpoint(safeCheckpoint!, {
+        committedContextRevision: 3,
+        now: safeCheckpoint!.updatedAt,
+      }),
+    ).toBe('resume');
+
+    storage.failWrites = true;
+    const journal = new ActionJournal([], (entry) => coordinator.recordAction(entry));
+    await journal.prepare({
+      actionId: 'run-1:action:1',
+      runId: 'run-1',
+      toolCallId: 'call-1',
+      tool: 'click',
+      args: { selector: '#save' },
+    });
+    const inFlight = await journal.markInFlight('run-1:action:1');
+    expect(inFlight.shouldDispatch).toBe(true);
+    await journal.commit('run-1:action:1', { success: true });
+    expect(warnings).toEqual(['run-1']);
+
+    storage.failWrites = false;
+    const restartedStore = new RunCheckpointSessionStore(storage);
+    expect(await restartedStore.readActive()).toBeNull();
+    expect(await restartedStore.readRecoveryContext('run-1')).toBeNull();
   });
 
   it('rejects unbounded or forbidden payload fields', async () => {

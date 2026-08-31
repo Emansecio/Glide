@@ -145,13 +145,29 @@ export class RunCheckpointSessionStore implements RunCheckpointStore {
     return this.resumeEnabled;
   }
 
+  private async clearActiveRecoveryState(): Promise<void> {
+    try {
+      await this.storage.remove([ACTIVE_RUN_CHECKPOINT_KEY, RUN_RECOVERY_CONTEXT_KEY]);
+    } catch {
+      // Storage is unavailable; later persistence attempts retry cleanup.
+    }
+  }
+
+  private async disableResume(): Promise<void> {
+    this.resumeEnabled = false;
+    await this.clearActiveRecoveryState();
+  }
+
   async write(state: RunCheckpoint): Promise<void> {
-    if (!this.resumeEnabled) return;
+    if (!this.resumeEnabled) {
+      await this.clearActiveRecoveryState();
+      return;
+    }
     try {
       const payload = serializeBounded(state, this.options.maxBytes ?? DEFAULT_MAX_CHECKPOINT_BYTES);
       await this.storage.set({ [ACTIVE_RUN_CHECKPOINT_KEY]: payload });
     } catch {
-      this.resumeEnabled = false;
+      await this.disableResume();
     }
   }
 
@@ -175,6 +191,10 @@ export class RunCheckpointSessionStore implements RunCheckpointStore {
   }
 
   async writeRecoveryContext(snapshot: RunRecoveryContext): Promise<boolean> {
+    if (!this.resumeEnabled) {
+      await this.clearActiveRecoveryState();
+      return false;
+    }
     try {
       const messages = sanitizeRecoveryMessages(snapshot.messages);
       const serialized = JSON.stringify(messages);
@@ -182,8 +202,7 @@ export class RunCheckpointSessionStore implements RunCheckpointStore {
         new TextEncoder().encode(serialized).byteLength >
         (this.options.maxRecoveryContextBytes ?? MAX_RECOVERY_CONTEXT_BYTES)
       ) {
-        this.resumeEnabled = false;
-        await this.storage.remove([ACTIVE_RUN_CHECKPOINT_KEY, RUN_RECOVERY_CONTEXT_KEY]);
+        await this.disableResume();
         return false;
       }
       await this.storage.set({
@@ -198,12 +217,7 @@ export class RunCheckpointSessionStore implements RunCheckpointStore {
       });
       return true;
     } catch {
-      this.resumeEnabled = false;
-      try {
-        await this.storage.remove([ACTIVE_RUN_CHECKPOINT_KEY, RUN_RECOVERY_CONTEXT_KEY]);
-      } catch {
-        // Storage is unavailable; live run continues with resume disabled.
-      }
+      await this.disableResume();
       return false;
     }
   }

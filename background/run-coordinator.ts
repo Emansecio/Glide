@@ -32,10 +32,16 @@ const cloneState = (state: RunState): RunState => ({
   ...(state.inFlightAction ? { inFlightAction: { ...state.inFlightAction } } : {}),
 });
 
+export type CheckpointPersistenceFailureHandler = (state: RunState) => void;
+
 export class RunCoordinator {
   private states = new Map<string, RunState>();
+  private persistenceFailureNotified = new Set<string>();
 
-  constructor(private checkpointStore?: RunCheckpointStore) {}
+  constructor(
+    private checkpointStore?: RunCheckpointStore,
+    private onPersistenceFailure?: CheckpointPersistenceFailureHandler,
+  ) {}
 
   private toCheckpoint(state: RunState): RunCheckpoint {
     return { version: 1, ...cloneState(state) };
@@ -45,7 +51,16 @@ export class RunCoordinator {
     const state = this.states.get(runId);
     if (!state || !this.checkpointStore) return false;
     await this.checkpointStore.write(this.toCheckpoint(state));
-    return this.checkpointStore.isResumeEnabled();
+    const available = this.checkpointStore.isResumeEnabled();
+    if (!available && !this.persistenceFailureNotified.has(runId)) {
+      this.persistenceFailureNotified.add(runId);
+      try {
+        this.onPersistenceFailure?.(cloneState(state));
+      } catch {
+        // Warning delivery must not turn checkpoint degradation into a run failure.
+      }
+    }
+    return available;
   }
 
   async clear(runId: string): Promise<void> {

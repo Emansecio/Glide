@@ -200,6 +200,7 @@ class BackgroundService {
   private checkpointStore: RunCheckpointSessionStore;
   private runCoordinator: RunCoordinator;
   private actionJournal: ActionJournal;
+  private checkpointWarningRunIds = new Set<string>();
   private actionSequenceByRun: Map<string, number>;
   private effectDispatchTailByRun: Map<string, Promise<void>>;
   /** Run that owns global orchestration/recovery state — successors supersede predecessors. */
@@ -506,6 +507,15 @@ class BackgroundService {
     }
   }
 
+  private emitCheckpointUnavailableWarning(runMeta: RunMeta): void {
+    if (this.checkpointWarningRunIds.has(runMeta.runId)) return;
+    this.checkpointWarningRunIds.add(runMeta.runId);
+    this.sendRuntime(runMeta, {
+      type: 'run_warning',
+      message: 'Checkpoint indisponível; execução atual continua sem retomada automática.',
+    });
+  }
+
   // Sentinel de "run em andamento" em storage.session. O estado do run vive só na
   // memória do service worker; se o Chrome matar o SW no meio de um run, nenhum
   // run_error/run_complete é emitido e a UI fica presa em "executando". Persistir
@@ -651,7 +661,9 @@ class BackgroundService {
     this.activeRunAbortController = null;
     this.runAbortRegistry = new RunAbortRegistry();
     this.checkpointStore = new RunCheckpointSessionStore();
-    this.runCoordinator = new RunCoordinator(this.checkpointStore);
+    this.runCoordinator = new RunCoordinator(this.checkpointStore, (state) =>
+      this.emitCheckpointUnavailableWarning(state),
+    );
     this.actionJournal = new ActionJournal([], (entry) => this.runCoordinator.recordAction(entry));
     this.actionSequenceByRun = new Map();
     this.effectDispatchTailByRun = new Map();
@@ -1492,10 +1504,7 @@ class BackgroundService {
       });
       const checkpointAvailable = await this.runCoordinator.persist(runMeta.runId);
       if (!recoveryContextAvailable || !checkpointAvailable) {
-        this.sendRuntime(runMeta, {
-          type: 'run_warning',
-          message: 'Checkpoint indisponível; execução atual continua sem retomada automática.',
-        });
+        this.emitCheckpointUnavailableWarning(runMeta);
       }
       const settings = await this.loadRuntimeSettings();
       // A follow-up in an ongoing browser task ("e aí?", a correction) rarely
@@ -1712,7 +1721,6 @@ class BackgroundService {
       let failedToolContinuationUsed = false;
       let currentHistory = normalizedHistory;
       let recoveryHistoryDirty = false;
-      let recoveryCheckpointWarningSent = false;
       const persistRecoveryHistory = async (history: Message[]): Promise<boolean> => {
         const state = this.runCoordinator.get(runMeta.runId);
         if (!state) return false;
@@ -1726,13 +1734,7 @@ class BackgroundService {
           messages: history,
         });
         if (!available) {
-          if (!recoveryCheckpointWarningSent) {
-            recoveryCheckpointWarningSent = true;
-            this.sendRuntime(runMeta, {
-              type: 'run_warning',
-              message: 'Checkpoint indisponível; execução atual continua sem retomada automática.',
-            });
-          }
+          this.emitCheckpointUnavailableWarning(runMeta);
           return false;
         }
         this.runCoordinator.updateContextRevision(runMeta.runId, contextRevision);
@@ -2667,6 +2669,7 @@ class BackgroundService {
         await this.runCoordinator.clear(runMeta.runId);
       }
       this.runAbortRegistry.dispose(runMeta.runId);
+      this.checkpointWarningRunIds.delete(runMeta.runId);
       this.actionSequenceByRun.delete(runMeta.runId);
       this.effectDispatchTailByRun.delete(runMeta.runId);
       if (this.orchestrationOwnerRunId === runMeta.runId) {

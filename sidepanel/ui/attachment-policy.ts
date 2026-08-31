@@ -27,13 +27,38 @@ export type AttachmentDecision = {
 };
 
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif']);
+const TEXT_EXTENSIONS = new Set([
+  'md',
+  'txt',
+  'csv',
+  'json',
+  'log',
+  'ts',
+  'tsx',
+  'js',
+  'jsx',
+  'css',
+  'html',
+  'xml',
+  'yml',
+  'yaml',
+]);
 const IMAGE_MIME = /^image\/(png|jpe?g|webp|gif)$/i;
 const MAX_TEXT_FILES = 6;
 const MAX_IMAGES = 4;
 
+function extensionFor(file: FileLike): string {
+  return file.name.split('.').pop()?.toLowerCase() || '';
+}
+
 function kindFor(file: FileLike): 'text' | 'image' {
-  const extension = file.name.split('.').pop()?.toLowerCase() || '';
+  const extension = extensionFor(file);
   return IMAGE_MIME.test(file.type || '') || IMAGE_EXTENSIONS.has(extension) ? 'image' : 'text';
+}
+
+function isSupportedText(file: FileLike): boolean {
+  const mime = file.type || '';
+  return TEXT_EXTENSIONS.has(extensionFor(file)) || mime.startsWith('text/') || mime === 'application/json' || !mime;
 }
 
 function existingBytes(item: PendingAttachmentMeta): number {
@@ -51,6 +76,9 @@ export function validateAttachmentBatch(existing: PendingAttachmentMeta[], files
   return files.map((file) => {
     const kind = kindFor(file);
     const size = Math.max(0, Number(file.size || 0));
+    if (kind === 'text' && !isSupportedText(file)) {
+      return { accepted: false, kind, reason: `${file.name}: tipo não suportado. Use texto ou imagem.` };
+    }
     if (kind === 'text' && size > ATTACHMENT_LIMITS.textBytes) {
       return { accepted: false, kind, reason: `${file.name}: arquivo de texto excede 2 MB.` };
     }

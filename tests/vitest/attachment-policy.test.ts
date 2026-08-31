@@ -27,6 +27,17 @@ describe('attachment policy', () => {
     expect(arrayBuffer).not.toHaveBeenCalled();
   });
 
+  it('does not reserve batch budget for unsupported files', () => {
+    const decisions = validateAttachmentBatch(
+      [{ kind: 'text', byteSize: 22_000_000 }],
+      [
+        { name: 'archive.zip', type: 'application/zip', size: 2_000_000 },
+        { name: 'later.txt', type: 'text/plain', size: 1_000_000 },
+      ],
+    );
+    expect(decisions.map((item) => item.accepted)).toEqual([false, true]);
+  });
+
   it('accepts files until total budget then rejects only exceeding additions', () => {
     const existing = [{ kind: 'text' as const, byteSize: 22_000_000 }];
     const decisions = validateAttachmentBatch(existing, [

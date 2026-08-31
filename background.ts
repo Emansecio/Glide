@@ -1052,21 +1052,19 @@ class BackgroundService {
             this.currentPlan = decision.plan;
             this._planPromptCache = null;
           }
-          const runMeta: RunMeta = this.activeRunMeta || {
-            runId: String(message.runId || `manual-plan-${decision.planId}`),
-            turnId: `manual-plan-turn-${Date.now()}`,
-            sessionId: String(message.sessionId || 'manual-plan-session'),
-          };
-          this.sendRuntime(runMeta, {
-            type: 'plan_update_ack',
-            planId: decision.planId,
-            version: decision.version,
-            accepted: decision.accepted,
-            plan: decision.plan,
-            error: decision.error,
-          });
-          if (decision.accepted) {
-            this.sendRuntime(runMeta, { type: 'plan_update', plan: decision.plan });
+          const runMeta = this.activeRunMeta;
+          if (runMeta) {
+            this.sendRuntime(runMeta, {
+              type: 'plan_update_ack',
+              planId: decision.planId,
+              version: decision.version,
+              accepted: decision.accepted,
+              plan: decision.plan,
+              error: decision.error,
+            });
+            if (decision.accepted) {
+              this.sendRuntime(runMeta, { type: 'plan_update', plan: decision.plan });
+            }
           }
           sendResponse?.(decision);
           return false;

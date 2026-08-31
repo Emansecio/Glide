@@ -243,6 +243,8 @@ const isOptionalArray = (value: unknown) => value == null || Array.isArray(value
 const isRunPlanLike = (value: unknown): value is RunPlan => {
   if (!isRecord(value)) return false;
   if (!Array.isArray(value.steps)) return false;
+  if (value.planId !== undefined && !isNonEmptyString(value.planId)) return false;
+  if (value.version !== undefined && (!Number.isInteger(value.version) || Number(value.version) < 1)) return false;
   if (!isFiniteNumber(value.createdAt) || !isFiniteNumber(value.updatedAt)) return false;
   return value.steps.every((step) => {
     if (!isRecord(step)) return false;

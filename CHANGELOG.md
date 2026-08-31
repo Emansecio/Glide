@@ -105,6 +105,11 @@ Medido no harness de preview, conversa de 160 turnos, A/B na mesma página.
 
 ### Added
 
+- Frontier browser-agent contracts: per-run action journal, safe MV3 checkpoints, explicit terminal reasons, versioned context commits, stable element handles, frame-addressed content bridges, effect postconditions, and adaptive tool packs.
+- Bounded local execution telemetry for queue/execute/verification latency, result size, recovery stage, checkpoint phase, and context revision. Event payloads exclude user content and secrets.
+- Deterministic invariant evaluations (`npm run test:evals`), opt-in public read-only live evaluations (`GLIDE_LIVE_TESTS=1 npm run test:evals:live`), and reviewed bundle/tool-schema budgets (`npm run check:budgets`).
+- Vitest coverage for asynchronous legacy cases; false-green custom-runner registrations removed.
+- Migration fixture from checkpoint `82772fc` covering settings, sessions, plans, provider slots, and tab-scoped panel ownership.
 - Target-based build workflow:
   - `build:ext` for extension artifacts
   - `build:test` for test bundles
@@ -128,6 +133,8 @@ Medido no harness de preview, conversa de 160 turnos, A/B na mesma página.
 
 ### Changed
 
+- Browser mutations are bridge-first and target one explicit frame. CDP remains opt-in; ambiguous effects are never automatically replayed.
+- Existing storage and runtime contracts migrate additively: old selectors/refs and schema-v2 readers remain supported, while new telemetry fields are optional.
 - Validator updated to check real `dist/` structure and current docs/scripts.
 - Test runner output normalized for readable pass/fail logs.
 - Manual `execute_tool` path now uses the same runtime policy pipeline as normal runs.

@@ -1,0 +1,31 @@
+{
+  "sourceCommit": "82772fc",
+  "local": {
+    "provider": "anthropic",
+    "apiKey": "legacy-anthropic-key",
+    "model": "claude-sonnet-4-5-20250929",
+    "customEndpoint": "",
+    "systemPrompt": "custom pre-program prompt",
+    "chatSessions": [
+      {
+        "id": "legacy-session-1",
+        "startedAt": 1700000000000,
+        "updatedAt": 1700000001000,
+        "title": "Legacy session",
+        "messageCount": 2,
+        "transcript": [
+          { "id": "m1", "role": "user", "content": "keep me" },
+          { "id": "m2", "role": "assistant", "content": "preserved" }
+        ]
+      }
+    ],
+    "currentPlan": {
+      "createdAt": 1700000000000,
+      "updatedAt": 1700000001000,
+      "steps": [{ "id": "step-1", "title": "Preserve plan", "status": "pending" }]
+    }
+  },
+  "session": {
+    "glideSidePanelTabId": 17
+  }
+}

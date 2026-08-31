@@ -44,6 +44,16 @@ flowchart LR
 
 O modelo decide a próxima ferramenta; o service worker valida permissões, executa a ação na aba correta e devolve o resultado ao painel. A sessão permanece visível e interrompível durante todo o fluxo.
 
+## Contratos de execução
+
+- Cada efeito aceito recebe `actionId` e é despachado uma vez; efeito ambíguo após reinício pausa para confirmação e nunca é repetido automaticamente.
+- Operações DOM usam bridge por padrão e um `frameId` explícito. CDP continua opcional e exige permissão de debugger.
+- Handles estáveis falham fechados quando snapshot, frame, fingerprint ou revisão ficam obsoletos. Seletores e refs antigos continuam aceitos.
+- Cada turno terminal produz um commit de contexto versionado e um motivo terminal explícito.
+- Telemetria local mantém no máximo 200 eventos sem argumentos, texto digitado, prompts, credenciais, screenshots, corpos de resultado ou query de URL.
+
+Armazenamento criado antes destes contratos (baseline `82772fc`) migra sem reset: configurações, sessões, planos, slots de provedor e propriedade tab-scoped do painel são preservados. Eventos sintéticos do bridge não são anunciados como input nativo confiável; isso exige CDP opt-in.
+
 ## Segurança por padrão
 
 - Permissões de ferramentas separadas por categoria: leitura, interação, navegação, abas e screenshots.

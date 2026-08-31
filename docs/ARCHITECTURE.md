@@ -72,31 +72,35 @@ para escuro).
      um `chrome.storage.local.get` no caminho crítico.
 4. When the model requests a tool, the background validates the tool name, arguments, tab
    target, and permission gate.
-5. `tools/browser-tools.ts` executes the browser action through Chrome APIs or
-   `chrome.scripting.executeScript`.
-6. The result is sent back to the model and mirrored to the sidepanel activity timeline.
+5. Canonical DOM operations run bridge-first in all-frame content scripts. Background routes each mutation to one explicit `frameId`; opt-in CDP is used only for native pointer semantics when debugger permission is enabled.
+6. Effects pass through the per-run action journal (`prepared` → `in_flight` → `committed`). An interrupted `in_flight` effect becomes ambiguous and is never replayed automatically.
+7. The result and verification evidence are sent back to the model and mirrored to the sidepanel activity timeline.
+8. One versioned context commit closes the terminal turn.
 
 ## Run Lifecycle Control
 
 - **Stop**: the composer's stop button (or `Esc`) sends `stop_run`; the background emits
   `run_stopped` and aborts the run's `AbortController`. A tool already in flight finishes,
   then the loop unwinds — stopping is bounded, not instantaneous.
-- **Liveness**: run state lives only in service-worker memory. `sidepanel/ui/panel-run-liveness.ts`
-  watches for silence and sends `run_status_query`, which both revives an evicted worker
-  (triggering `recoverOrphanedRun`) and reports whether the run still exists. The composer is
-  only unlocked when the worker confirms there is no active run.
+- **Liveness and recovery**: the panel watchdog sends `run_status_query` after silence. Safe run checkpoints and recovery context live in `chrome.storage.session`; an evicted worker resumes only between effects. Ambiguous in-flight effects emit `run_resume_required` and wait for user choice with zero automatic replay. Checkpoint write failure disables automatic resume for that run while current execution continues.
 - **Credentials**: stored per provider (`apiKey_anthropic`, `apiKey_codex`, …) plus the active
   `apiKey` slot; see `sidepanel/ui/settings-keys.ts`. The runtime always prefers the active
   provider's slot, so a key is never sent to the wrong provider.
 
 ## Browser Execution Model
 
-- The sidepanel is tab-scoped.
-- Browser actions resolve an executable tab before running.
+- Sidepanel remains tab-scoped; ownership persists as `glideSidePanelTabId` in `chrome.storage.session`.
+- Browser actions resolve one executable tab before running.
 - Session tabs are tracked and can be grouped.
-- DOM actions run first in the resolved document and can fall back to accessible frames.
+- DOM actions use canonical content bridges and explicit frame routing. Read-only probes may discover frames; mutations never broadcast.
+- Stable handles bind snapshot, tab, frame, selector, fingerprint, and DOM revision. Stale handles fail closed.
 - Shadow DOM access uses the custom `>>>` selector chain for open shadow roots.
-- Dynamic pages are handled with retries, waits, and structured discovery through `findElement` and `getContent`.
+- Expected postconditions can verify effects. Synthetic bridge events are not described as trusted native input; CDP is opt-in.
+- Dynamic pages use waits and structured discovery through `findElement` and `getContent`.
+
+## Storage Compatibility
+
+Storage from checkpoint `82772fc` migrates without reset. Existing settings retain custom prompts and provider selection; legacy global `apiKey` seeds active provider slot when no provider-specific slot exists. Legacy `chatSessions` is split into versioned per-session entries plus index without deleting source first. Existing plans remain readable, sessions begin with `contextRevision = 0`, plain selectors/refs remain accepted, and `glideSidePanelTabId` preserves active tab ownership. Migration failure retains original payload and surfaces bounded diagnostics.
 
 ## Reliability Principles
 
@@ -104,7 +108,7 @@ para escuro).
 - Prefer stable selectors and discovery tools over brittle generated selectors.
 - Return actionable failure metadata, including candidate elements when available.
 - Keep generated extension artifacts in `dist/` synchronized by running `npm run build` after UI or tool changes.
-- Treat `npm test` as the broad local gate: it builds, validates the extension package, runs unit tests, and runs the Playwright E2E suite. Provider/model checks remain opt-in via the `test:live:*` scripts.
+- Treat `npm run test:frontier` as the aggregate behavior gate. `npm run test:evals` grades deterministic local invariant cases; `npm run check:budgets` enforces bundle/schema budgets. Live-site checks require `GLIDE_LIVE_TESTS=1`, stay outside CI, and propagate failures.
 
 ## Rendering Principles (V2)
 
@@ -126,10 +130,14 @@ Medições em [DESIGN.md](../DESIGN.md#desempenho).
 ## Current Local Gate
 
 ```bash
-npm run check      # tsc --noEmit + biome check .
-npm run test:unit  # builda tudo e roda a suíte unitária
-npm run validate   # valida o pacote da extensão em dist/
-npm run build      # build de produção
+npm run check          # tsc --noEmit + biome check .
+npm run test:vitest    # suíte canônica unitária/integração
+npm run test:unit      # runner legado de compatibilidade
+npm run test:frontier  # gate agregado, incluindo Playwright determinístico
+npm run test:evals     # manifest de invariantes local
+npm run check:budgets  # bundles e schemas de ferramentas
+npm run validate       # valida o pacote da extensão em dist/
+npm run build          # build de produção + dist/build-metrics.json
 ```
 
 `npm run check` is `typecheck` + `biome check .`; run `npx biome check --write .` to apply

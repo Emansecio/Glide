@@ -64,6 +64,7 @@ jobs:
           name: extension-dist
           path: dist/
       - run: npm run build:test
+      - run: npm run test:vitest
       - run: node dist/tests/unit/run-unit-tests.js
       - run: node dist/tests/validate-extension.js
 

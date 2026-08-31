@@ -17,6 +17,7 @@
     "test:unit:run": "node dist/tests/unit/run-unit-tests.js",
     "test:vitest": "vitest run",
     "test:vitest:watch": "vitest",
+    "test:frontier": "npm run build:all && npm run test:vitest && node dist/tests/unit/run-unit-tests.js && node dist/tests/validate-extension.js && node dist/tests/e2e/run-e2e.js",
     "test:integration": "npm run test:e2e",
     "test:integration:manual": "echo 'Load tests/integration/test-page.html in browser and run tests'",
     "test:e2e": "npm run build:all && node dist/tests/e2e/run-e2e.js",

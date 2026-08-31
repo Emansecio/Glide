@@ -15,11 +15,11 @@ const validBudgets = {
 describe('performance budget checker', () => {
   it('pins reviewed production budgets', () => {
     expect(loadPerformanceBudgets(path.resolve('config/performance-budgets.json'))).toEqual({
-      backgroundBytes: 1_070_000,
-      panelBytes: 340_000,
+      backgroundBytes: 1_050_000,
+      panelBytes: 230_000,
       contentBytes: 120_000,
       coreToolSchemaChars: 12_000,
-      fullToolSchemaChars: 36_000,
+      fullToolSchemaChars: 33_000,
     });
   });
 

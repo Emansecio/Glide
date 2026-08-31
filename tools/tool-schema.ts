@@ -12,21 +12,19 @@ export const TAB_ID_PROP = { type: 'number', description: 'Optional tab id.' } a
 
 export const RETRIES_PROP = {
   type: 'number',
-  description: 'Optional retry attempts for dynamic pages (1-5).',
+  description: 'Retry attempts (1-5).',
 } as const;
 
 export const SELECTOR_PROP = (description: string) => ({ type: 'string', description }) as const;
 
 export const FRAME_URL_PROP = {
   type: 'string',
-  description:
-    'Optional iframe URL substring (case-insensitive) to run inside a child frame. Omit to use the top document.',
+  description: 'Child-frame URL substring; omit for top document.',
 } as const;
 
 export const FRAME_SELECTOR_PROP = {
   type: 'string',
-  description:
-    'Optional CSS selector of an <iframe> in the top document; its src is resolved and matched against frame URLs.',
+  description: 'Top-document iframe CSS selector.',
 } as const;
 
 export const FRAME_TARGET_PROPS = {
@@ -36,7 +34,7 @@ export const FRAME_TARGET_PROPS = {
 
 export const ACTION_POSTCONDITION_PROP = {
   type: 'object',
-  description: 'Optional expected state verified after action executes once.',
+  description: 'Expected state verified after one action.',
   properties: {
     kind: {
       type: 'string',
@@ -51,7 +49,7 @@ export const ACTION_POSTCONDITION_PROP = {
 
 export const ELEMENT_HANDLE_PROP = {
   type: 'object',
-  description: 'Optional snapshot-scoped stable element handle returned by readPage or findElement.',
+  description: 'Stable handle from readPage or findElement.',
   properties: {
     version: { type: 'number' },
     snapshotId: { type: 'string' },

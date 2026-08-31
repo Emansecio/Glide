@@ -222,7 +222,7 @@ export const buildToolDefinitions = (_maxSessionTabs: number): ToolDefinition[] 
   defineTool('describeSessionTabs', 'List tabs captured for this session.', {}),
   defineTool(
     'executeScript',
-    'Execute JavaScript in the active tab via chrome.userScripts (USER_SCRIPT world, not eval). Requires the user to enable scripting in Settings and “Allow User Scripts” on the extension. Prefer deterministic tools (readPage, click, httpRequest) first. Async/await and Promises are awaited (timeoutMs default 60s, max 120s). world:"MAIN" only for page JS globals (page CSP may block). Return compact JSON. Examples: "return document.title".',
+    'Run JavaScript via chrome.userScripts (USER_SCRIPT, no eval). Requires scripting setting and “Allow User Scripts”. Prefer deterministic tools first. Promises are awaited (60s default, 120s max). MAIN accesses page globals but page CSP may block. Return compact JSON.',
     {
       code: {
         type: 'string',
@@ -244,7 +244,7 @@ export const buildToolDefinitions = (_maxSessionTabs: number): ToolDefinition[] 
   ),
   defineTool(
     'httpRequest',
-    'HTTP request from the EXTENSION host (outside the page). Bypasses page CSP and does not use eval. Cookies for the target site are included automatically (host permissions). Use this for Instagram API pagination after discovering the endpoint with getNetworkRequests — e.g. GET https://www.instagram.com/api/v1/friendships/{user_id}/followers/?count=50&max_id=... with headers X-IG-App-ID and X-CSRFToken (get token via executeScript: return document.cookie). Returns status, headers, and truncated body. Prefer absolute https URLs.',
+    'HTTP request from extension host, outside page CSP. Includes target-site cookies. Use for API pagination after discovering the endpoint with getNetworkRequests. Returns status, headers, and truncated body. Prefer absolute HTTPS URLs; Cookie/Host/Origin cannot be set manually.',
     {
       url: {
         type: 'string',
@@ -276,7 +276,7 @@ export const buildToolDefinitions = (_maxSessionTabs: number): ToolDefinition[] 
   ),
   defineTool(
     'getNetworkRequests',
-    'Capture real page network traffic (Fetch/XHR/WebSocket open+messages) — you DO have network access; do not claim DevTools is required. FIRST call installs hooks (buffer may be empty). Then perform the UI action that triggers APIs. THEN call again with filterUrl (e.g. "graphql", "api", "friendships") to read buffered requests; a non-empty read automatically restores the page hooks. Use stop:true to force restoration when no entries matched. Each entry includes method, url, status, useful headers, truncated requestBody, apiHints (doc_id, query_id, friendly name when present), and optional responseBodyPreview. Also returns Performance Resource Timing. Buffer holds up to 200 intercepts after install only.',
+    'Capture Fetch/XHR/WebSocket traffic. First call installs hooks; trigger the UI, then call again with filterUrl. A non-empty read restores hooks; use stop:true when no entry matches. Entries include method, URL, status, headers, truncated bodies, and API hints. Buffer max 200. This extension has network access; DevTools is not required.',
     {
       maxEntries: { type: 'number', description: 'Maximum entries to return. Default: 50. Max: 200.' },
       filterUrl: {
@@ -343,7 +343,7 @@ export const buildToolDefinitions = (_maxSessionTabs: number): ToolDefinition[] 
   ),
   defineTool(
     'wait',
-    'Wait for a condition before proceeding. Supports time, selector/visible (element exists AND visible), hidden (element absent OR not visible), dialog (modal open), and networkIdle (no Fetch/XHR in-flight for idleMs). Examples: wait({ condition: "time", ms: 800 }); wait({ condition: "visible", selector: "#submit" }); wait({ condition: "hidden", selector: ".spinner" }); wait({ condition: "networkIdle", idleMs: 500 }); wait({ condition: "dialog" }).',
+    'Wait for time, selector/visible, hidden, dialog, or networkIdle. visible means exists and visible; hidden means absent or invisible; networkIdle means no Fetch/XHR in flight for idleMs. Prefer conditions over fixed sleeps.',
     {
       condition: {
         type: 'string',

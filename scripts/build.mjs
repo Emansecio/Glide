@@ -48,9 +48,17 @@ const runTypeCheck = () => {
 // sourcemaps so the packaged extension does not ship TS source.
 const isProduction = process.env.NODE_ENV === 'production' || process.argv.includes('--prod');
 
-// esbuild splitting:true needs format:'esm' (already used) but emits runtime
-// import() chunks. MV3 module service workers only allow dynamic import from
-// within the SW file itself — shared chunks break registration, so no splitting.
+// Keep service worker self-contained. Side panel may use static extension-local
+// ESM imports: MV3 permits these and they avoid runtime code generation/CSP changes.
+const panelMarkdownVendorPlugin = {
+  name: 'panel-markdown-vendor',
+  setup(build) {
+    build.onResolve({ filter: /^\.\.\/vendor\/markdown-it\.js$/ }, () => ({
+      path: './vendor/markdown-it.js',
+      external: true,
+    }));
+  },
+};
 
 const buildExtensionBundles = async () => {
   const commonExtConfig = {
@@ -65,11 +73,29 @@ const buildExtensionBundles = async () => {
     drop: isProduction ? ['console'] : undefined,
     define: isProduction ? { 'process.env.NODE_ENV': '"production"' } : undefined,
     metafile: true,
+    charset: 'utf8',
+    legalComments: 'none',
   };
 
-  const applicationBuild = await esbuild.build({
+  const backgroundBuild = await esbuild.build({
     ...commonExtConfig,
-    entryPoints: [path.join(rootDir, 'background.ts'), path.join(rootDir, 'sidepanel', 'panel.ts')],
+    entryPoints: [path.join(rootDir, 'background.ts')],
+    format: 'esm',
+  });
+
+  const panelBuild = await esbuild.build({
+    ...commonExtConfig,
+    entryPoints: [path.join(rootDir, 'sidepanel', 'panel.ts')],
+    format: 'esm',
+    plugins: [panelMarkdownVendorPlugin],
+  });
+
+  const markdownVendorBuild = await esbuild.build({
+    ...commonExtConfig,
+    entryPoints: [path.join(rootDir, 'sidepanel', 'vendor', 'markdown-it.ts')],
+    outfile: path.join(distDir, 'sidepanel', 'vendor', 'markdown-it.js'),
+    outdir: undefined,
+    outbase: undefined,
     format: 'esm',
   });
 
@@ -93,7 +119,12 @@ const buildExtensionBundles = async () => {
   copyDirFiltered(path.join(rootDir, 'fonts'), path.join(distDir, 'fonts'), (file) => file.endsWith('.woff2'));
   copyDirFiltered(path.join(rootDir, 'local'), path.join(distDir, 'local'));
 
-  const metafiles = [applicationBuild.metafile, contentBuild.metafile];
+  const metafiles = [
+    backgroundBuild.metafile,
+    panelBuild.metafile,
+    markdownVendorBuild.metafile,
+    contentBuild.metafile,
+  ];
   const outputBytes = (suffix) => {
     for (const metafile of metafiles) {
       const entry = Object.entries(metafile.outputs).find(([output]) => output.replaceAll('\\', '/').endsWith(suffix));

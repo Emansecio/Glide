@@ -1,4 +1,4 @@
-import MarkdownIt from 'markdown-it';
+import MarkdownIt from '../vendor/markdown-it.js';
 
 export type MarkdownRenderResult = { html: string; fallback: false } | { html: string; fallback: true; error: string };
 

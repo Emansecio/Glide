@@ -1,7 +1,7 @@
 {
-  "backgroundBytes": 1070000,
-  "panelBytes": 340000,
+  "backgroundBytes": 1050000,
+  "panelBytes": 230000,
   "contentBytes": 120000,
   "coreToolSchemaChars": 12000,
-  "fullToolSchemaChars": 36000
+  "fullToolSchemaChars": 33000
 }

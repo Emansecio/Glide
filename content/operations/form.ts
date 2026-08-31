@@ -4,7 +4,7 @@ import {
   selectOptionOnTarget,
   setCheckedOnTarget,
 } from '../dom-interact.js';
-import { type ContentOperation, resolveOperationTarget } from './action.js';
+import { type ContentOperation, evaluateDomPostcondition, resolveOperationTarget } from './action.js';
 
 const applyText = (element: HTMLElement, text: string) => {
   if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
@@ -27,27 +27,33 @@ const applyText = (element: HTMLElement, text: string) => {
   return { success: false, code: 'NOT_EDITABLE', error: 'Target is not editable.' };
 };
 
-const type: ContentOperation = (payload) => {
+const type: ContentOperation = async (payload) => {
   const target = resolveOperationTarget(payload, 'input, textarea, [contenteditable="true"], [role="textbox"]');
   if (target.failure) return target.failure;
   const element = target.element as HTMLElement;
   if (!isVisible(element)) return { success: false, code: 'ELEMENT_NOT_FOUND', error: 'Field is not visible.' };
   element.scrollIntoView({ block: 'center', inline: 'center' });
   element.focus();
-  return applyText(element, String(payload.text ?? ''));
+  const result = applyText(element, String(payload.text ?? ''));
+  if (!result.success) return result;
+  const verification = await evaluateDomPostcondition(payload);
+  return { ...result, ...(verification || {}) };
 };
 
-const selectOption: ContentOperation = (payload) => {
+const selectOption: ContentOperation = async (payload) => {
   const target = payload.handle ? resolveOperationTarget(payload) : null;
   if (target?.failure) return target.failure;
   const selector = target?.element
     ? String((payload.handle as { selector?: string }).selector || '')
     : String(payload.selector || '');
-  return selectOptionOnTarget(selector, {
+  const result = await selectOptionOnTarget(selector, {
     ...(payload.value !== undefined ? { value: String(payload.value) } : {}),
     ...(payload.label !== undefined ? { label: String(payload.label) } : {}),
     ...(payload.index !== undefined ? { index: Number(payload.index) } : {}),
   });
+  if (!result.success) return result;
+  const verification = await evaluateDomPostcondition(payload);
+  return { ...result, ...(verification || {}) };
 };
 
 const setChecked: ContentOperation = (payload) => {

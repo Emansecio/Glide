@@ -104,6 +104,24 @@ async function findElement(context: BrowserContext, worker: Worker, panel: Page,
   await page.close();
 }
 
+async function postcondition(context: BrowserContext, worker: Worker, panel: Page, baseUrl: string) {
+  const page = await context.newPage();
+  await page.goto(`${baseUrl}/action-lab.html`);
+  const tabId = await worker.evaluate(async (url) => (await chrome.tabs.query({ url }))[0]?.id, page.url());
+  assert(typeof tabId === 'number', 'Fixture tab not found.');
+  await waitForBridge(worker, tabId);
+  const result = (await sendBridge(panel, tabId, 'click', {
+    selector: '#action-checkbox',
+    waitForDialog: false,
+    postcondition: { kind: 'checked', selector: '#action-checkbox', value: true },
+  })) as { success?: boolean; verified?: boolean; error?: string };
+  assert(result.success, `postcondition click failed: ${result.error || JSON.stringify(result)}`);
+  assert(result.verified === true, `postcondition not verified: ${JSON.stringify(result)}`);
+  const state = await page.evaluate(() => (window as any).__actionLab);
+  assert(state.checkboxClick === 1, `postcondition replayed click: ${state.checkboxClick}`);
+  await page.close();
+}
+
 async function checkboxFrame(context: BrowserContext, worker: Worker, panel: Page, baseUrl: string) {
   const page = await context.newPage();
   await page.goto(`${baseUrl}/frame-lab.html`);
@@ -139,7 +157,12 @@ async function checkboxFrame(context: BrowserContext, worker: Worker, panel: Pag
   await page.close();
 }
 
-const cases = { 'click-once': clickOnce, 'find-element': findElement, 'checkbox-frame': checkboxFrame } as const;
+const cases = {
+  'click-once': clickOnce,
+  'find-element': findElement,
+  'checkbox-frame': checkboxFrame,
+  postcondition,
+} as const;
 if (!(requestedCase in cases)) {
   console.error(`Unknown or missing --case. Expected one of: ${Object.keys(cases).join(', ')}`);
   process.exit(2);

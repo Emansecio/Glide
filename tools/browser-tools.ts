@@ -1741,6 +1741,8 @@ export class BrowserTools {
     const bridged = await this.tryBridge(tabId, Number(args.handle?.frameId ?? injOpts?.frameId ?? 0), 'click', {
       selector,
       handle: args.handle,
+      postcondition: args.postcondition,
+      postconditionTimeoutMs: args.postconditionTimeoutMs,
       retries,
       waitForDialog,
     });
@@ -2723,6 +2725,8 @@ export class BrowserTools {
       const bridged = await this.tryBridge(tabId, Number(args.handle?.frameId ?? 0), 'type', {
         selector,
         handle: args.handle,
+        postcondition: args.postcondition,
+        postconditionTimeoutMs: args.postconditionTimeoutMs,
         text,
         retries,
       });
@@ -6942,7 +6946,12 @@ export class BrowserTools {
     const { resolution } = resolved;
     const tabId = resolution.tabId;
     const selector = String(args.selector || (args.handle as { selector?: string } | undefined)?.selector || '');
-    const payload: Record<string, unknown> = { selector, handle: args.handle };
+    const payload: Record<string, unknown> = {
+      selector,
+      handle: args.handle,
+      postcondition: args.postcondition,
+      postconditionTimeoutMs: args.postconditionTimeoutMs,
+    };
     if (args.value !== undefined) payload.value = String(args.value);
     if (args.label !== undefined) payload.label = String(args.label);
     if (args.index !== undefined) payload.index = args.index;

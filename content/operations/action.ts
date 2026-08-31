@@ -1,3 +1,7 @@
+import {
+  type ActionPostcondition,
+  verifyActionPostcondition,
+} from '../../tools/action-postcondition.js';
 import { resolveSnapshotHandle } from '../element-snapshot.js';
 import {
   CLICKABLE_SELECTOR,
@@ -42,6 +46,28 @@ export const resolveOperationTarget = (
   return { element };
 };
 
+export const evaluateDomPostcondition = async (payload: Record<string, unknown>) => {
+  const condition = payload.postcondition as ActionPostcondition | undefined;
+  if (!condition) return null;
+  return verifyActionPostcondition(
+    condition,
+    () => {
+      const selector = 'selector' in condition ? condition.selector : undefined;
+      const element = selector ? deepQuerySelector<HTMLElement>(selector) : null;
+      return {
+        url: location.href,
+        visible: Boolean(element && isVisible(element)),
+        checked:
+          element instanceof HTMLInputElement
+            ? element.checked
+            : element?.getAttribute('aria-checked') === 'true',
+        text: String((element || document.body)?.textContent || '').replace(/\s+/g, ' ').trim(),
+      };
+    },
+    { timeoutMs: typeof payload.postconditionTimeoutMs === 'number' ? payload.postconditionTimeoutMs : 3000 },
+  );
+};
+
 const click: ContentOperation = async (payload) => {
   const target = resolveOperationTarget(payload, CLICKABLE_SELECTOR);
   if (target.failure) return target.failure;
@@ -51,9 +77,15 @@ const click: ContentOperation = async (payload) => {
   }
   const before = listOpenDialogs().length;
   const result = performRichClick(element);
-  if (!result.success || payload.waitForDialog === false) return result;
-  const openedDialog = await waitForNewDialog(before, 320);
-  return { ...result, openedDialog: openedDialog || undefined, dialogOpen: Boolean(openedDialog) };
+  if (!result.success) return result;
+  const openedDialog = payload.waitForDialog === false ? null : await waitForNewDialog(before, 320);
+  const verification = await evaluateDomPostcondition(payload);
+  return {
+    ...result,
+    openedDialog: openedDialog || undefined,
+    dialogOpen: Boolean(openedDialog),
+    ...(verification || {}),
+  };
 };
 
 const hover: ContentOperation = (payload) => {

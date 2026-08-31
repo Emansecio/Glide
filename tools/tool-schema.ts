@@ -34,6 +34,21 @@ export const FRAME_TARGET_PROPS = {
   frameSelector: FRAME_SELECTOR_PROP,
 } as const;
 
+export const ACTION_POSTCONDITION_PROP = {
+  type: 'object',
+  description: 'Optional expected state verified after action executes once.',
+  properties: {
+    kind: {
+      type: 'string',
+      enum: ['url_changed', 'visible', 'hidden', 'checked', 'text_contains'],
+    },
+    from: { type: 'string' },
+    selector: { type: 'string' },
+    value: { type: 'boolean' },
+    text: { type: 'string' },
+  },
+} as const;
+
 export const ELEMENT_HANDLE_PROP = {
   type: 'object',
   description: 'Optional snapshot-scoped stable element handle returned by readPage or findElement.',

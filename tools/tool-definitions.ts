@@ -1,4 +1,5 @@
 import {
+  ACTION_POSTCONDITION_PROP,
   ELEMENT_HANDLE_PROP,
   FRAME_TARGET_PROPS,
   RETRIES_PROP,
@@ -34,6 +35,8 @@ export const buildToolDefinitions = (_maxSessionTabs: number): ToolDefinition[] 
         'CSS selector or short visible label. Prefer "seguindo", "a[href*=\'/following\']", "#submit" — not .x* utility classes.',
       ),
       handle: ELEMENT_HANDLE_PROP,
+      postcondition: ACTION_POSTCONDITION_PROP,
+      postconditionTimeoutMs: { type: 'number', description: 'Postcondition timeout in ms. Default 3000.' },
       tabId: TAB_ID_PROP,
       retries: RETRIES_PROP,
       waitForDialog: {
@@ -82,6 +85,8 @@ export const buildToolDefinitions = (_maxSessionTabs: number): ToolDefinition[] 
     {
       selector: SELECTOR_PROP('CSS selector for the field. Example: "#email", "[name=password]".'),
       handle: ELEMENT_HANDLE_PROP,
+      postcondition: ACTION_POSTCONDITION_PROP,
+      postconditionTimeoutMs: { type: 'number', description: 'Postcondition timeout in ms. Default 3000.' },
       text: { type: 'string', description: 'Text to enter.' },
       tabId: TAB_ID_PROP,
       retries: RETRIES_PROP,
@@ -449,6 +454,8 @@ export const buildToolDefinitions = (_maxSessionTabs: number): ToolDefinition[] 
     {
       selector: SELECTOR_PROP('CSS selector for the <select> or combobox trigger.'),
       handle: ELEMENT_HANDLE_PROP,
+      postcondition: ACTION_POSTCONDITION_PROP,
+      postconditionTimeoutMs: { type: 'number', description: 'Postcondition timeout in ms. Default 3000.' },
       value: { type: 'string', description: 'Option value attribute to select.' },
       label: { type: 'string', description: 'Visible option label/text to select.' },
       index: { type: 'number', description: 'Zero-based option index.' },

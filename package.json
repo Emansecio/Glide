@@ -33,6 +33,7 @@
     "preview": "node scripts/build.mjs --target=ext && node scripts/preview.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "check": "npm run typecheck && npm run lint",
+    "check:budgets": "node scripts/check-budgets.mjs",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",

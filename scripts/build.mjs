@@ -67,13 +67,13 @@ const buildExtensionBundles = async () => {
     metafile: true,
   };
 
-  await esbuild.build({
+  const applicationBuild = await esbuild.build({
     ...commonExtConfig,
     entryPoints: [path.join(rootDir, 'background.ts'), path.join(rootDir, 'sidepanel', 'panel.ts')],
     format: 'esm',
   });
 
-  await esbuild.build({
+  const contentBuild = await esbuild.build({
     ...commonExtConfig,
     entryPoints: [path.join(rootDir, 'content.ts')],
     format: 'iife',
@@ -92,6 +92,35 @@ const buildExtensionBundles = async () => {
   // Só os .woff2: o LICENSE.md fica no repositório, fora do pacote.
   copyDirFiltered(path.join(rootDir, 'fonts'), path.join(distDir, 'fonts'), (file) => file.endsWith('.woff2'));
   copyDirFiltered(path.join(rootDir, 'local'), path.join(distDir, 'local'));
+
+  const metafiles = [applicationBuild.metafile, contentBuild.metafile];
+  const outputBytes = (suffix) => {
+    for (const metafile of metafiles) {
+      const entry = Object.entries(metafile.outputs).find(([output]) => output.replaceAll('\\', '/').endsWith(suffix));
+      if (entry) return entry[1].bytes;
+    }
+    throw new Error(`Build output missing from metafile: ${suffix}`);
+  };
+  const inputBytes = new Map();
+  for (const metafile of metafiles) {
+    for (const output of Object.values(metafile.outputs)) {
+      for (const [input, contribution] of Object.entries(output.inputs || {})) {
+        inputBytes.set(input, (inputBytes.get(input) || 0) + contribution.bytesInOutput);
+      }
+    }
+  }
+  const buildMetrics = {
+    outputs: {
+      backgroundBytes: outputBytes('dist/background.js'),
+      panelBytes: outputBytes('dist/sidepanel/panel.js'),
+      contentBytes: outputBytes('dist/content.js'),
+    },
+    topInputs: [...inputBytes.entries()]
+      .map(([input, bytes]) => ({ input, bytes }))
+      .sort((left, right) => right.bytes - left.bytes)
+      .slice(0, 15),
+  };
+  fs.writeFileSync(path.join(distDir, 'build-metrics.json'), `${JSON.stringify(buildMetrics, null, 2)}\n`);
 };
 
 const buildTestBundles = async () => {

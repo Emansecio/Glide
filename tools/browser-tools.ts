@@ -6,8 +6,9 @@ import {
   needsScreenshotDownscale,
   rectIntersectsViewport,
 } from '../background/image-scale.js';
+import { BrowserBridgeClient } from './browser-bridge-client.js';
 import { cdpCommand } from './cdp-session.js';
-import { type GlideBridgeOp, isMutativeBridgeOp, sendGlideBridge, shouldFallbackFromBridge } from './content-bridge.js';
+import { type GlideBridgeOp, isMutativeBridgeOp, sendGlideBridge } from './content-bridge.js';
 import { isSameOriginUrl, isUrlAllowedByDomains, parseAllowedDomains } from './domain-policy.js';
 import {
   type ExecuteScriptInjectionResult,
@@ -137,6 +138,7 @@ export class BrowserTools {
     { at: number; value: Awaited<ReturnType<BrowserTools['resolveExecutableTab']>> }
   >();
   private injectedFnRegistry: Map<string, { installed: Set<string>; blocked: boolean }>;
+  private bridgeClient = new BrowserBridgeClient();
   currentToolContext: ToolExecutionContext | null = null;
 
   constructor() {
@@ -1071,36 +1073,20 @@ export class BrowserTools {
     return `${toolName}:${requestedTabId}:${strictTabId}:${this.currentSessionTabId ?? 'none'}`;
   }
 
-  /**
-   * Call the content-script bridge. Returns:
-   * - null when bridge is off / unavailable / timed out (caller may inject)
-   * - full response (success or structured failure) when the bridge handled the op
-   *   so we do NOT fall through to the inject path and re-pay DOM work.
-   *
-   * chrome.tabs.sendMessage has no frameId — callers skip the bridge when
-   * frameUrl/frameSelector is set and use direct executeScript({ frameIds }) instead.
-   */
-  private async tryBridge(tabId: number, op: GlideBridgeOp, payload: Record<string, unknown>) {
+  /** Route one operation to one explicit frame. Reads may retain injection fallback only
+   * when no bridge exists; mutations never replay after dispatch or timeout. */
+  private async tryBridge(
+    tabId: number,
+    frameId: number,
+    op: GlideBridgeOp,
+    payload: Record<string, unknown>,
+  ) {
     if (!this.useContentBridge) return null;
-    const response = await sendGlideBridge(tabId, op, payload);
-    if (!response) {
-      if (isMutativeBridgeOp(op)) {
-        return {
-          success: false,
-          code: 'BRIDGE_TIMEOUT',
-          error:
-            'Content bridge timed out or is unavailable. Mutative action was not retried via injection to avoid double execution.',
-          hint: 'Wait for the page to settle, reload the tab, or retry with an explicit selector/frame target.',
-        };
-      }
-      return null;
-    }
-    // Element misses can be top-frame-only; let the existing frame-probe injection path retry them.
-    if (shouldFallbackFromBridge(response)) return null;
-    if (typeof response.success === 'boolean' || response.bridge || response.code) {
-      return response;
-    }
-    return null;
+    const response = await this.bridgeClient.send(tabId, frameId, op, payload, {
+      signal: this.currentToolContext?.signal,
+    });
+    if (response.code === 'BRIDGE_UNAVAILABLE' && !isMutativeBridgeOp(op)) return null;
+    return response;
   }
 
   private async loadAllowedDomains(): Promise<string[]> {
@@ -1805,12 +1791,13 @@ export class BrowserTools {
       );
     }
 
-    // Content bridge (sendMessage) cannot target a child frame — skip when frameUrl/frameSelector set.
-    if (!this.hasFrameTarget(args)) {
-      const bridged = await this.tryBridge(tabId, 'click', { selector, retries, waitForDialog });
-      if (bridged) {
-        return this.attachResolutionMeta(bridged, resolution);
-      }
+    const bridged = await this.tryBridge(tabId, injOpts?.frameId ?? 0, 'click', {
+      selector,
+      retries,
+      waitForDialog,
+    });
+    if (bridged) {
+      return this.attachResolutionMeta(this.attachFrameMeta(bridged, frameMeta), resolution);
     }
 
     let result = await this.runInTab(
@@ -2292,7 +2279,7 @@ export class BrowserTools {
     const selector = String(args.selector || '');
     const retries = typeof args.retries === 'number' ? Math.max(1, Math.min(5, Math.round(args.retries))) : 3;
 
-    const bridged = await this.tryBridge(tabId, 'hover', { selector, retries });
+    const bridged = await this.tryBridge(tabId, 0, 'hover', { selector, retries });
     if (bridged) {
       return this.attachResolutionMeta(bridged, resolution);
     }
@@ -2491,7 +2478,7 @@ export class BrowserTools {
 
     // Bridge does not implement drag yet — fall through to injection.
     if (action !== 'drag') {
-      const bridged = await this.tryBridge(tabId, 'mouse', { selector, action, retries });
+      const bridged = await this.tryBridge(tabId, 0, 'mouse', { selector, action, retries });
       if (bridged) {
         return this.attachResolutionMeta(bridged, resolution);
       }
@@ -2785,7 +2772,7 @@ export class BrowserTools {
     const frameMeta = framePrep.frameMeta;
 
     if (!this.hasFrameTarget(args)) {
-      const bridged = await this.tryBridge(tabId, 'type', { selector, text, retries });
+      const bridged = await this.tryBridge(tabId, 0, 'type', { selector, text, retries });
       if (bridged) {
         return this.attachResolutionMeta(bridged, resolution);
       }
@@ -3327,7 +3314,7 @@ export class BrowserTools {
     const frameMeta = framePrep.frameMeta;
 
     if (!this.hasFrameTarget(args)) {
-      const bridged = await this.tryBridge(tabId, 'pressKey', {
+      const bridged = await this.tryBridge(tabId, 0, 'pressKey', {
         key,
         selector: selector || undefined,
         modifiers: modifiers.length ? modifiers : undefined,
@@ -3431,7 +3418,7 @@ export class BrowserTools {
     const selector = typeof args.selector === 'string' ? args.selector : '';
     const strategy = typeof args.strategy === 'string' ? args.strategy : 'auto';
 
-    const bridged = await this.tryBridge(tabId, 'scroll', {
+    const bridged = await this.tryBridge(tabId, 0, 'scroll', {
       direction,
       amount,
       selector: selector || undefined,
@@ -3608,18 +3595,16 @@ export class BrowserTools {
       const injOpts = framePrep.runOptions;
       const frameMeta = framePrep.frameMeta;
 
-      if (!this.hasFrameTarget(args)) {
-        const bridged = await this.tryBridge(tabId, 'findElement', {
-          query,
-          type: typeFilter,
-          maxResults,
-          fuzzy,
-          scope,
-          deep,
-        });
-        if (bridged) {
-          return this.attachResolutionMeta(bridged, resolution);
-        }
+      const bridged = await this.tryBridge(tabId, injOpts?.frameId ?? 0, 'findElement', {
+        query,
+        type: typeFilter,
+        maxResults,
+        fuzzy,
+        scope,
+        deep,
+      });
+      if (bridged) {
+        return this.attachResolutionMeta(this.attachFrameMeta(bridged, frameMeta), resolution);
       }
 
       const findScript = (
@@ -3998,7 +3983,7 @@ export class BrowserTools {
     const { resolution } = resolved;
     const tabId = resolution.tabId;
 
-    const bridged = await this.tryBridge(tabId, 'dismissModal', {});
+    const bridged = await this.tryBridge(tabId, 0, 'dismissModal', {});
     if (bridged) {
       return this.attachResolutionMeta(bridged, resolution);
     }
@@ -4113,7 +4098,7 @@ export class BrowserTools {
 
     if (condition === 'time') {
       const ms = typeof args.ms === 'number' ? Math.max(0, Math.min(15000, Math.round(args.ms))) : 1000;
-      const bridged = await this.tryBridge(tabId, 'wait', { condition: 'time', ms });
+      const bridged = await this.tryBridge(tabId, 0, 'wait', { condition: 'time', ms });
       if (bridged) return this.attachResolutionMeta(bridged, resolution);
       const completed = await sleepWithSignal(ms, this.currentToolContext?.signal);
       if (!completed) return this.attachResolutionMeta(abortedToolResult(), resolution);
@@ -4123,7 +4108,7 @@ export class BrowserTools {
     if (condition === 'dialog' || condition === 'modal') {
       const timeout =
         typeof args.timeout === 'number' ? Math.max(100, Math.min(15000, Math.round(args.timeout))) : 5000;
-      const bridged = await this.tryBridge(tabId, 'wait', { condition: 'dialog', timeoutMs: timeout });
+      const bridged = await this.tryBridge(tabId, 0, 'wait', { condition: 'dialog', timeoutMs: timeout });
       if (bridged) return this.attachResolutionMeta(bridged, resolution);
       const result = await this.runInTab(
         tabId,
@@ -4192,7 +4177,7 @@ export class BrowserTools {
     const frameMeta = framePrep.frameMeta;
 
     if (!this.hasFrameTarget(args)) {
-      const bridged = await this.tryBridge(tabId, 'wait', {
+      const bridged = await this.tryBridge(tabId, injOpts?.frameId ?? 0, 'wait', {
         condition,
         selector,
         timeoutMs: timeout,
@@ -4544,7 +4529,7 @@ export class BrowserTools {
       const canUseBridge =
         !selector && (type === 'text' || type === 'structure' || type === 'dialogs' || type === 'modals');
       if (canUseBridge) {
-        const bridged = await this.tryBridge(tabId, 'getContent', {
+        const bridged = await this.tryBridge(tabId, 0, 'getContent', {
           mode: type,
           maxChars,
           maxItems,
@@ -7007,7 +6992,7 @@ export class BrowserTools {
     const frameMeta = framePrep.frameMeta;
 
     if (!this.hasFrameTarget(args as Record<string, any>)) {
-      const bridged = await this.tryBridge(tabId, 'selectOption', payload);
+      const bridged = await this.tryBridge(tabId, 0, 'selectOption', payload);
       if (bridged) {
         return this.attachResolutionMeta(bridged, resolution);
       }
@@ -7355,7 +7340,7 @@ export class BrowserTools {
     const frameMeta = framePrep.frameMeta;
 
     if (!this.hasFrameTarget(args as Record<string, any>)) {
-      const bridged = await this.tryBridge(tabId, 'highlightElement', {
+      const bridged = await this.tryBridge(tabId, 0, 'highlightElement', {
         selector: selector || undefined,
         ref: ref || undefined,
         durationMs,

@@ -54,7 +54,6 @@ import { withScopedOwnership } from './ai/system-prompt-mode.js';
 import { detectTaskIntent, hasRecentToolActivity } from './ai/task-intent.js';
 import { extractRecoverableToolCalls, stripRecoverableToolCalls } from './ai/tool-call-recovery.js';
 import { buildToolTurnMessages } from './ai/tool-history.js';
-import { filterToolDefinitionsForPacks, selectToolPacks } from './ai/tool-packs.js';
 import { ensureFreshXaiToken, getXaiAuthHealth, readXaiOAuth } from './ai/xai-oauth.js';
 import { ActionJournal, MUTATIVE_BROWSER_EFFECT_TOOLS } from './background/action-journal.js';
 import { ModelActivityWatchdog } from './background/activity-timeout.js';
@@ -159,6 +158,7 @@ import {
 import { buildSessionTools } from './background/session-tools.js';
 import { bindRuntimeSettingsCacheInvalidation, loadCachedRuntimeSettings } from './background/settings-cache.js';
 import { restrictLocalStorageToTrustedContexts } from './background/storage-access.js';
+import { resolveBrowserToolPassState } from './background/tool-pack-state.js';
 import {
   isToolCategoryAllowed,
   getToolPermissionCategory as resolveToolPermissionCategory,
@@ -1667,40 +1667,30 @@ class BackgroundService {
       // that already produced side effects (duplicate navigate/click/type).
       let toolExecutionsTotal = 0;
       let modelActivityWatchdog: ModelActivityWatchdog | null = null;
-      const taskIntentState = taskIntent as unknown as Record<string, unknown>;
-      const activeToolPacks = selectToolPacks({
-        text:
-          taskIntentState.needsLongReport === true || taskIntentState.reportMode === true
-            ? 'analyze extract report'
-            : '',
-      });
-      const packedTools = filterToolDefinitionsForPacks(tools, activeToolPacks);
-      const toolSet = taskIntent.usesBrowserAutomation
-        ? buildRunToolSet(
-            packedTools,
-            async (toolName, args, options) => {
-              toolExecutionsTotal += 1;
-              modelActivityWatchdog?.touch();
-              try {
-                return await this.executeToolByName(
-                  toolName,
-                  args,
-                  {
-                    runMeta,
-                    settings: runtimeSettings,
-                    visionProfile,
-                    lockedTabId,
-                  },
-                  options.toolCallId,
-                );
-              } finally {
-                modelActivityWatchdog?.touch();
-              }
+      let activeToolFailure = false;
+      const executeRunTool = async (
+        toolName: string,
+        args: Record<string, unknown>,
+        options: { toolCallId: string },
+      ) => {
+        toolExecutionsTotal += 1;
+        modelActivityWatchdog?.touch();
+        try {
+          return await this.executeToolByName(
+            toolName,
+            args,
+            {
+              runMeta,
+              settings: runtimeSettings,
+              visionProfile,
+              lockedTabId,
             },
-            runtimeProfile.provider,
-            (toolCallId: string) => this.consumeModelScreenshotImage(toolCallId),
-          )
-        : undefined;
+            options.toolCallId,
+          );
+        } finally {
+          modelActivityWatchdog?.touch();
+        }
+      };
 
       const streamEnabled = runtimeSettings.streamResponses !== false;
       // Claude-for-Chrome behaviour: recover instead of bailing after the first failed action.
@@ -1790,6 +1780,19 @@ class BackgroundService {
       let streamSessionStarted = false;
 
       const runModelPass = async (messages: Message[]) => {
+        const toolPassState = taskIntent.usesBrowserAutomation
+          ? resolveBrowserToolPassState(tools, {
+              taskText: latestUserText,
+              activeFailure: activeToolFailure,
+              messages,
+            })
+          : null;
+        context.toolPackState = toolPassState?.prompt || '';
+        const toolSet = toolPassState
+          ? buildRunToolSet(toolPassState.definitions, executeRunTool, runtimeProfile.provider, (toolCallId: string) =>
+              this.consumeModelScreenshotImage(toolCallId),
+            )
+          : undefined;
         const visualItems = this.visionInbox.consume(runMeta.runId);
         const visualContext = visualItems.length > 0 ? buildVisualContextMessage(visualItems) : '';
         const modelMessages = runPassCache.getModelMessages(messages, {
@@ -2325,6 +2328,7 @@ class BackgroundService {
           const out = this.extractToolResultOutput(r);
           return out?.success === false;
         });
+        if (hasFailedTools) activeToolFailure = true;
         const failedToolDecision = taskIntent.usesBrowserAutomation
           ? advanceFailedToolRecovery({
               hasFailedTools,
@@ -5283,8 +5287,14 @@ Next required call: ${requiredNextCall}
 Schema tools are live. Prefer: readPage/findElement → click/type; getNetworkRequests → httpRequest for APIs; executeScript only when listed (requires Allow User Scripts); clipboard/setInputFiles/mouse drag when permitted.${debuggerOn ? ' cdp is enabled (opt-in debugger).' : ' cdp not in schema unless user enables debugger in Settings.'}
 </tool_surface>`
         : '';
+    const toolPackSection = context.toolPackState
+      ? `
+<tool_packs>
+${context.toolPackState}
+</tool_packs>`
+      : '';
     const state = `${compactStateSection}
-${toolSurface}
+${toolSurface}${toolPackSection}
 
 <browser_context>
 URL: ${context.currentUrl}

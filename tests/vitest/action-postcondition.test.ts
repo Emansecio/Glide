@@ -11,6 +11,23 @@ describe('action postconditions', () => {
     expect(result).toMatchObject({ verified: true, evidence: { checked: true } });
   });
 
+  it('does not verify an unchanged URL when from is omitted', async () => {
+    vi.useFakeTimers();
+    const pending = verifyActionPostcondition({ kind: 'url_changed' }, () => ({ url: 'https://example.test/start' }), {
+      baselineUrl: 'https://example.test/start',
+      timeoutMs: 20,
+      pollMs: 10,
+    });
+    await vi.advanceTimersByTimeAsync(25);
+    await expect(pending).resolves.toMatchObject({
+      verified: false,
+      code: 'POSTCONDITION_FAILED',
+      postcondition: { kind: 'url_changed', from: 'https://example.test/start' },
+      observed: { url: 'https://example.test/start' },
+    });
+    vi.useRealTimers();
+  });
+
   it('returns observed state on timeout without replaying action', async () => {
     vi.useFakeTimers();
     const observe = vi.fn().mockResolvedValue({ visible: false });

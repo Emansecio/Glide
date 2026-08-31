@@ -1,5 +1,10 @@
 import { deepQuerySelector, isVisible, selectOptionOnTarget, setCheckedOnTarget } from '../dom-interact.js';
-import { type ContentOperation, evaluateDomPostcondition, resolveOperationTarget } from './action.js';
+import {
+  type ContentOperation,
+  captureDomPostconditionBaseline,
+  evaluateDomPostcondition,
+  resolveOperationTarget,
+} from './action.js';
 
 const applyText = (element: HTMLElement, text: string) => {
   if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
@@ -23,6 +28,7 @@ const applyText = (element: HTMLElement, text: string) => {
 };
 
 const type: ContentOperation = async (payload) => {
+  const postconditionBaselineUrl = captureDomPostconditionBaseline(payload);
   const target = resolveOperationTarget(payload, 'input, textarea, [contenteditable="true"], [role="textbox"]');
   if (target.failure) return target.failure;
   const element = target.element as HTMLElement;
@@ -31,11 +37,12 @@ const type: ContentOperation = async (payload) => {
   element.focus();
   const result = applyText(element, String(payload.text ?? ''));
   if (!result.success) return result;
-  const verification = await evaluateDomPostcondition(payload);
+  const verification = await evaluateDomPostcondition(payload, postconditionBaselineUrl);
   return { ...result, ...(verification || {}) };
 };
 
 const selectOption: ContentOperation = async (payload) => {
+  const postconditionBaselineUrl = captureDomPostconditionBaseline(payload);
   const target = payload.handle ? resolveOperationTarget(payload) : null;
   if (target?.failure) return target.failure;
   const selector = target?.element
@@ -47,7 +54,7 @@ const selectOption: ContentOperation = async (payload) => {
     ...(payload.index !== undefined ? { index: Number(payload.index) } : {}),
   });
   if (!result.success) return result;
-  const verification = await evaluateDomPostcondition(payload);
+  const verification = await evaluateDomPostcondition(payload, postconditionBaselineUrl);
   return { ...result, ...(verification || {}) };
 };
 

@@ -1,6 +1,7 @@
 import {
   type HandleResolution,
   type StableElementHandle,
+  findRefreshedHandleCandidates,
   fingerprintElement,
   isStableElementHandle,
   resolveElementHandle,
@@ -81,7 +82,7 @@ export const resolveSnapshotHandle = (
       ok: false,
       code: 'STALE_ELEMENT_HANDLE',
       error: 'Handle snapshot expired.',
-      candidates: [],
+      candidates: findRefreshedHandleCandidates(value, document),
     };
   }
   return resolveElementHandle(value, document, getDomRevision(), target);

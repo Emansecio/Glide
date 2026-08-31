@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beginElementSnapshot, createElementHandle, resolveSnapshotHandle } from '../../content/element-snapshot.js';
 import {
   type StableElementHandle,
   fingerprintElement,
@@ -52,6 +53,38 @@ describe('stable element handles', () => {
     const handle = makeHandle(target, 'button:nth-of-type(2)');
 
     expect(verifyElementHandle(handle, target, 7)).toMatchObject({ ok: true, refreshed: true });
+  });
+
+  it('resolves a handle through Glide shadow selector syntax', () => {
+    document.body.innerHTML = '<div id="host"></div>';
+    const host = document.querySelector<HTMLElement>('#host');
+    const shadow = host?.attachShadow({ mode: 'open' });
+    if (!shadow) throw new Error('Shadow root fixture unavailable.');
+    shadow.innerHTML = '<button id="save">Target</button>';
+    const target = shadow.querySelector('#save');
+    if (!target) throw new Error('Shadow target fixture unavailable.');
+    const handle = makeHandle(target, '#host >>> #save');
+
+    const resolved = resolveElementHandle(handle, document, 4, { tabId: 9, frameId: 2 });
+
+    expect(resolved).toMatchObject({ ok: true });
+    if (resolved.ok) expect(resolved.element).toBe(target);
+  });
+
+  it('returns refreshed candidates when snapshot expires', () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    const target = document.querySelectorAll('button')[1];
+    target.id = 'save';
+    const snapshot = beginElementSnapshot();
+    const handle = createElementHandle(target, { tabId: 9, frameId: 2 }, '#save', 'e2', snapshot);
+    now.mockReturnValue(62_000);
+
+    const resolved = resolveSnapshotHandle(handle, { tabId: 9, frameId: 2 });
+
+    expect(resolved).toMatchObject({ ok: false, code: 'STALE_ELEMENT_HANDLE' });
+    if (resolved && !resolved.ok)
+      expect(resolved.candidates).toContainEqual(expect.objectContaining({ selector: '#save' }));
+    now.mockRestore();
   });
 
   it('rejects handle used in another frame', () => {

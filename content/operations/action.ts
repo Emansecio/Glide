@@ -43,7 +43,12 @@ export const resolveOperationTarget = (
   return { element };
 };
 
-export const evaluateDomPostcondition = async (payload: Record<string, unknown>) => {
+export const captureDomPostconditionBaseline = (payload: Record<string, unknown>): string | undefined => {
+  const condition = payload.postcondition as ActionPostcondition | undefined;
+  return condition?.kind === 'url_changed' && condition.from === undefined ? location.href : undefined;
+};
+
+export const evaluateDomPostcondition = async (payload: Record<string, unknown>, baselineUrl?: string) => {
   const condition = payload.postcondition as ActionPostcondition | undefined;
   if (!condition) return null;
   return verifyActionPostcondition(
@@ -61,11 +66,15 @@ export const evaluateDomPostcondition = async (payload: Record<string, unknown>)
           .trim(),
       };
     },
-    { timeoutMs: typeof payload.postconditionTimeoutMs === 'number' ? payload.postconditionTimeoutMs : 3000 },
+    {
+      timeoutMs: typeof payload.postconditionTimeoutMs === 'number' ? payload.postconditionTimeoutMs : 3000,
+      baselineUrl,
+    },
   );
 };
 
 const click: ContentOperation = async (payload) => {
+  const postconditionBaselineUrl = captureDomPostconditionBaseline(payload);
   const target = resolveOperationTarget(payload, CLICKABLE_SELECTOR);
   if (target.failure) return target.failure;
   const element = target.element as HTMLElement;
@@ -76,7 +85,7 @@ const click: ContentOperation = async (payload) => {
   const result = performRichClick(element);
   if (!result.success) return result;
   const openedDialog = payload.waitForDialog === false ? null : await waitForNewDialog(before, 320);
-  const verification = await evaluateDomPostcondition(payload);
+  const verification = await evaluateDomPostcondition(payload, postconditionBaselineUrl);
   return {
     ...result,
     openedDialog: openedDialog || undefined,

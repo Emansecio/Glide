@@ -3,7 +3,10 @@
  * Tuned for SPAs (Instagram-style): role=button divs, portals, dialogs, fixed overlays.
  */
 
+import { deepQuerySelector } from '../tools/deep-selector.js';
 import { buildUniqueSelector, matchesElementQuery } from './selector-engine.js';
+
+export { deepQuerySelector };
 
 export const DIALOG_SELECTOR =
   '[role="dialog"], [aria-modal="true"], div[role="dialog"], [data-testid*="modal" i], [class*="Dialog" i], [class*="modal" i]';
@@ -119,39 +122,6 @@ export const isVisible = (element: HTMLElement): boolean => {
     if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
   }
   return true;
-};
-
-export const deepQuerySelector = <T extends Element = HTMLElement>(
-  query: string,
-  root: Document | ShadowRoot | Element = document,
-): T | null => {
-  if (!query) return null;
-  if (!query.includes('>>>')) {
-    try {
-      return root.querySelector<T>(query);
-    } catch {
-      return null;
-    }
-  }
-  const parts = query
-    .split('>>>')
-    .map((part) => part.trim())
-    .filter(Boolean);
-  let current: Document | ShadowRoot | Element = root;
-  for (let index = 0; index < parts.length; index += 1) {
-    let next: Element | null = null;
-    try {
-      next = current.querySelector(parts[index]);
-    } catch {
-      return null;
-    }
-    if (!next) return null;
-    if (index === parts.length - 1) return next as T;
-    const shadow = (next as HTMLElement).shadowRoot;
-    if (!shadow) return null;
-    current = shadow;
-  }
-  return null;
 };
 
 /** Safety TTL when MutationObserver events may be missed. */

@@ -1,3 +1,5 @@
+import { deepQuerySelector } from './deep-selector.js';
+
 export type ElementFingerprint = {
   tag: string;
   role?: string;
@@ -85,18 +87,25 @@ export type HandleResolution =
       candidates: Array<{ selector: string; fingerprint: ElementFingerprint }>;
     };
 
-const refreshedCandidates = (handle: StableElementHandle, root: ParentNode) => {
+const escapeCss = (value: string): string =>
+  typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+    ? CSS.escape(value)
+    : value.replace(/[^a-zA-Z0-9_-]/g, (character) => `\\${character}`);
+
+export const findRefreshedHandleCandidates = (handle: StableElementHandle, root: ParentNode) => {
   const candidates: Array<{ selector: string; fingerprint: ElementFingerprint }> = [];
+  const exact = deepQuerySelector(handle.selector, root);
+  if (exact) candidates.push({ selector: handle.selector, fingerprint: fingerprintElement(exact) });
   const escapedName = handle.fingerprint.accessibleName;
   for (const element of Array.from(root.querySelectorAll(handle.fingerprint.tag)).slice(0, 80)) {
     const fingerprint = fingerprintElement(element);
     if (escapedName && fingerprint.accessibleName !== escapedName) continue;
     const selector = element.id
-      ? `#${CSS.escape(element.id)}`
+      ? `#${escapeCss(element.id)}`
       : handle.fingerprint.testId
-        ? `[data-testid="${CSS.escape(handle.fingerprint.testId)}"]`
+        ? `[data-testid="${escapeCss(handle.fingerprint.testId)}"]`
         : handle.selector;
-    candidates.push({ selector, fingerprint });
+    if (!candidates.some((candidate) => candidate.selector === selector)) candidates.push({ selector, fingerprint });
     if (candidates.length >= 8) break;
   }
   return candidates;
@@ -113,21 +122,16 @@ export function resolveElementHandle(
       ok: false,
       code: 'STALE_ELEMENT_HANDLE',
       error: 'Handle belongs to another tab or frame.',
-      candidates: refreshedCandidates(handle, root),
+      candidates: findRefreshedHandleCandidates(handle, root),
     };
   }
-  let element: Element | null = null;
-  try {
-    element = root.querySelector(handle.selector);
-  } catch {
-    element = null;
-  }
+  const element = deepQuerySelector(handle.selector, root);
   if (!element) {
     return {
       ok: false,
       code: 'STALE_ELEMENT_HANDLE',
       error: 'Handle selector no longer resolves.',
-      candidates: refreshedCandidates(handle, root),
+      candidates: findRefreshedHandleCandidates(handle, root),
     };
   }
   const verification = verifyElementHandle(handle, element, currentRevision);
@@ -136,7 +140,7 @@ export function resolveElementHandle(
       ok: false,
       code: verification.code,
       error: verification.reason,
-      candidates: refreshedCandidates(handle, root),
+      candidates: findRefreshedHandleCandidates(handle, root),
     };
   }
   return { ok: true, element, verification };

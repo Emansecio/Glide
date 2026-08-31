@@ -51,10 +51,12 @@ describe('BrowserBridgeClient', () => {
 
   it('shares one deadline across frame probes', async () => {
     vi.useFakeTimers();
-    const sendMessage = vi.fn().mockImplementation(
-      (_tabId: number, _request: unknown, options: { frameId: number }) =>
-        new Promise((resolve) => setTimeout(() => resolve({ success: true, matched: false }), options.frameId * 40)),
-    );
+    const sendMessage = vi
+      .fn()
+      .mockImplementation(
+        (_tabId: number, _request: unknown, options: { frameId: number }) =>
+          new Promise((resolve) => setTimeout(() => resolve({ success: true, matched: false }), options.frameId * 40)),
+      );
     installChrome(sendMessage);
 
     const pending = new BrowserBridgeClient().probeFrames(3, {

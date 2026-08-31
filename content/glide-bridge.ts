@@ -1,8 +1,4 @@
-import {
-  GLIDE_BRIDGE_MESSAGE_TYPE,
-  type GlideBridgeOp,
-  type GlideBridgeResponse,
-} from '../tools/content-bridge.js';
+import { GLIDE_BRIDGE_MESSAGE_TYPE, type GlideBridgeOp, type GlideBridgeResponse } from '../tools/content-bridge.js';
 import { actionOperations } from './operations/action.js';
 import { formOperations } from './operations/form.js';
 import { readOperations } from './operations/read.js';
@@ -19,12 +15,11 @@ const bridgeHandlers: Record<GlideBridgeOp, BridgeHandler> = {
   ...waitOperations,
 };
 
-const asResponse = (result: unknown): GlideBridgeResponse => ({
-  bridge: true,
-  ...(result && typeof result === 'object'
-    ? (result as Record<string, unknown>)
-    : { success: true, result }),
-}) as GlideBridgeResponse;
+const asResponse = (result: unknown): GlideBridgeResponse =>
+  ({
+    bridge: true,
+    ...(result && typeof result === 'object' ? (result as Record<string, unknown>) : { success: true, result }),
+  }) as GlideBridgeResponse;
 
 export const installGlideBridge = () => {
   const globalWindow = window as unknown as Record<string, boolean>;

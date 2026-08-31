@@ -14,11 +14,10 @@ describe('action postconditions', () => {
   it('returns observed state on timeout without replaying action', async () => {
     vi.useFakeTimers();
     const observe = vi.fn().mockResolvedValue({ visible: false });
-    const pending = verifyActionPostcondition(
-      { kind: 'visible', selector: '#done' },
-      observe,
-      { timeoutMs: 50, pollMs: 20 },
-    );
+    const pending = verifyActionPostcondition({ kind: 'visible', selector: '#done' }, observe, {
+      timeoutMs: 50,
+      pollMs: 20,
+    });
     await vi.advanceTimersByTimeAsync(60);
     await expect(pending).resolves.toMatchObject({
       verified: false,

@@ -1,7 +1,7 @@
 import {
+  type HandleResolution,
   type StableElementHandle,
   fingerprintElement,
-  type HandleResolution,
   isStableElementHandle,
   resolveElementHandle,
 } from '../tools/stable-element-handle.js';

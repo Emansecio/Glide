@@ -1,8 +1,4 @@
-import {
-  type ActionPostcondition,
-  verifyActionPostcondition,
-} from '../../tools/action-postcondition.js';
-import { resolveSnapshotHandle } from '../element-snapshot.js';
+import { type ActionPostcondition, verifyActionPostcondition } from '../../tools/action-postcondition.js';
 import {
   CLICKABLE_SELECTOR,
   INTERACTIVE_SELECTOR,
@@ -20,6 +16,7 @@ import {
   scrollPage,
   waitForNewDialog,
 } from '../dom-interact.js';
+import { resolveSnapshotHandle } from '../element-snapshot.js';
 
 export type ContentOperation = (payload: Record<string, unknown>) => Promise<unknown> | unknown;
 
@@ -58,10 +55,10 @@ export const evaluateDomPostcondition = async (payload: Record<string, unknown>)
         url: location.href,
         visible: Boolean(element && isVisible(element)),
         checked:
-          element instanceof HTMLInputElement
-            ? element.checked
-            : element?.getAttribute('aria-checked') === 'true',
-        text: String((element || document.body)?.textContent || '').replace(/\s+/g, ' ').trim(),
+          element instanceof HTMLInputElement ? element.checked : element?.getAttribute('aria-checked') === 'true',
+        text: String((element || document.body)?.textContent || '')
+          .replace(/\s+/g, ' ')
+          .trim(),
       };
     },
     { timeoutMs: typeof payload.postconditionTimeoutMs === 'number' ? payload.postconditionTimeoutMs : 3000 },
@@ -103,7 +100,9 @@ const mouse: ContentOperation = (payload) => {
 const pressKey: ContentOperation = (payload) => {
   const target = payload.handle ? resolveOperationTarget(payload) : null;
   if (target?.failure) return target.failure;
-  const selector = target?.element ? String((payload.handle as { selector?: string }).selector || '') : String(payload.selector || '');
+  const selector = target?.element
+    ? String((payload.handle as { selector?: string }).selector || '')
+    : String(payload.selector || '');
   return pressKeyOnTarget(
     String(payload.key || ''),
     selector || undefined,

@@ -91,9 +91,11 @@ const refreshedCandidates = (handle: StableElementHandle, root: ParentNode) => {
   for (const element of Array.from(root.querySelectorAll(handle.fingerprint.tag)).slice(0, 80)) {
     const fingerprint = fingerprintElement(element);
     if (escapedName && fingerprint.accessibleName !== escapedName) continue;
-    const selector = element.id ? `#${CSS.escape(element.id)}` : handle.fingerprint.testId
-      ? `[data-testid="${CSS.escape(handle.fingerprint.testId)}"]`
-      : handle.selector;
+    const selector = element.id
+      ? `#${CSS.escape(element.id)}`
+      : handle.fingerprint.testId
+        ? `[data-testid="${CSS.escape(handle.fingerprint.testId)}"]`
+        : handle.selector;
     candidates.push({ selector, fingerprint });
     if (candidates.length >= 8) break;
   }

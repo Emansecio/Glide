@@ -1,9 +1,4 @@
-import {
-  deepQuerySelector,
-  isVisible,
-  selectOptionOnTarget,
-  setCheckedOnTarget,
-} from '../dom-interact.js';
+import { deepQuerySelector, isVisible, selectOptionOnTarget, setCheckedOnTarget } from '../dom-interact.js';
 import { type ContentOperation, evaluateDomPostcondition, resolveOperationTarget } from './action.js';
 
 const applyText = (element: HTMLElement, text: string) => {

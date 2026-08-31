@@ -49,12 +49,12 @@ import {
   isValidFinalResponse,
 } from './ai/retry-engine.js';
 import { buildRunToolSet, getCachedLanguageModel } from './ai/runtime-cache.js';
-import { filterToolDefinitionsForPacks, selectToolPacks } from './ai/tool-packs.js';
 import { describeImageWithModel, migrateStoredProvider } from './ai/sdk-client.js';
 import { withScopedOwnership } from './ai/system-prompt-mode.js';
 import { detectTaskIntent, hasRecentToolActivity } from './ai/task-intent.js';
 import { extractRecoverableToolCalls, stripRecoverableToolCalls } from './ai/tool-call-recovery.js';
 import { buildToolTurnMessages } from './ai/tool-history.js';
+import { filterToolDefinitionsForPacks, selectToolPacks } from './ai/tool-packs.js';
 import { ensureFreshXaiToken, getXaiAuthHealth, readXaiOAuth } from './ai/xai-oauth.js';
 import { ActionJournal, MUTATIVE_BROWSER_EFFECT_TOOLS } from './background/action-journal.js';
 import { ModelActivityWatchdog } from './background/activity-timeout.js';

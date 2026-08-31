@@ -885,9 +885,7 @@ export class BrowserTools {
   }
 
   getToolDefinitions(packs?: ToolPackName[]): ToolDefinition[] {
-    return packs?.length
-      ? buildPackedToolDefinitions(packs, MAX_SESSION_TABS)
-      : buildToolDefinitions(MAX_SESSION_TABS);
+    return packs?.length ? buildPackedToolDefinitions(packs, MAX_SESSION_TABS) : buildToolDefinitions(MAX_SESSION_TABS);
   }
 
   getSessionTabSummaries(): SessionTabSummary[] {
@@ -1083,12 +1081,7 @@ export class BrowserTools {
 
   /** Route one operation to one explicit frame. Reads may retain injection fallback only
    * when no bridge exists; mutations never replay after dispatch or timeout. */
-  private async tryBridge(
-    tabId: number,
-    frameId: number,
-    op: GlideBridgeOp,
-    payload: Record<string, unknown>,
-  ) {
+  private async tryBridge(tabId: number, frameId: number, op: GlideBridgeOp, payload: Record<string, unknown>) {
     if (!this.useContentBridge) return null;
     const response = await this.bridgeClient.send(tabId, frameId, op, payload, {
       signal: this.currentToolContext?.signal,

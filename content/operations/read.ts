@@ -1,4 +1,3 @@
-import { beginElementSnapshot, createElementHandle, resolveSnapshotHandle } from '../element-snapshot.js';
 import {
   deepQuerySelector,
   extractPageStructure,
@@ -6,6 +5,7 @@ import {
   listOpenDialogs,
   readPageInventory,
 } from '../dom-interact.js';
+import { beginElementSnapshot, createElementHandle, resolveSnapshotHandle } from '../element-snapshot.js';
 import type { ContentOperation } from './action.js';
 
 const targetFrom = (payload: Record<string, unknown>) => ({
@@ -26,7 +26,9 @@ const withHandles = <T extends { selector: string; ref?: string }>(
       const element = deepQuerySelector(entry.selector);
       return {
         ...entry,
-        ...(element ? { handle: createElementHandle(element, target, entry.selector, refFor(entry, index), snapshot) } : {}),
+        ...(element
+          ? { handle: createElementHandle(element, target, entry.selector, refFor(entry, index), snapshot) }
+          : {}),
       };
     }),
   };

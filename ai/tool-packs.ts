@@ -21,7 +21,16 @@ const PACK_TOOLS: Record<ToolPackName, readonly string[]> = {
     'annotatedScreenshot',
     'elementScreenshot',
   ],
-  tabs: ['openTab', 'getTabs', 'closeTab', 'switchTab', 'focusTab', 'groupTabs', 'describeSessionTabs', 'navigateHistory'],
+  tabs: [
+    'openTab',
+    'getTabs',
+    'closeTab',
+    'switchTab',
+    'focusTab',
+    'groupTabs',
+    'describeSessionTabs',
+    'navigateHistory',
+  ],
   advanced: ['hover', 'mouse', 'executeScript', 'httpRequest', 'cdp', 'captureDownload'],
 };
 
@@ -46,10 +55,7 @@ export function selectToolPacks(input: ToolPackIntent): ToolPackName[] {
   return order.filter((pack) => selected.has(pack));
 }
 
-export function filterToolDefinitionsForPacks(
-  definitions: ToolDefinition[],
-  packs: ToolPackName[],
-): ToolDefinition[] {
+export function filterToolDefinitionsForPacks(definitions: ToolDefinition[], packs: ToolPackName[]): ToolDefinition[] {
   const allowed = new Set(packs.flatMap((pack) => [...PACK_TOOLS[pack]]));
   const browserToolNames = new Set(Object.values(PACK_TOOLS).flatMap((names) => [...names]));
   return definitions.filter((definition) => !browserToolNames.has(definition.name) || allowed.has(definition.name));

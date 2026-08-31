@@ -24,26 +24,32 @@ try {
   if (typeof tabId !== 'number') throw new Error('Fixture tab not found.');
   await page.waitForTimeout(300);
 
-  const found = await panel.evaluate(async ({ tabId }) => {
-    return chrome.tabs.sendMessage(
-      tabId,
-      { type: 'glide_bridge', op: 'findElement', payload: { query: 'Run action', fuzzy: false } },
-      { frameId: 0 },
-    );
-  }, { tabId });
+  const found = await panel.evaluate(
+    async ({ tabId }) => {
+      return chrome.tabs.sendMessage(
+        tabId,
+        { type: 'glide_bridge', op: 'findElement', payload: { query: 'Run action', fuzzy: false } },
+        { frameId: 0 },
+      );
+    },
+    { tabId },
+  );
   const handle = found?.candidates?.[0]?.handle;
   if (!handle) throw new Error(`findElement did not return handle: ${JSON.stringify(found)}`);
 
   await page.locator('#action-button').evaluate((button) => {
     button.parentElement?.insertAdjacentHTML('afterbegin', '<button id="inserted">Inserted</button>');
   });
-  const acted = await panel.evaluate(async ({ tabId, handle }) => {
-    return chrome.tabs.sendMessage(
-      tabId,
-      { type: 'glide_bridge', op: 'click', payload: { selector: handle.selector, handle, waitForDialog: false } },
-      { frameId: 0 },
-    );
-  }, { tabId, handle });
+  const acted = await panel.evaluate(
+    async ({ tabId, handle }) => {
+      return chrome.tabs.sendMessage(
+        tabId,
+        { type: 'glide_bridge', op: 'click', payload: { selector: handle.selector, handle, waitForDialog: false } },
+        { frameId: 0 },
+      );
+    },
+    { tabId, handle },
+  );
   if (acted?.success !== true && acted?.code !== 'STALE_ELEMENT_HANDLE') {
     throw new Error(`unexpected stable handle result: ${JSON.stringify(acted)}`);
   }

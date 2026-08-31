@@ -208,6 +208,10 @@ import {
   toolPermissionsCacheKey,
 } from '../../background/tool-permissions.js';
 import { MAX_QUEUED_VISION_JOBS, VisionQueue, resolveVisualDeliveryMode } from '../../background/vision-queue.js';
+import { actionOperations } from '../../content/operations/action.js';
+import { formOperations } from '../../content/operations/form.js';
+import { readOperations } from '../../content/operations/read.js';
+import { waitOperations } from '../../content/operations/wait.js';
 import {
   CHAT_SESSIONS_INDEX_KEY,
   CHAT_SESSION_KEY_PREFIX,
@@ -277,10 +281,6 @@ import {
   sanitizeHttpHeaders,
   stripSensitiveHeadersForRedirect,
 } from '../../tools/http-request.js';
-import { actionOperations } from '../../content/operations/action.js';
-import { formOperations } from '../../content/operations/form.js';
-import { readOperations } from '../../content/operations/read.js';
-import { waitOperations } from '../../content/operations/wait.js';
 import { shouldAutoStopNetworkCapture, shouldDrainInflightBeforeStop } from '../../tools/network-capture.js';
 import { assignReadPageRefs } from '../../tools/ref-resolver.js';
 import { waitForHistoryTransition } from '../../tools/tab-readiness.js';

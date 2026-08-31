@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Frontier action lab</title>
+  </head>
+  <body>
+    <main>
+      <button id="action-button" type="button">Run action</button>
+      <label for="action-input">Action input</label>
+      <input id="action-input" name="actionInput" />
+      <label><input id="action-checkbox" type="checkbox" /> Action checkbox</label>
+      <div id="action-hover" tabindex="0">Hover target</div>
+      <form id="action-form">
+        <button id="action-submit" type="submit">Submit action</button>
+      </form>
+    </main>
+    <script>
+      window.__actionLab = {
+        click: 0,
+        input: 0,
+        change: 0,
+        submit: 0,
+        hover: 0,
+        checkbox: false,
+      };
+
+      document.getElementById('action-button').addEventListener('click', () => {
+        window.__actionLab.click += 1;
+      });
+      document.getElementById('action-input').addEventListener('input', () => {
+        window.__actionLab.input += 1;
+      });
+      document.getElementById('action-input').addEventListener('change', () => {
+        window.__actionLab.change += 1;
+      });
+      document.getElementById('action-form').addEventListener('submit', (event) => {
+        event.preventDefault();
+        window.__actionLab.submit += 1;
+      });
+      document.getElementById('action-hover').addEventListener('mouseenter', () => {
+        window.__actionLab.hover += 1;
+      });
+      document.getElementById('action-checkbox').addEventListener('change', (event) => {
+        window.__actionLab.checkbox = event.currentTarget.checked;
+      });
+    </script>
+  </body>
+</html>

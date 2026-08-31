@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Frontier frame lab</title>
+  </head>
+  <body>
+    <label>
+      <input id="shared-checkbox" data-testid="shared-checkbox" type="checkbox" />
+      Parent checkbox
+    </label>
+    <iframe id="child-frame" title="Child fixture" src="child-frame.html"></iframe>
+    <script>
+      window.__frameLab = { change: 0, checkbox: false };
+      document.getElementById('shared-checkbox').addEventListener('change', (event) => {
+        window.__frameLab.change += 1;
+        window.__frameLab.checkbox = event.currentTarget.checked;
+      });
+    </script>
+  </body>
+</html>

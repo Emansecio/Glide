@@ -55,6 +55,7 @@ import { detectTaskIntent, hasRecentToolActivity } from './ai/task-intent.js';
 import { extractRecoverableToolCalls, stripRecoverableToolCalls } from './ai/tool-call-recovery.js';
 import { buildToolTurnMessages } from './ai/tool-history.js';
 import { ensureFreshXaiToken, getXaiAuthHealth, readXaiOAuth } from './ai/xai-oauth.js';
+import { ActionJournal, MUTATIVE_BROWSER_EFFECT_TOOLS } from './background/action-journal.js';
 import { ModelActivityWatchdog } from './background/activity-timeout.js';
 import {
   canApplyCompactionResult,
@@ -192,6 +193,9 @@ class BackgroundService {
   activeRunAbortController: AbortController | null;
   private runAbortRegistry: RunAbortRegistry;
   private runCoordinator: RunCoordinator;
+  private actionJournal: ActionJournal;
+  private actionSequenceByRun: Map<string, number>;
+  private effectDispatchTailByRun: Map<string, Promise<void>>;
   /** Run that owns global orchestration/recovery state — successors supersede predecessors. */
   private orchestrationOwnerRunId: string | null;
   activeRunLockOwnerRunId: string | null;
@@ -315,6 +319,29 @@ class BackgroundService {
     if (this.activeRunId === runId) {
       this.activeRunLastActivityAt = Date.now();
     }
+  }
+
+  private nextActionId(runId: string): string {
+    const sequence = (this.actionSequenceByRun.get(runId) || 0) + 1;
+    this.actionSequenceByRun.set(runId, sequence);
+    return `${runId}:action:${sequence}`;
+  }
+
+  private async acquireEffectDispatchSlot(runId: string): Promise<() => void> {
+    const prior = this.effectDispatchTailByRun.get(runId) || Promise.resolve();
+    let releaseSlot = () => {};
+    const slot = new Promise<void>((resolve) => {
+      releaseSlot = resolve;
+    });
+    const tail = prior.then(() => slot);
+    this.effectDispatchTailByRun.set(runId, tail);
+    await prior;
+    return () => {
+      releaseSlot();
+      if (this.effectDispatchTailByRun.get(runId) === tail) {
+        this.effectDispatchTailByRun.delete(runId);
+      }
+    };
   }
 
   // Watchdog: only releases the run lock after ACTIVE_RUN_TIMEOUT_MS with zero
@@ -559,6 +586,9 @@ class BackgroundService {
     this.activeRunAbortController = null;
     this.runAbortRegistry = new RunAbortRegistry();
     this.runCoordinator = new RunCoordinator(new RunCheckpointSessionStore());
+    this.actionJournal = new ActionJournal([], (entry) => this.runCoordinator.recordAction(entry));
+    this.actionSequenceByRun = new Map();
+    this.effectDispatchTailByRun = new Map();
     this.orchestrationOwnerRunId = null;
     this.activeRunLockOwnerRunId = null;
     this.activeRunTimeoutId = null;
@@ -2376,7 +2406,9 @@ class BackgroundService {
       if (this.sessionTombstones.isTombstoned(contextSourceSessionId) || this.isRunAborted(runMeta.runId)) {
         throw new Error('Run aborted before context commit.');
       }
-      this.runCoordinator.transition(runMeta.runId, 'committing');
+      if (this.runCoordinator.get(runMeta.runId)?.phase !== 'committing') {
+        this.runCoordinator.transition(runMeta.runId, 'committing');
+      }
       await this.runCoordinator.persist(runMeta.runId);
       const contextCommit = contextTransactionStore.commit({
         sessionId,
@@ -2464,6 +2496,8 @@ class BackgroundService {
         await this.runCoordinator.clear(runMeta.runId);
       }
       this.runAbortRegistry.dispose(runMeta.runId);
+      this.actionSequenceByRun.delete(runMeta.runId);
+      this.effectDispatchTailByRun.delete(runMeta.runId);
       if (this.orchestrationOwnerRunId === runMeta.runId) {
         this.orchestrationOwnerRunId = null;
       }
@@ -2842,31 +2876,62 @@ class BackgroundService {
         }
       }
 
-      try {
-        if (this.isRunAborted(options.runMeta.runId)) {
-          if (toolName === 'closeTab' && typeof safeArgs.tabId === 'number') {
-            this.agentInitiatedTabCloses.delete(safeArgs.tabId);
-          }
-          const cancelled = {
-            success: false,
-            code: 'RUN_ABORTED',
-            error: 'Run was stopped before the tool executed.',
-          };
-          sendResult(cancelled, toolArgs);
-          return cancelled;
+      if (this.isRunAborted(options.runMeta.runId)) {
+        if (toolName === 'closeTab' && typeof safeArgs.tabId === 'number') {
+          this.agentInitiatedTabCloses.delete(safeArgs.tabId);
         }
-        result = await this.browserTools.executeTool(toolName, toolArgs, toolContext);
+        const cancelled = {
+          success: false,
+          code: 'RUN_ABORTED',
+          error: 'Run was stopped before the tool executed.',
+        };
+        sendResult(cancelled, toolArgs);
+        return cancelled;
+      }
+
+      const isMutativeEffect = MUTATIVE_BROWSER_EFFECT_TOOLS.has(toolName);
+      const releaseEffectSlot = isMutativeEffect
+        ? await this.acquireEffectDispatchSlot(options.runMeta.runId)
+        : () => {};
+      let journalActionId: string | null = null;
+      try {
+        if (isMutativeEffect) {
+          journalActionId = this.nextActionId(options.runMeta.runId);
+          await this.actionJournal.prepare({
+            actionId: journalActionId,
+            runId: options.runMeta.runId,
+            toolCallId: callId,
+            tool: toolName,
+            args: toolArgs,
+            target: {
+              ...(typeof toolArgs.tabId === 'number' ? { tabId: toolArgs.tabId } : {}),
+              ...(typeof toolArgs.frameId === 'number' ? { frameId: toolArgs.frameId } : {}),
+              ...(typeof toolArgs.selector === 'string' ? { selector: toolArgs.selector } : {}),
+            },
+          });
+          const inFlight = await this.actionJournal.markInFlight(journalActionId);
+          if (!inFlight.shouldDispatch) {
+            result = {
+              success: false,
+              code: 'AMBIGUOUS_ACTION',
+              error: 'Action was already dispatched or became ambiguous; automatic replay blocked.',
+              actionId: journalActionId,
+            };
+          }
+        }
+
+        if (!result) {
+          result = await this.browserTools.executeTool(toolName, toolArgs, toolContext);
+        }
         if (
           this.quarantinedRunIds.has(options.runMeta.runId) ||
           this.orchestrationOwnerRunId !== options.runMeta.runId
         ) {
-          const discarded = {
+          result = {
             success: false,
             code: 'RUN_SUPERSEDED',
             error: 'Tool result discarded because the run was stopped or superseded.',
           };
-          sendResult(discarded, toolArgs);
-          return discarded;
         }
 
         // closeTab falhou: remove a marca "agente" para o usuário poder fechar a
@@ -2915,6 +2980,13 @@ class BackgroundService {
       }
 
       result = this.normalizeToolResultContract(toolName, result);
+      try {
+        if (journalActionId) {
+          await this.actionJournal.commit(journalActionId, result);
+        }
+      } finally {
+        releaseEffectSlot();
+      }
 
       const isBrowserAction = BROWSER_ACTION_TOOLS.includes(toolName as (typeof BROWSER_ACTION_TOOLS)[number]);
       const recoveryTabId =

@@ -15,7 +15,7 @@ const ALLOWED_TRANSITIONS = Object.freeze({
   model: ['model', 'action_prepared', 'committing', 'awaiting_user', 'completed', 'failed', 'stopped'],
   action_prepared: ['action_in_flight', 'failed', 'stopped'],
   action_in_flight: ['committing', 'ambiguous', 'failed', 'stopped'],
-  committing: ['model', 'awaiting_user', 'completed', 'failed', 'stopped'],
+  committing: ['model', 'action_prepared', 'awaiting_user', 'completed', 'failed', 'stopped'],
   awaiting_user: [],
   completed: [],
   failed: [],
@@ -57,6 +57,32 @@ export class RunCoordinator {
 
   async clear(runId: string): Promise<void> {
     await this.checkpointStore?.clear(runId);
+  }
+
+  async recordAction(entry: RunState['inFlightAction']): Promise<boolean> {
+    if (!entry) return false;
+    const state = this.states.get(entry.runId);
+    if (!state) return false;
+    if (entry.state === 'prepared') {
+      if (state.phase !== 'action_prepared') this.transition(entry.runId, 'action_prepared');
+      this.states.set(entry.runId, { ...this.states.get(entry.runId)!, inFlightAction: { ...entry } });
+    } else if (entry.state === 'in_flight') {
+      if (this.states.get(entry.runId)?.phase !== 'action_in_flight') {
+        this.transition(entry.runId, 'action_in_flight');
+      }
+      this.states.set(entry.runId, { ...this.states.get(entry.runId)!, inFlightAction: { ...entry } });
+    } else if (entry.state === 'committed') {
+      if (this.states.get(entry.runId)?.phase !== 'committing') this.transition(entry.runId, 'committing');
+      this.states.set(entry.runId, {
+        ...this.states.get(entry.runId)!,
+        lastCommittedActionId: entry.actionId,
+        inFlightAction: undefined,
+      });
+    } else if (entry.state === 'ambiguous') {
+      this.states.set(entry.runId, { ...state, inFlightAction: { ...entry } });
+      this.terminal(entry.runId, 'ambiguous_action');
+    }
+    return this.persist(entry.runId);
   }
 
   start(meta: RunMeta, input: RunResumeInput): RunState {

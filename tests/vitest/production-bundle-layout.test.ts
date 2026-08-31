@@ -9,7 +9,8 @@ const panelPath = path.join(rootDir, 'dist', 'sidepanel', 'panel.js');
 const vendorPath = path.join(rootDir, 'dist', 'sidepanel', 'vendor', 'markdown-it.js');
 
 beforeAll(() => {
-  execFileSync(process.execPath, ['scripts/build.mjs', '--target=ext', '--prod'], {
+  // Keep dist test entrypoints: test:frontier runs them after Vitest.
+  execFileSync(process.execPath, ['scripts/build.mjs', '--target=all', '--prod'], {
     cwd: rootDir,
     stdio: 'pipe',
   });

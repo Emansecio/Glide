@@ -244,7 +244,7 @@ export const buildToolDefinitions = (_maxSessionTabs: number): ToolDefinition[] 
   ),
   defineTool(
     'httpRequest',
-    'HTTP request from extension host, outside page CSP. Includes target-site cookies. Use for API pagination after discovering the endpoint with getNetworkRequests. Returns status, headers, and truncated body. Prefer absolute HTTPS URLs; Cookie/Host/Origin cannot be set manually.',
+    'HTTP request from EXTENSION host, outside page CSP. Includes target-site cookies. Use for API pagination after discovering the endpoint with getNetworkRequests. Returns status, headers, and truncated body. Prefer absolute HTTPS URLs; Cookie/Host/Origin cannot be set manually.',
     {
       url: {
         type: 'string',
@@ -276,7 +276,7 @@ export const buildToolDefinitions = (_maxSessionTabs: number): ToolDefinition[] 
   ),
   defineTool(
     'getNetworkRequests',
-    'Capture Fetch/XHR/WebSocket traffic. First call installs hooks; trigger the UI, then call again with filterUrl. A non-empty read restores hooks; use stop:true when no entry matches. Entries include method, URL, status, headers, truncated bodies, and API hints. Buffer max 200. This extension has network access; DevTools is not required.',
+    'Capture Fetch/XHR/WebSocket traffic. First call installs hooks; trigger the UI, then call again with filterUrl. A non-empty read restores hooks; use stop:true when no entry matches. Entries include method, URL, status, headers, truncated requestBody/responseBody, and API hints. Buffer max 200. This extension has network access; DevTools is not required.',
     {
       maxEntries: { type: 'number', description: 'Maximum entries to return. Default: 50. Max: 200.' },
       filterUrl: {

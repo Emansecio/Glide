@@ -113,11 +113,13 @@ describe('RunCheckpointSessionStore', () => {
         runId: 'run-1',
         sessionId: 'session-1',
         contextRevision: 3,
+        lastCommittedActionId: 'run-1:action:1',
         messages,
       }),
     ).resolves.toBe(true);
 
     const restored = await store.readRecoveryContext('run-1');
+    expect(restored?.lastCommittedActionId).toBe('run-1:action:1');
     expect(restored?.messages.map((message) => message.role)).toEqual(['user', 'assistant', 'tool', 'assistant']);
     const pairedCall = restored?.messages[1]?.toolCalls?.[0];
     const toolParts = restored?.messages[2]?.content as Array<{ toolCallId?: string }>;
@@ -128,7 +130,14 @@ describe('RunCheckpointSessionStore', () => {
     expect(serialized).not.toContain('tool-argument-secret');
     expect(serialized).not.toContain('data:image');
     expect(
-      recoverCheckpoint(checkpoint(), { committedContextRevision: restored?.contextRevision ?? -1, now: 30 }),
+      recoverCheckpoint(
+        { ...checkpoint(), lastCommittedActionId: 'run-1:action:1' },
+        {
+          committedContextRevision: restored?.contextRevision ?? -1,
+          committedActionId: restored?.lastCommittedActionId,
+          now: 30,
+        },
+      ),
     ).toBe('resume');
   });
 
@@ -143,6 +152,8 @@ describe('RunCheckpointSessionStore', () => {
       messages: [{ role: 'user', content: 'x'.repeat(500) }],
     });
     expect(available).toBe(false);
+    expect(store.isResumeEnabled()).toBe(false);
+    expect(storage.data[ACTIVE_RUN_CHECKPOINT_KEY]).toBeUndefined();
     expect(storage.data[RUN_RECOVERY_CONTEXT_KEY]).toBeUndefined();
   });
 });

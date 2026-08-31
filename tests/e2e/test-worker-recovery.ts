@@ -42,7 +42,7 @@ async function restartWorker(context: BrowserContext, panel: Page, workerTarget:
   throw new Error('Service worker did not restart after run_status_query.');
 }
 
-async function seedCheckpoint(panel: Page, phase: 'model' | 'action_in_flight', runId: string) {
+async function seedCheckpoint(panel: Page, phase: 'model' | 'committing' | 'action_in_flight', runId: string) {
   await panel.evaluate(
     async ({ checkpointPhase, id }) => {
       const now = Date.now();
@@ -67,6 +67,7 @@ async function seedCheckpoint(panel: Page, phase: 'model' | 'action_in_flight', 
           contextRevision: 0,
           selectedTabIds: [],
           request: { message: 'fixture recovery request' },
+          ...(checkpointPhase === 'committing' ? { lastCommittedActionId: `${id}:action:1` } : {}),
           ...(inFlightAction ? { inFlightAction } : {}),
           startedAt: now - 100,
           updatedAt: now,
@@ -130,6 +131,27 @@ try {
     { timeout: 20_000 },
   );
   console.log('PASS safe checkpoint emitted run_resume_started');
+
+  await panel.evaluate(() => {
+    (window as unknown as { __workerRecoveryMessages: unknown[] }).__workerRecoveryMessages = [];
+  });
+  await seedCheckpoint(panel, 'committing', 'committed-stale-run');
+  workerTarget = await restartWorker(context, panel, workerTarget);
+  await panel.waitForFunction(
+    () =>
+      (window as unknown as { __workerRecoveryMessages: Array<{ type?: string }> }).__workerRecoveryMessages.some(
+        (message) => message.type === 'run_resume_required',
+      ),
+    { timeout: 20_000 },
+  );
+  const committedMessages = await panel.evaluate(
+    () => (window as unknown as { __workerRecoveryMessages: Array<{ type?: string }> }).__workerRecoveryMessages,
+  );
+  assert(
+    !committedMessages.some((message) => message.type === 'tool_execution_start'),
+    'Committed action with stale recovery history replayed browser tool.',
+  );
+  console.log('PASS committed action with stale recovery history required confirmation with zero replay');
 
   await panel.evaluate(() => {
     (window as unknown as { __workerRecoveryMessages: unknown[] }).__workerRecoveryMessages = [];

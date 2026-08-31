@@ -37,6 +37,13 @@ describe('RunCoordinator', () => {
     expect(coordinator.transition(completed.runId, 'completed').phase).toBe('completed');
   });
 
+  it('advances recovery context revisions monotonically', () => {
+    const coordinator = new RunCoordinator();
+    coordinator.start(meta, input);
+    expect(coordinator.updateContextRevision(meta.runId, 3).contextRevision).toBe(3);
+    expect(() => coordinator.updateContextRevision(meta.runId, 3)).toThrow(/must advance/);
+  });
+
   it('records terminal reason and returns defensive state copies', () => {
     const coordinator = new RunCoordinator();
     coordinator.start(meta, input);

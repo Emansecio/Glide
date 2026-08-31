@@ -78,6 +78,17 @@ export class RunCoordinator {
     return this.persist(entry.runId);
   }
 
+  updateContextRevision(runId: string, contextRevision: number): RunState {
+    const state = this.states.get(runId);
+    if (!state) throw new Error(`Unknown run ${runId}.`);
+    if (!Number.isInteger(contextRevision) || contextRevision <= state.contextRevision) {
+      throw new Error(`Context revision must advance beyond ${state.contextRevision}.`);
+    }
+    const updated: RunState = { ...state, contextRevision, updatedAt: Date.now() };
+    this.states.set(runId, updated);
+    return cloneState(updated);
+  }
+
   start(meta: RunMeta, input: RunResumeInput): RunState {
     if (this.states.has(meta.runId)) throw new Error(`Run ${meta.runId} already exists.`);
     const now = Date.now();

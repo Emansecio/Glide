@@ -15,6 +15,7 @@ export type RunRecoveryContext = {
   runId: string;
   sessionId: string;
   contextRevision: number;
+  lastCommittedActionId?: string;
   messages: Message[];
 };
 
@@ -181,6 +182,8 @@ export class RunCheckpointSessionStore implements RunCheckpointStore {
         new TextEncoder().encode(serialized).byteLength >
         (this.options.maxRecoveryContextBytes ?? MAX_RECOVERY_CONTEXT_BYTES)
       ) {
+        this.resumeEnabled = false;
+        await this.storage.remove([ACTIVE_RUN_CHECKPOINT_KEY, RUN_RECOVERY_CONTEXT_KEY]);
         return false;
       }
       await this.storage.set({
@@ -189,12 +192,18 @@ export class RunCheckpointSessionStore implements RunCheckpointStore {
           runId: snapshot.runId,
           sessionId: snapshot.sessionId,
           contextRevision: snapshot.contextRevision,
+          ...(snapshot.lastCommittedActionId ? { lastCommittedActionId: snapshot.lastCommittedActionId } : {}),
           messages,
         },
       });
       return true;
     } catch {
       this.resumeEnabled = false;
+      try {
+        await this.storage.remove([ACTIVE_RUN_CHECKPOINT_KEY, RUN_RECOVERY_CONTEXT_KEY]);
+      } catch {
+        // Storage is unavailable; live run continues with resume disabled.
+      }
       return false;
     }
   }
@@ -214,7 +223,13 @@ export class RunCheckpointSessionStore implements RunCheckpointStore {
       ) {
         return null;
       }
-      return { ...snapshot, messages: cloneConversationHistory(snapshot.messages) };
+      return {
+        ...snapshot,
+        ...(typeof snapshot.lastCommittedActionId === 'string'
+          ? { lastCommittedActionId: snapshot.lastCommittedActionId }
+          : {}),
+        messages: cloneConversationHistory(snapshot.messages),
+      };
     } catch {
       return null;
     }

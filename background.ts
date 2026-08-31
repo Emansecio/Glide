@@ -577,6 +577,7 @@ class BackgroundService {
       const recoveryContext = await this.checkpointStore.readRecoveryContext(checkpoint.runId);
       const decision = recoverCheckpoint(checkpoint, {
         committedContextRevision: recoveryContext?.contextRevision ?? -1,
+        committedActionId: recoveryContext?.lastCommittedActionId,
       });
       const previousMeta: RunMeta = {
         runId: checkpoint.runId,
@@ -1710,6 +1711,33 @@ class BackgroundService {
       let continuationForceCount = 0;
       let failedToolContinuationUsed = false;
       let currentHistory = normalizedHistory;
+      let recoveryHistoryDirty = false;
+      let recoveryCheckpointWarningSent = false;
+      const persistRecoveryHistory = async (history: Message[]): Promise<boolean> => {
+        const state = this.runCoordinator.get(runMeta.runId);
+        if (!state) return false;
+        const contextRevision = state.contextRevision + 1;
+        const available = await this.checkpointStore.writeRecoveryContext({
+          version: 1,
+          runId: runMeta.runId,
+          sessionId,
+          contextRevision,
+          ...(state.lastCommittedActionId ? { lastCommittedActionId: state.lastCommittedActionId } : {}),
+          messages: history,
+        });
+        if (!available) {
+          if (!recoveryCheckpointWarningSent) {
+            recoveryCheckpointWarningSent = true;
+            this.sendRuntime(runMeta, {
+              type: 'run_warning',
+              message: 'Checkpoint indisponível; execução atual continua sem retomada automática.',
+            });
+          }
+          return false;
+        }
+        this.runCoordinator.updateContextRevision(runMeta.runId, contextRevision);
+        return true;
+      };
       const contextLimit = runtimeProfile.contextLimit || runtimeSettings.contextLimit || 200000;
       if (this.deferredCompactionSessions.delete(sessionId)) {
         if (!this.sessionTombstones.isTombstoned(sessionId)) {
@@ -1728,6 +1756,7 @@ class BackgroundService {
           );
           if (compactedHistory) {
             currentHistory = compactedHistory;
+            recoveryHistoryDirty = true;
           }
         }
       }
@@ -2126,12 +2155,21 @@ class BackgroundService {
             );
             if (compactedHistory) {
               currentHistory = compactedHistory;
+              recoveryHistoryDirty = true;
             }
           }
+        }
+        let checkpointNeedsPersist = false;
+        if (recoveryHistoryDirty) {
+          checkpointNeedsPersist = await persistRecoveryHistory(currentHistory);
+          recoveryHistoryDirty = false;
         }
         const coordinatorState = this.runCoordinator.get(runMeta.runId);
         if (coordinatorState?.phase !== 'model') {
           this.runCoordinator.transition(runMeta.runId, 'model');
+          checkpointNeedsPersist = true;
+        }
+        if (checkpointNeedsPersist) {
           await this.runCoordinator.persist(runMeta.runId);
         }
         const passResult = await runModelPass(currentHistory);
@@ -2179,6 +2217,7 @@ class BackgroundService {
             ],
             ORCHESTRATION_RETRY_NORMALIZE,
           );
+          recoveryHistoryDirty = true;
           assertOrchestrationContinue('vision_delivery');
           continue;
         }
@@ -2263,6 +2302,7 @@ class BackgroundService {
             ],
             ORCHESTRATION_RETRY_NORMALIZE,
           );
+          recoveryHistoryDirty = true;
 
           recoveryAttempt += 1;
           assertOrchestrationContinue('xml_recovery');
@@ -2303,6 +2343,7 @@ class BackgroundService {
             ],
             ORCHESTRATION_RETRY_NORMALIZE,
           );
+          recoveryHistoryDirty = true;
           this.sendRuntime(runMeta, {
             type: 'run_warning',
             message: 'Uma ação no navegador falhou sem verificação; fazendo uma tentativa de recuperação.',
@@ -2380,6 +2421,7 @@ class BackgroundService {
               'Previous attempt returned no usable final answer. Respond to the user now with a direct final answer in the user language. Do not mention internal errors or ask to retry unless strictly necessary. If you lack critical data, clearly say what is missing and provide the next concrete step.',
           });
           currentHistory = normalizeConversationHistory(retryHistory, ORCHESTRATION_RETRY_NORMALIZE);
+          recoveryHistoryDirty = true;
           this.sendRuntime(runMeta, {
             type: 'run_warning',
             message: 'O modelo não produziu resposta final utilizável; refazendo a resposta uma vez.',
@@ -2426,6 +2468,7 @@ class BackgroundService {
             ],
             ORCHESTRATION_RETRY_NORMALIZE,
           );
+          recoveryHistoryDirty = true;
           this.sendRuntime(runMeta, {
             type: 'run_warning',
             message: 'O modelo parou no meio da tarefa; forçando a continuação com ferramentas.',
@@ -2531,6 +2574,7 @@ class BackgroundService {
       if (this.sessionTombstones.isTombstoned(contextSourceSessionId) || this.isRunAborted(runMeta.runId)) {
         throw new Error('Run aborted before context commit.');
       }
+      await persistRecoveryHistory(terminalHistory);
       if (this.runCoordinator.get(runMeta.runId)?.phase !== 'committing') {
         this.runCoordinator.transition(runMeta.runId, 'committing');
       }

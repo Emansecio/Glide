@@ -5,7 +5,7 @@ export const MAX_CHECKPOINT_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export function recoverCheckpoint(
   checkpoint: RunCheckpoint,
-  options: { committedContextRevision: number; now?: number },
+  options: { committedContextRevision: number; committedActionId?: string; now?: number },
 ): RunRecoveryDecision {
   const now = options.now ?? Date.now();
   if (now - checkpoint.updatedAt > MAX_CHECKPOINT_AGE_MS || checkpoint.updatedAt > now + 60_000) {
@@ -17,6 +17,9 @@ export function recoverCheckpoint(
     checkpoint.inFlightAction?.state === 'in_flight' ||
     checkpoint.inFlightAction?.state === 'ambiguous'
   ) {
+    return 'confirm';
+  }
+  if (checkpoint.lastCommittedActionId && checkpoint.lastCommittedActionId !== options.committedActionId) {
     return 'confirm';
   }
   if (checkpoint.contextRevision !== options.committedContextRevision) return 'discard';

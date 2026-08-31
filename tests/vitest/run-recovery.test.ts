@@ -35,6 +35,18 @@ describe('recoverCheckpoint', () => {
     expect(recoverCheckpoint(state, { committedContextRevision: 4, now: 300 })).toBe('confirm');
   });
 
+  it('never resumes a committed effect until matching replay history is checkpointed', () => {
+    const state = { ...checkpoint('committing'), lastCommittedActionId: 'run-old:action:1' };
+    expect(recoverCheckpoint(state, { committedContextRevision: 4, now: 300 })).toBe('confirm');
+    expect(
+      recoverCheckpoint(state, {
+        committedContextRevision: 4,
+        committedActionId: 'run-old:action:1',
+        now: 300,
+      }),
+    ).toBe('resume');
+  });
+
   it('discards terminal, stale, and revision-mismatched checkpoints', () => {
     expect(recoverCheckpoint(checkpoint('completed'), { committedContextRevision: 4, now: 300 })).toBe('discard');
     expect(recoverCheckpoint(checkpoint('model'), { committedContextRevision: 4, now: 8 * 24 * 60 * 60 * 1000 })).toBe(

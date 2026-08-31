@@ -10,6 +10,7 @@ import {
 } from '../../ai/codex-auth.js';
 import { DEFAULT_SYSTEM_PROMPT } from '../../ai/default-prompt.js';
 import { resolveHistoryPersistenceMode } from '../../ai/persist-tool-args.js';
+import { resolveSystemPromptMode, type SystemPromptMode } from '../../ai/system-prompt-mode.js';
 import {
   MODEL_DISPLAY_LABELS,
   PROVIDER_DEFAULT_ENDPOINTS,
@@ -39,6 +40,7 @@ type PanelConfig = {
   model: string;
   customEndpoint: string;
   systemPrompt: string;
+  systemPromptMode: SystemPromptMode;
 };
 
 const normalizeConfig = (raw: Record<string, any> = {}, fallbackPrompt = ''): PanelConfig => {
@@ -52,6 +54,7 @@ const normalizeConfig = (raw: Record<string, any> = {}, fallbackPrompt = ''): Pa
     model,
     customEndpoint: String(raw.customEndpoint || ''),
     systemPrompt: String(raw.systemPrompt || fallbackPrompt || ''),
+    systemPromptMode: resolveSystemPromptMode(raw.systemPrompt || fallbackPrompt, raw.systemPromptMode),
   };
 };
 
@@ -419,6 +422,7 @@ SidePanelUI.prototype.persistAllSettings = async function persistAllSettings({ s
     model: activeProfile.model || PROVIDER_DEFAULT_MODELS[activeProvider] || '',
     customEndpoint: activeProfile.customEndpoint || '',
     systemPrompt: activeProfile.systemPrompt || this.getDefaultSystemPrompt(),
+    systemPromptMode: resolveSystemPromptMode(activeProfile.systemPrompt, activeProfile.systemPromptMode),
     toolPermissions: prevPerms,
     historyPersistence: this.historyPersistence || 'redacted',
     notifyOnComplete: this.elements.notifyOnComplete?.checked === true,

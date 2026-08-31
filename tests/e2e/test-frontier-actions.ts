@@ -155,7 +155,8 @@ try {
   const extensionId = new URL(worker.url()).host;
   const panel = await context.newPage();
   await panel.goto(`chrome-extension://${extensionId}/sidepanel/panel.html`);
-  await cases[requestedCase as keyof typeof cases](context, worker, panel, fixture.baseUrl);
+  const publicFixtureUrl = fixture.baseUrl.replace('127.0.0.1', 'localtest.me');
+  await cases[requestedCase as keyof typeof cases](context, worker, panel, publicFixtureUrl);
   console.log(`PASS frontier action case: ${requestedCase}`);
 } finally {
   await context?.close();

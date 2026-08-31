@@ -30,6 +30,7 @@ import {
   shouldCompact,
 } from './ai/compaction.js';
 import { STREAMLINED_AUTOMATION_PROMPT, isDefaultAutomationPrompt } from './ai/default-prompt.js';
+import { withScopedOwnership } from './ai/system-prompt-mode.js';
 import { createMessage, normalizeConversationHistory } from './ai/message-schema.js';
 import type { Message } from './ai/message-schema.js';
 import { isEmptyModelPassResult } from './ai/model-pass-result.js';
@@ -379,6 +380,17 @@ class BackgroundService {
 
   private isOrchestrationOwner(runId: string): boolean {
     return this.orchestrationOwnerRunId === runId;
+  }
+
+  private withOrchestrationOwnership<T>(runId: string, operation: () => Promise<T>): Promise<T> {
+    return withScopedOwnership(
+      runId,
+      () => this.orchestrationOwnerRunId,
+      (owner) => {
+        this.orchestrationOwnerRunId = owner;
+      },
+      operation,
+    );
   }
 
   private getRunAbortSignal(runId: string): AbortSignal | undefined {
@@ -998,11 +1010,13 @@ class BackgroundService {
               if (this.activeRunId) {
                 throw new Error('A run started while preparing the manual tool.');
               }
-              return this.executeToolByName(
-                String(message.tool || ''),
-                (message.args && typeof message.args === 'object' ? message.args : {}) as Record<string, any>,
-                { runMeta, settings, visionProfile: null },
-                typeof message.toolCallId === 'string' ? message.toolCallId : undefined,
+              return this.withOrchestrationOwnership(runMeta.runId, () =>
+                this.executeToolByName(
+                  String(message.tool || ''),
+                  (message.args && typeof message.args === 'object' ? message.args : {}) as Record<string, any>,
+                  { runMeta, settings, visionProfile: null },
+                  typeof message.toolCallId === 'string' ? message.toolCallId : undefined,
+                ),
               );
             })
             .then((result: any) =>
@@ -1612,6 +1626,7 @@ class BackgroundService {
           runtimeProfile.systemPrompt || '',
           context,
           runMeta.runId,
+          runtimeProfile.systemPromptMode,
         );
         // Anthropic: o <execution_state> é volátil (progresso do plano, URL,
         // recovery) e antes entrava concatenado no bloco system — o início do
@@ -4773,13 +4788,21 @@ class BackgroundService {
   // (URL/plan/recovery). The caller recombines them into a single system prompt;
   // the split is kept as a seam so prompt caching can be reintroduced later without
   // reshaping this builder.
-  enhanceSystemPrompt(basePrompt: string, context, runId?: string): { base: string; state: string } {
+  enhanceSystemPrompt(
+    basePrompt: string,
+    context,
+    runId?: string,
+    systemPromptMode?: 'default' | 'custom',
+  ): { base: string; state: string } {
     const browserAutomation = context.browserAutomation !== false;
     const requiresDetailedReport = context.requiresDetailedReport === true;
     const orchestrationPass = Number(context.orchestrationPass || 1);
     const ownsOrchestration = !runId || this.isOrchestrationOwner(runId);
 
-    const effectiveBasePrompt = isDefaultAutomationPrompt(basePrompt) ? STREAMLINED_AUTOMATION_PROMPT : basePrompt;
+    const effectiveBasePrompt =
+      systemPromptMode === 'default' || (systemPromptMode !== 'custom' && isDefaultAutomationPrompt(basePrompt))
+        ? STREAMLINED_AUTOMATION_PROMPT
+        : basePrompt;
     const baseWithPolicy = `${effectiveBasePrompt}\n\n${UNTRUSTED_DATA_POLICY}`;
 
     if (!browserAutomation) {
@@ -5095,6 +5118,7 @@ You are PROHIBITED from generating a final response until you either:
       model: settings.model || '',
       customEndpoint: String(settings.customEndpoint || '').trim(),
       systemPrompt: settings.systemPrompt || '',
+      systemPromptMode: settings.systemPromptMode || 'default',
       sendScreenshotsAsImages: settings.sendScreenshotsAsImages !== false,
       screenshotQuality: settings.screenshotQuality || 'high',
       streamResponses: settings.streamResponses !== false,

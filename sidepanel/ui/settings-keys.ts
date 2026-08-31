@@ -1,4 +1,11 @@
-export const SETTINGS_STORAGE_KEYS = ['provider', 'apiKey', 'model', 'customEndpoint', 'systemPrompt'] as const;
+export const SETTINGS_STORAGE_KEYS = [
+  'provider',
+  'apiKey',
+  'model',
+  'customEndpoint',
+  'systemPrompt',
+  'systemPromptMode',
+] as const;
 
 /**
  * Credenciais são guardadas POR PROVEDOR (`apiKey_anthropic`, `apiKey_codex`, …)

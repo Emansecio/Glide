@@ -3,6 +3,7 @@ import { CODEX_CHATGPT_STORAGE_KEY, isJwtToken, isOpenAiApiKey, resolveCodexAuth
 import { resolveHistoryPersistenceMode } from '../ai/persist-tool-args.js';
 import { normalizeProviderModel } from '../ai/providers.js';
 import { invalidateRuntimeCaches } from '../ai/runtime-cache.js';
+import { resolveSystemPromptMode } from '../ai/system-prompt-mode.js';
 import { migrateStoredProvider } from '../ai/sdk-client.js';
 import { PROVIDER_API_KEY_FIELDS, providerApiKeyField } from '../sidepanel/ui/settings-keys.js';
 import { SETTINGS_STORAGE_KEYS } from '../sidepanel/ui/settings-keys.js';
@@ -31,6 +32,7 @@ export const RUNTIME_SETTINGS_KEYS = [
   'screenshotOnFailure',
   'screenshotRetention',
   'deferCompaction',
+  'systemPromptMode',
 ] as const;
 const CACHE_TTL_MS = 30_000;
 
@@ -67,6 +69,7 @@ export const normalizeRuntimeSettings = (raw: Record<string, unknown>): Record<s
   if (settings.screenshotOnFailure === undefined) settings.screenshotOnFailure = true;
   if (settings.screenshotRetention === undefined) settings.screenshotRetention = 'ephemeral';
   if (settings.deferCompaction === undefined) settings.deferCompaction = false;
+  settings.systemPromptMode = resolveSystemPromptMode(settings.systemPrompt, settings.systemPromptMode);
 
   const migrated = migrateStoredProvider(settings.provider, settings.customEndpoint);
   // Force a safe default for first-run / empty configs (Ollama local focus)
@@ -131,6 +134,9 @@ export const loadCachedRuntimeSettings = async (): Promise<Record<string, any>> 
     'toolPermissionsScriptingRevoked',
   ]);
   const settings = normalizeRuntimeSettings(raw as Record<string, unknown>);
+  if ((raw as Record<string, unknown>).systemPromptMode === undefined) {
+    void chrome.storage.local.set({ systemPromptMode: settings.systemPromptMode });
+  }
   if (
     settings.toolPermissionsScriptingRevoked === true &&
     (raw as Record<string, unknown>).toolPermissionsScriptingRevoked !== true

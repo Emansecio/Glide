@@ -89,6 +89,7 @@ import {
 import { fetchProviderModels } from './background/provider-fetch.js';
 import { installProviderNetRequestRules } from './background/provider-net-rules.js';
 import { RunAbortRegistry } from './background/run-abort-registry.js';
+import { RunCoordinator } from './background/run-coordinator.js';
 import { RunEventSequencer } from './background/run-event-sequencer.js';
 import { RunPassCache } from './background/run-pass-cache.js';
 import {
@@ -189,6 +190,7 @@ class BackgroundService {
   activeRunMeta: RunMeta | null;
   activeRunAbortController: AbortController | null;
   private runAbortRegistry: RunAbortRegistry;
+  private runCoordinator: RunCoordinator;
   /** Run that owns global orchestration/recovery state — successors supersede predecessors. */
   private orchestrationOwnerRunId: string | null;
   activeRunLockOwnerRunId: string | null;
@@ -459,6 +461,9 @@ class BackgroundService {
     }
     const runMeta = this.activeRunId === runId ? this.activeRunMeta : null;
     this.runPhase = 'stopped';
+    if (this.runCoordinator.get(runId)) {
+      this.runCoordinator.terminal(runId, 'stopped');
+    }
     this.releaseRunExclusiveLock(runId);
     if (runMeta) {
       this.sendRuntime(runMeta, {
@@ -551,6 +556,7 @@ class BackgroundService {
     this.activeRunMeta = null;
     this.activeRunAbortController = null;
     this.runAbortRegistry = new RunAbortRegistry();
+    this.runCoordinator = new RunCoordinator();
     this.orchestrationOwnerRunId = null;
     this.activeRunLockOwnerRunId = null;
     this.activeRunTimeoutId = null;
@@ -1364,9 +1370,17 @@ class BackgroundService {
       this.activeRunLastActivityAt = Date.now();
       this.armActiveRunWatchdog(runMeta);
       void this.writeActiveRunSentinel(runMeta);
-      const settings = await this.loadRuntimeSettings();
       const normalizedHistory = normalizeConversationHistory(conversationHistory || []);
       const latestUserText = this.getLatestUserText(normalizedHistory);
+      this.runCoordinator.start(runMeta, {
+        contextRevision: contextTransactionStore.read(sessionId).revision,
+        selectedTabIds: selectedTabs.flatMap((tab) => (typeof tab.id === 'number' ? [tab.id] : [])),
+        request: {
+          message: latestUserText,
+          ...(typeof panelTabId === 'number' ? { panelTabId } : {}),
+        },
+      });
+      const settings = await this.loadRuntimeSettings();
       // A follow-up in an ongoing browser task ("e aí?", a correction) rarely
       // repeats action keywords itself; recent tool usage keeps tool access armed
       // for it instead of stranding the agent with no tool to act on its own reply.
@@ -1996,6 +2010,10 @@ class BackgroundService {
             }
           }
         }
+        const coordinatorState = this.runCoordinator.get(runMeta.runId);
+        if (coordinatorState?.phase !== 'model') {
+          this.runCoordinator.transition(runMeta.runId, 'model');
+        }
         const passResult = await runModelPass(currentHistory);
         const toolRecoverySource = [passResult.text, passResult.reasoningText || ''].filter(Boolean).join('\n\n');
         const availableToolNames = tools.map((tool) => tool.name);
@@ -2349,6 +2367,7 @@ class BackgroundService {
       if (this.sessionTombstones.isTombstoned(contextSourceSessionId) || this.isRunAborted(runMeta.runId)) {
         throw new Error('Run aborted before context commit.');
       }
+      this.runCoordinator.transition(runMeta.runId, 'committing');
       const contextCommit = contextTransactionStore.commit({
         sessionId,
         ...(sessionId !== contextSourceSessionId ? { previousSessionId: contextSourceSessionId } : {}),
@@ -2393,9 +2412,14 @@ class BackgroundService {
       });
       // Turn terminal: libera o lock após assistant_final. Compaction/warnings
       // terminam antes do evento terminal para o painel não descartá-los.
+      this.runCoordinator.terminal(runMeta.runId, textAwaitsUser(finalText) ? 'awaiting_user' : 'completed');
       this.releaseRunExclusiveLock(runMeta.runId);
     } catch (error) {
       console.error('Error processing user message:', error);
+      const coordinatorState = this.runCoordinator.get(runMeta.runId);
+      if (coordinatorState && !coordinatorState.terminalReason) {
+        this.runCoordinator.terminal(runMeta.runId, this.isRunAborted(runMeta.runId) ? 'stopped' : 'failed');
+      }
       // Deliberate stops (idle watchdog, locked tab closed) already sent their
       // own specific run_error before aborting — don't pile a generic "Erro no
       // provedor: Run aborted." toast on top of the real reason.

@@ -43,6 +43,7 @@ const getElementBox: ContentOperation = (payload) => {
     success: true,
     rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
     point: { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 },
+    viewport: { width: window.innerWidth, height: window.innerHeight },
   };
 };
 

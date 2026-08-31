@@ -3,6 +3,47 @@ import { VERIFICATION_EFFECT_TOOLS } from './service-config.js';
 
 export const MUTATIVE_BROWSER_EFFECT_TOOLS = VERIFICATION_EFFECT_TOOLS;
 
+const MUTATIVE_HTTP_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+const AMBIGUOUS_OUTCOME_CODES = new Set(['BRIDGE_TIMEOUT', 'SCRIPT_TIMEOUT', 'DOWNLOAD_TIMEOUT']);
+
+export type ActionOutcomeCertainty = 'known_completed' | 'known_not_executed' | 'unknown';
+
+export function isMutativeBrowserEffect(tool: string, args: Record<string, unknown> = {}): boolean {
+  if (MUTATIVE_BROWSER_EFFECT_TOOLS.has(tool)) return true;
+  if (tool === 'httpRequest') {
+    return MUTATIVE_HTTP_METHODS.has(
+      String(args.method || 'GET')
+        .trim()
+        .toUpperCase(),
+    );
+  }
+  if (tool === 'captureDownload') {
+    const directUrl = typeof args.url === 'string' && args.url.trim().length > 0;
+    const trigger =
+      args.trigger && typeof args.trigger === 'object' && !Array.isArray(args.trigger)
+        ? (args.trigger as Record<string, unknown>)
+        : null;
+    const triggerSelector = typeof trigger?.selector === 'string' && trigger.selector.trim().length > 0;
+    return directUrl || triggerSelector;
+  }
+  return false;
+}
+
+export function classifyActionOutcome(result: unknown): ActionOutcomeCertainty {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return 'unknown';
+  const record = result as Record<string, unknown>;
+  if (
+    record.outcomeCertainty === 'known_completed' ||
+    record.outcomeCertainty === 'known_not_executed' ||
+    record.outcomeCertainty === 'unknown'
+  ) {
+    return record.outcomeCertainty;
+  }
+  const code = String(record.code || '').toUpperCase();
+  if (AMBIGUOUS_OUTCOME_CODES.has(code) || record.timedOut === true) return 'unknown';
+  return 'known_completed';
+}
+
 export type PreparedAction = {
   actionId: string;
   runId: string;
@@ -109,6 +150,7 @@ export class ActionJournal {
     const entry = this.entries.get(actionId);
     if (!entry) throw new Error(`Unknown action ${actionId}.`);
     if (entry.state === 'committed') return cloneEntry(entry);
+    if (entry.state === 'ambiguous') return cloneEntry(entry);
     return this.save({ ...entry, state: 'ambiguous', completedAt: Date.now() });
   }
 }

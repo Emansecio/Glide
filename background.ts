@@ -55,7 +55,7 @@ import { detectTaskIntent, hasRecentToolActivity } from './ai/task-intent.js';
 import { extractRecoverableToolCalls, stripRecoverableToolCalls } from './ai/tool-call-recovery.js';
 import { buildToolTurnMessages } from './ai/tool-history.js';
 import { ensureFreshXaiToken, getXaiAuthHealth, readXaiOAuth } from './ai/xai-oauth.js';
-import { ActionJournal, MUTATIVE_BROWSER_EFFECT_TOOLS } from './background/action-journal.js';
+import { ActionJournal, classifyActionOutcome, isMutativeBrowserEffect } from './background/action-journal.js';
 import { ModelActivityWatchdog } from './background/activity-timeout.js';
 import {
   canApplyCompactionResult,
@@ -2680,13 +2680,12 @@ class BackgroundService {
     } catch (error) {
       console.error('Error processing user message:', error);
       const coordinatorState = this.runCoordinator.get(runMeta.runId);
+      const pausedForAmbiguousAction = coordinatorState?.terminalReason === 'ambiguous_action';
       if (coordinatorState && !coordinatorState.terminalReason) {
         this.runCoordinator.terminal(runMeta.runId, this.isRunAborted(runMeta.runId) ? 'stopped' : 'failed');
       }
-      // Deliberate stops (idle watchdog, locked tab closed) already sent their
-      // own specific run_error before aborting — don't pile a generic "Erro no
-      // provedor: Run aborted." toast on top of the real reason.
-      if (!isDeliberateRunStop(error)) {
+      // Deliberate stops and ambiguity already emitted their terminal UI event.
+      if (!pausedForAmbiguousAction && !isDeliberateRunStop(error)) {
         const providerForErr = this.currentSettings?.provider || 'ollama';
         const friendly = humanizeProviderError(error, providerForErr);
         this.sendRuntime(runMeta, {
@@ -2712,7 +2711,7 @@ class BackgroundService {
       this.visionQueue.cancelRun(runMeta.runId);
       await this.clearActiveRunSentinel(runMeta.runId);
       const finalCoordinatorState = this.runCoordinator.get(runMeta.runId);
-      if (finalCoordinatorState?.terminalReason) {
+      if (finalCoordinatorState?.terminalReason && finalCoordinatorState.terminalReason !== 'ambiguous_action') {
         await this.runCoordinator.clear(runMeta.runId);
       }
       this.runAbortRegistry.dispose(runMeta.runId);
@@ -2764,6 +2763,7 @@ class BackgroundService {
   ) {
     this.touchActiveRun(options.runMeta.runId);
     const effectiveSettings = (options.settings || this.currentSettings || {}) as Record<string, any>;
+    this.browserTools.setUseContentBridge(effectiveSettings.useContentBridge !== false);
     const lockedTabId = typeof options.lockedTabId === 'number' ? options.lockedTabId : null;
     const toolContext = this.buildToolExecutionContext(options.runMeta, lockedTabId);
     const callId = toolCallId || `tool_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
@@ -3132,7 +3132,7 @@ class BackgroundService {
         return cancelled;
       }
 
-      const isMutativeEffect = MUTATIVE_BROWSER_EFFECT_TOOLS.has(toolName);
+      const isMutativeEffect = isMutativeBrowserEffect(toolName, toolArgs);
       const releaseEffectSlot = isMutativeEffect
         ? await this.acquireEffectDispatchSlot(options.runMeta.runId)
         : () => {};
@@ -3159,6 +3159,7 @@ class BackgroundService {
               code: 'AMBIGUOUS_ACTION',
               error: 'Action was already dispatched or became ambiguous; automatic replay blocked.',
               actionId: journalActionId,
+              outcomeCertainty: 'unknown',
             };
           }
         }
@@ -3171,6 +3172,7 @@ class BackgroundService {
           this.orchestrationOwnerRunId !== options.runMeta.runId
         ) {
           result = {
+            ...(result && typeof result === 'object' ? result : {}),
             success: false,
             code: 'RUN_SUPERSEDED',
             error: 'Tool result discarded because the run was stopped or superseded.',
@@ -3223,12 +3225,41 @@ class BackgroundService {
       }
 
       result = this.normalizeToolResultContract(toolName, result);
+      let ambiguousAction = false;
       try {
         if (journalActionId) {
-          await this.actionJournal.commit(journalActionId, result);
+          if (classifyActionOutcome(result) === 'unknown') {
+            await this.actionJournal.markAmbiguous(journalActionId);
+            ambiguousAction = true;
+          } else {
+            await this.actionJournal.commit(journalActionId, result);
+          }
         }
       } finally {
         releaseEffectSlot();
+      }
+
+      if (ambiguousAction && journalActionId) {
+        result = {
+          ...result,
+          success: false,
+          ambiguousAction: true,
+          automaticReplayBlocked: true,
+          outcomeCertainty: 'unknown',
+          actionId: journalActionId,
+        };
+        this.quarantinedRunIds.add(options.runMeta.runId);
+        this.runAbortRegistry.abort(options.runMeta.runId);
+        this.runtimeBatcher.flush(options.runMeta.runId);
+        this.sendRuntime(options.runMeta, {
+          type: 'run_resume_required',
+          resumedFromRunId: options.runMeta.runId,
+          message: `A ação ${toolName} pode ter sido executada, mas o resultado não pôde ser confirmado. Verifique o estado antes de continuar.`,
+          action: { actionId: journalActionId, tool: toolName },
+        });
+        this.releaseRunExclusiveLock(options.runMeta.runId);
+        sendResult(result, toolArgs);
+        return result;
       }
 
       const isBrowserAction = BROWSER_ACTION_TOOLS.includes(toolName as (typeof BROWSER_ACTION_TOOLS)[number]);
@@ -3370,7 +3401,7 @@ class BackgroundService {
       const domRevision = Number(result?.domRevision ?? result?.revision ?? queuedAt);
       const navigationRevision = Number(result?.navigationRevision ?? 0);
       const verificationStartedAt = performance.now();
-      if (MUTATIVE_BROWSER_EFFECT_TOOLS.has(toolName) && result?.success !== false) {
+      if (isMutativeBrowserEffect(toolName, toolArgs) && result?.success !== false) {
         this.verificationState.recordEffect({
           actionId: journalActionId || callId,
           tool: toolName,

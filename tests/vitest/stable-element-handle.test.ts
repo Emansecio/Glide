@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { beginElementSnapshot, createElementHandle, resolveSnapshotHandle } from '../../content/element-snapshot.js';
+import { resolveOperationTarget } from '../../content/operations/action.js';
 import {
   type StableElementHandle,
   fingerprintElement,
@@ -115,6 +116,20 @@ describe('stable element handles', () => {
     if (resolved && !resolved.ok)
       expect(resolved.candidates).toContainEqual(expect.objectContaining({ selector: '#save' }));
     now.mockRestore();
+  });
+
+  it('never selector-falls back when supplied handle cannot be verified', () => {
+    document.body.innerHTML = '<button id="target">Replacement</button>';
+
+    const target = resolveOperationTarget({
+      selector: '#target',
+      handle: { version: 1, selector: '#target' },
+      __glideTabId: 9,
+      __glideFrameId: 2,
+    });
+
+    expect(target.element).toBeUndefined();
+    expect(target.failure).toMatchObject({ success: false, code: 'STALE_ELEMENT_HANDLE' });
   });
 
   it('rejects handle used in another frame', () => {

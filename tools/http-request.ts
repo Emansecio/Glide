@@ -69,6 +69,8 @@ export type HttpRequestResult = {
   hint?: string;
   timedOut?: boolean;
   code?: string;
+  dispatched?: boolean;
+  outcomeCertainty?: 'known_completed' | 'known_not_executed' | 'unknown';
 };
 
 export function normalizeHttpMethod(raw: unknown): string {
@@ -231,12 +233,14 @@ export async function performHttpRequest(
   args.signal?.addEventListener('abort', onRunAbort);
   if (args.signal?.aborted) controller.abort();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let dispatched = false;
   try {
     // Manual redirect following: re-validate every hop so a public open-redirect
     // cannot pivot the extension fetch (host_permissions + cookies) onto private
     // / loopback / cloud-metadata hosts.
     let response: Response | null = null;
     for (let hop = 0; hop <= HTTP_REQUEST_MAX_REDIRECTS; hop += 1) {
+      dispatched = true;
       response = await fetchImpl(url, {
         method,
         headers,
@@ -329,6 +333,8 @@ export async function performHttpRequest(
       body: text,
       bodyLength: rawTextLength,
       truncated,
+      dispatched,
+      outcomeCertainty: 'known_completed',
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -343,6 +349,8 @@ export async function performHttpRequest(
           : message,
       timedOut,
       code: runAborted ? 'RUN_ABORTED' : undefined,
+      dispatched,
+      outcomeCertainty: dispatched ? 'unknown' : 'known_not_executed',
       hint: runAborted
         ? 'The user stopped the run while this request was in flight.'
         : timedOut

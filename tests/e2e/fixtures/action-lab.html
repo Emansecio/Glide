@@ -8,6 +8,7 @@
   <body>
     <main>
       <button id="action-button" type="button">Run action</button>
+      <button id="delayed-action-button" type="button">Run delayed action</button>
       <label for="action-input">Action input</label>
       <input id="action-input" name="actionInput" />
       <label><input id="action-checkbox" type="checkbox" /> Action checkbox</label>
@@ -19,6 +20,7 @@
     <script>
       window.__actionLab = {
         click: 0,
+        delayedMutation: 0,
         input: 0,
         change: 0,
         submit: 0,
@@ -29,6 +31,11 @@
 
       document.getElementById('action-button').addEventListener('click', () => {
         window.__actionLab.click += 1;
+      });
+      document.getElementById('delayed-action-button').addEventListener('click', () => {
+        setTimeout(() => {
+          window.__actionLab.delayedMutation += 1;
+        }, 8250);
       });
       document.getElementById('action-input').addEventListener('input', () => {
         window.__actionLab.input += 1;

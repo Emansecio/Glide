@@ -49,6 +49,32 @@ describe('BrowserBridgeClient', () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
+  it('reports unknown outcome when mutation finishes after bridge timeout', async () => {
+    vi.useFakeTimers();
+    let mutations = 0;
+    installChrome(
+      vi.fn().mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            setTimeout(() => {
+              mutations += 1;
+            }, 60);
+            setTimeout(() => resolve({ success: true }), 100);
+          }),
+      ),
+    );
+
+    const pending = new BrowserBridgeClient().send(1, 0, 'click', { selector: '#save' }, { timeoutMs: 50 });
+    await vi.advanceTimersByTimeAsync(51);
+    await expect(pending).resolves.toMatchObject({
+      success: false,
+      code: 'BRIDGE_TIMEOUT',
+      outcomeCertainty: 'unknown',
+    });
+    await vi.advanceTimersByTimeAsync(50);
+    expect(mutations).toBe(1);
+  });
+
   it('shares one deadline across frame probes', async () => {
     vi.useFakeTimers();
     const sendMessage = vi

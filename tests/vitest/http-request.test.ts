@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { performHttpRequest } from '../../tools/http-request.js';
 
 describe('performHttpRequest awaited legacy coverage', () => {
@@ -25,6 +25,41 @@ describe('performHttpRequest awaited legacy coverage', () => {
     expect(result.success).toBe(true);
     expect(result.status).toBe(200);
     expect(String(result.body || '')).toContain('next_max_id');
+  });
+
+  it('marks timed-out POST unknown after fetch dispatch', async () => {
+    vi.useFakeTimers();
+    let mutations = 0;
+    const mockFetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      mutations += 1;
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          'abort',
+          () => reject(new DOMException('The operation was aborted.', 'AbortError')),
+          { once: true },
+        );
+      });
+    });
+
+    const pending = performHttpRequest(
+      {
+        url: 'https://example.com/mutate',
+        method: 'POST',
+        body: '{"mutate":true}',
+        timeoutMs: 1000,
+      },
+      mockFetch as unknown as typeof fetch,
+    );
+    await vi.advanceTimersByTimeAsync(1001);
+    const result = await pending;
+
+    expect(mutations).toBe(1);
+    expect(result).toMatchObject({
+      success: false,
+      timedOut: true,
+      outcomeCertainty: 'unknown',
+    });
+    vi.useRealTimers();
   });
 
   it('enforces allowedDomains on redirect hops', async () => {

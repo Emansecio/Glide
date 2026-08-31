@@ -37,12 +37,23 @@ export class BrowserBridgeClient {
     options: SendOptions = {},
   ): Promise<GlideBridgeResponse> {
     const signal = options.signal;
-    if (signal?.aborted) return failure('ABORTED', 'Bridge request aborted before dispatch.');
+    if (signal?.aborted) {
+      return failure('ABORTED', 'Bridge request aborted before dispatch.', {
+        dispatched: false,
+        outcomeCertainty: 'known_not_executed',
+      });
+    }
 
     const timeoutMs = Math.max(1, options.timeoutMs ?? 8000);
     const deadline = options.deadline ?? Date.now() + timeoutMs;
     const remainingMs = Math.max(0, deadline - Date.now());
-    if (remainingMs <= 0) return failure('BRIDGE_TIMEOUT', 'Content bridge deadline expired.', { timedOut: true });
+    if (remainingMs <= 0) {
+      return failure('BRIDGE_TIMEOUT', 'Content bridge deadline expired.', {
+        timedOut: true,
+        dispatched: false,
+        outcomeCertainty: 'known_not_executed',
+      });
+    }
 
     const request = {
       type: GLIDE_BRIDGE_MESSAGE_TYPE,
@@ -57,23 +68,42 @@ export class BrowserBridgeClient {
         chrome.tabs.sendMessage(tabId, request, { frameId }),
         new Promise<GlideBridgeResponse>((resolve) => {
           timeoutId = setTimeout(
-            () => resolve(failure('BRIDGE_TIMEOUT', 'Content bridge deadline expired.', { timedOut: true })),
+            () =>
+              resolve(
+                failure('BRIDGE_TIMEOUT', 'Content bridge deadline expired.', {
+                  timedOut: true,
+                  dispatched: true,
+                  outcomeCertainty: 'unknown',
+                }),
+              ),
             remainingMs,
           );
         }),
         new Promise<GlideBridgeResponse>((resolve) => {
           if (!signal) return;
-          abortListener = () => resolve(failure('ABORTED', 'Bridge request aborted.'));
+          abortListener = () =>
+            resolve(
+              failure('ABORTED', 'Bridge request aborted.', {
+                dispatched: true,
+                outcomeCertainty: 'unknown',
+              }),
+            );
           signal.addEventListener('abort', abortListener, { once: true });
         }),
       ]);
       if (!isGlideBridgeResponse(response)) {
-        return failure('BRIDGE_UNAVAILABLE', 'Content bridge returned an invalid response.', { unavailable: true });
+        return failure('BRIDGE_UNAVAILABLE', 'Content bridge returned an invalid response.', {
+          unavailable: true,
+          dispatched: true,
+          outcomeCertainty: 'unknown',
+        });
       }
       return response;
     } catch (error) {
       return failure('BRIDGE_UNAVAILABLE', error instanceof Error ? error.message : String(error), {
         unavailable: true,
+        dispatched: true,
+        outcomeCertainty: 'unknown',
       });
     } finally {
       if (timeoutId) clearTimeout(timeoutId);

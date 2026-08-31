@@ -954,6 +954,15 @@ export class BrowserTools {
         };
       }
       const safeArgs = validatedArgs.args;
+      if (safeArgs.handle && !this.useContentBridge) {
+        return {
+          success: false,
+          code: 'BRIDGE_UNAVAILABLE',
+          error: 'Stable handle verification unavailable because content bridge is disabled.',
+          dispatched: false,
+          outcomeCertainty: 'known_not_executed',
+        };
+      }
       if (INLINE_TOOL_HANDLERS.has(toolName)) {
         if (toolName === 'describeSessionTabs') {
           await this.pruneSessionTabs();
@@ -979,12 +988,16 @@ export class BrowserTools {
 
       return await (handler as (args: Record<string, any>) => Promise<Record<string, any>>).call(this, safeArgs);
     } catch (error) {
-      // Catch any unhandled errors in tool execution
+      // Handler was entered: thrown failures cannot prove whether mutation ran.
       console.error(`Tool execution error (${toolName}):`, error);
+      const code = error && typeof error === 'object' && 'code' in error ? String(error.code || '') : '';
       return {
         success: false,
-        error: `Tool "${toolName}" failed: ${error?.message || String(error)}`,
+        ...(code ? { code } : {}),
+        error: `Tool "${toolName}" failed: ${(error as Error)?.message || String(error)}`,
         hint: 'Try a different approach or check the arguments.',
+        dispatched: true,
+        outcomeCertainty: 'unknown',
       };
     } finally {
       this.currentToolContext = null;
@@ -1082,11 +1095,21 @@ export class BrowserTools {
   /** Route one operation to one explicit frame. Reads may retain injection fallback only
    * when no bridge exists; mutations never replay after dispatch or timeout. */
   private async tryBridge(tabId: number, frameId: number, op: GlideBridgeOp, payload: Record<string, unknown>) {
-    if (!this.useContentBridge) return null;
+    if (!this.useContentBridge) {
+      return payload.handle
+        ? {
+            success: false,
+            code: 'BRIDGE_UNAVAILABLE',
+            error: 'Stable handle verification unavailable because content bridge is disabled.',
+            dispatched: false,
+            outcomeCertainty: 'known_not_executed',
+          }
+        : null;
+    }
     const response = await this.bridgeClient.send(tabId, frameId, op, payload, {
       signal: this.currentToolContext?.signal,
     });
-    if (response.code === 'BRIDGE_UNAVAILABLE' && !isMutativeBridgeOp(op)) return null;
+    if (response.code === 'BRIDGE_UNAVAILABLE' && !isMutativeBridgeOp(op) && !payload.handle) return null;
     return response;
   }
 
@@ -1785,7 +1808,7 @@ export class BrowserTools {
       );
     }
 
-    const bridged = await this.tryBridge(tabId, Number(args.handle?.frameId ?? injOpts?.frameId ?? 0), 'click', {
+    const bridged = await this.tryBridge(tabId, Number(injOpts?.frameId ?? args.handle?.frameId ?? 0), 'click', {
       selector,
       handle: args.handle,
       postcondition: args.postcondition,
@@ -2275,10 +2298,14 @@ export class BrowserTools {
     const tabId = resolution.tabId;
     const nativeResult = await this.runNativeInput(tabId, 'hover', args);
     if (nativeResult) return this.attachResolutionMeta(nativeResult, resolution);
-    const selector = String(args.selector || '');
+    const selector = String(args.selector || args.handle?.selector || '');
     const retries = typeof args.retries === 'number' ? Math.max(1, Math.min(5, Math.round(args.retries))) : 3;
 
-    const bridged = await this.tryBridge(tabId, 0, 'hover', { selector, retries });
+    const bridged = await this.tryBridge(tabId, Number(args.handle?.frameId ?? 0), 'hover', {
+      selector,
+      handle: args.handle,
+      retries,
+    });
     if (bridged) {
       return this.attachResolutionMeta(bridged, resolution);
     }
@@ -2472,14 +2499,32 @@ export class BrowserTools {
     const tabId = resolution.tabId;
     const nativeResult = await this.runNativeInput(tabId, 'mouse', args);
     if (nativeResult) return this.attachResolutionMeta(nativeResult, resolution);
-    const selector = String(args.selector || '');
+    const selector = String(args.selector || args.handle?.selector || '');
     const action = String(args.action || '');
     const toSelector = args.toSelector != null ? String(args.toSelector) : '';
     const retries = typeof args.retries === 'number' ? Math.max(1, Math.min(5, Math.round(args.retries))) : 3;
 
-    // Bridge does not implement drag yet — fall through to injection.
+    // Bridge does not implement drag yet. A handle must never lose verification
+    // by falling through to selector-only injection.
+    if (action === 'drag' && args.handle) {
+      return this.attachResolutionMeta(
+        {
+          success: false,
+          code: 'BRIDGE_UNAVAILABLE',
+          error: 'Verified handle drag requires opt-in native input.',
+          dispatched: false,
+          outcomeCertainty: 'known_not_executed',
+        },
+        resolution,
+      );
+    }
     if (action !== 'drag') {
-      const bridged = await this.tryBridge(tabId, 0, 'mouse', { selector, action, retries });
+      const bridged = await this.tryBridge(tabId, Number(args.handle?.frameId ?? 0), 'mouse', {
+        selector,
+        handle: args.handle,
+        action,
+        retries,
+      });
       if (bridged) {
         return this.attachResolutionMeta(bridged, resolution);
       }
@@ -2772,18 +2817,16 @@ export class BrowserTools {
     const injOpts = framePrep.runOptions;
     const frameMeta = framePrep.frameMeta;
 
-    if (!this.hasFrameTarget(args)) {
-      const bridged = await this.tryBridge(tabId, Number(args.handle?.frameId ?? 0), 'type', {
-        selector,
-        handle: args.handle,
-        postcondition: args.postcondition,
-        postconditionTimeoutMs: args.postconditionTimeoutMs,
-        text,
-        retries,
-      });
-      if (bridged) {
-        return this.attachResolutionMeta(bridged, resolution);
-      }
+    const bridged = await this.tryBridge(tabId, Number(injOpts?.frameId ?? args.handle?.frameId ?? 0), 'type', {
+      selector,
+      handle: args.handle,
+      postcondition: args.postcondition,
+      postconditionTimeoutMs: args.postconditionTimeoutMs,
+      text,
+      retries,
+    });
+    if (bridged) {
+      return this.attachResolutionMeta(this.attachFrameMeta(bridged, frameMeta), resolution);
     }
 
     let result = await this.runInTab(
@@ -3321,16 +3364,14 @@ export class BrowserTools {
     const injOpts = framePrep.runOptions;
     const frameMeta = framePrep.frameMeta;
 
-    if (!this.hasFrameTarget(args)) {
-      const bridged = await this.tryBridge(tabId, Number(args.handle?.frameId ?? 0), 'pressKey', {
-        key,
-        selector: selector || undefined,
-        handle: args.handle,
-        modifiers: modifiers.length ? modifiers : undefined,
-      });
-      if (bridged) {
-        return this.attachResolutionMeta(bridged, resolution);
-      }
+    const bridged = await this.tryBridge(tabId, Number(injOpts?.frameId ?? args.handle?.frameId ?? 0), 'pressKey', {
+      key,
+      selector: selector || undefined,
+      handle: args.handle,
+      modifiers: modifiers.length ? modifiers : undefined,
+    });
+    if (bridged) {
+      return this.attachResolutionMeta(this.attachFrameMeta(bridged, frameMeta), resolution);
     }
 
     const pressKeyScript = (k: string, sel: string, mods: string[]) => {
@@ -5512,13 +5553,17 @@ export class BrowserTools {
     const injOpts = framePrep.runOptions;
     const frameMeta = framePrep.frameMeta;
 
-    const measureResult = await this.runInTab(
-      tabId,
-      measureScreenshotTarget,
-      [selector, ref, String(args.scope || 'auto').toLowerCase(), args.interactiveOnly !== false],
-      8000,
-      injOpts,
-    );
+    const measureResult = args.handle
+      ? await this.tryBridge(tabId, Number(injOpts?.frameId ?? args.handle.frameId ?? 0), 'getElementBox', {
+          handle: args.handle,
+        })
+      : await this.runInTab(
+          tabId,
+          measureScreenshotTarget,
+          [selector, ref, String(args.scope || 'auto').toLowerCase(), args.interactiveOnly !== false],
+          8000,
+          injOpts,
+        );
     if (!measureResult?.success) {
       return this.attachResolutionMeta(
         this.attachFrameMeta(measureResult || { success: false, error: 'Failed to measure element.' }, frameMeta),
@@ -7014,16 +7059,14 @@ export class BrowserTools {
     const injOpts = framePrep.runOptions;
     const frameMeta = framePrep.frameMeta;
 
-    if (!this.hasFrameTarget(args as Record<string, any>)) {
-      const bridged = await this.tryBridge(
-        tabId,
-        Number((args.handle as { frameId?: number } | undefined)?.frameId ?? 0),
-        'selectOption',
-        payload,
-      );
-      if (bridged) {
-        return this.attachResolutionMeta(bridged, resolution);
-      }
+    const bridged = await this.tryBridge(
+      tabId,
+      Number(injOpts?.frameId ?? (args.handle as { frameId?: number } | undefined)?.frameId ?? 0),
+      'selectOption',
+      payload,
+    );
+    if (bridged) {
+      return this.attachResolutionMeta(this.attachFrameMeta(bridged, frameMeta), resolution);
     }
 
     const selectOptionScript = async (sel: string, value?: string, label?: string, index?: number) => {
@@ -7369,21 +7412,19 @@ export class BrowserTools {
     const injOpts = framePrep.runOptions;
     const frameMeta = framePrep.frameMeta;
 
-    if (!this.hasFrameTarget(args as Record<string, any>)) {
-      const bridged = await this.tryBridge(
-        tabId,
-        Number((args.handle as { frameId?: number } | undefined)?.frameId ?? 0),
-        'highlightElement',
-        {
-          selector: selector || undefined,
-          handle: args.handle,
-          ref: ref || undefined,
-          durationMs,
-        },
-      );
-      if (bridged) {
-        return this.attachResolutionMeta(bridged, resolution);
-      }
+    const bridged = await this.tryBridge(
+      tabId,
+      Number(injOpts?.frameId ?? (args.handle as { frameId?: number } | undefined)?.frameId ?? 0),
+      'highlightElement',
+      {
+        selector: selector || undefined,
+        handle: args.handle,
+        ref: ref || undefined,
+        durationMs,
+      },
+    );
+    if (bridged) {
+      return this.attachResolutionMeta(this.attachFrameMeta(bridged, frameMeta), resolution);
     }
 
     const scope = String(args.scope || 'auto').toLowerCase();
@@ -7426,7 +7467,10 @@ export class BrowserTools {
       if (typeof chrome.downloads?.onCreated?.addListener !== 'function') {
         return {
           success: false,
+          code: 'DOWNLOADS_UNAVAILABLE',
           error: 'chrome.downloads API is unavailable. Ensure the extension has the "downloads" permission.',
+          dispatched: false,
+          outcomeCertainty: 'known_not_executed',
         };
       }
 
@@ -7468,6 +7512,7 @@ export class BrowserTools {
         let trackedId: number | null = null;
         let expectedDownloadId: number | null = null;
         let timeoutId: ReturnType<typeof setTimeout> | null = null;
+        let actionDispatched = false;
 
         const finish = (result: Record<string, unknown>) => {
           if (settled) return;
@@ -7512,17 +7557,21 @@ export class BrowserTools {
             code: 'DOWNLOAD_TIMEOUT',
             error: `No matching download within ${timeoutMs}ms.`,
             timeoutMs,
+            dispatched: actionDispatched,
+            outcomeCertainty: actionDispatched ? 'unknown' : 'known_completed',
           });
         }, timeoutMs);
 
         void (async () => {
           try {
             if (directUrl) {
+              actionDispatched = true;
               expectedDownloadId = await chrome.downloads.download({ url: directUrl, saveAs: false });
               trackedId = expectedDownloadId;
               return;
             }
             if (triggerSelector) {
+              actionDispatched = true;
               const clickResult = await this.click({
                 selector: triggerSelector,
                 tabId,
@@ -7533,6 +7582,8 @@ export class BrowserTools {
                   success: false,
                   error: String(clickResult.error || 'Trigger click failed.'),
                   code: clickResult.code || 'TRIGGER_FAILED',
+                  dispatched: clickResult.dispatched ?? actionDispatched,
+                  outcomeCertainty: clickResult.outcomeCertainty || 'known_completed',
                 });
               }
             }
@@ -7540,6 +7591,8 @@ export class BrowserTools {
             finish({
               success: false,
               error: String((error as Error)?.message || error || 'Download setup failed.'),
+              dispatched: actionDispatched,
+              outcomeCertainty: actionDispatched ? 'unknown' : 'known_not_executed',
             });
           }
         })();

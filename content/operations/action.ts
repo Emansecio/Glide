@@ -29,8 +29,18 @@ export const resolveOperationTarget = (
       tabId: Number(payload.__glideTabId),
       frameId: Number(payload.__glideFrameId),
     });
-    if (resolved && !resolved.ok) return { failure: resolved };
-    if (resolved?.ok) return { element: resolved.element as HTMLElement };
+    if (!resolved) {
+      return {
+        failure: {
+          success: false,
+          code: 'STALE_ELEMENT_HANDLE',
+          error: 'Stable handle could not be verified.',
+          outcomeCertainty: 'known_not_executed',
+        },
+      };
+    }
+    if (!resolved.ok) return { failure: { ...resolved, success: false, outcomeCertainty: 'known_not_executed' } };
+    return { element: resolved.element as HTMLElement };
   }
   const selector = String(payload.selector || '').trim();
   if (!selector) return { failure: { success: false, code: 'INVALID_SELECTOR', error: 'Missing selector.' } };

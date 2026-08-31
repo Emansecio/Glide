@@ -43,16 +43,21 @@ async function restartWorker(context: BrowserContext, panel: Page, workerTarget:
   throw new Error('Service worker did not restart after run_status_query.');
 }
 
-async function seedCheckpoint(panel: Page, phase: 'model' | 'committing' | 'action_in_flight', runId: string) {
+async function seedCheckpoint(
+  panel: Page,
+  phase: 'model' | 'committing' | 'action_in_flight',
+  runId: string,
+  tool = 'click',
+) {
   await panel.evaluate(
-    async ({ checkpointPhase, id }) => {
+    async ({ checkpointPhase, id, actionTool }) => {
       const now = Date.now();
       const inFlightAction =
         checkpointPhase === 'action_in_flight'
           ? {
               actionId: `${id}:action:1`,
               runId: id,
-              tool: 'click',
+              tool: actionTool,
               argsDigest: 'fixture-digest',
               state: 'in_flight',
               startedAt: now - 50,
@@ -82,7 +87,7 @@ async function seedCheckpoint(panel: Page, phase: 'model' | 'committing' | 'acti
         },
       });
     },
-    { checkpointPhase: phase, id: runId },
+    { checkpointPhase: phase, id: runId, actionTool: tool },
   );
 }
 
@@ -200,6 +205,35 @@ try {
     });
   }
   console.log('PASS ambiguous action required confirmation with zero replay');
+
+  for (const action of [
+    { runId: 'ambiguous-post-run', tool: 'httpRequest' },
+    { runId: 'ambiguous-download-run', tool: 'captureDownload' },
+  ]) {
+    await panel.evaluate(() => {
+      (window as unknown as { __workerRecoveryMessages: unknown[] }).__workerRecoveryMessages = [];
+    });
+    await seedCheckpoint(panel, 'action_in_flight', action.runId, action.tool);
+    workerTarget = await restartWorker(context, panel, workerTarget);
+    await panel.waitForFunction(
+      (expectedTool) =>
+        (
+          window as unknown as { __workerRecoveryMessages: Array<{ type?: string; action?: { tool?: string } }> }
+        ).__workerRecoveryMessages.some(
+          (message) => message.type === 'run_resume_required' && message.action?.tool === expectedTool,
+        ),
+      action.tool,
+      { timeout: 20_000 },
+    );
+    const actionMessages = await panel.evaluate(
+      () => (window as unknown as { __workerRecoveryMessages: Array<{ type?: string }> }).__workerRecoveryMessages,
+    );
+    assert(
+      !actionMessages.some((message) => message.type === 'tool_execution_start'),
+      `${action.tool} ambiguous checkpoint replayed after restart.`,
+    );
+    console.log(`PASS ${action.tool} timeout checkpoint required confirmation with zero restart replay`);
+  }
   void workerTarget;
 } catch (error) {
   console.error(error);

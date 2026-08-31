@@ -172,6 +172,36 @@ async function postcondition(context: BrowserContext, worker: Worker, panel: Pag
   await page.close();
 }
 
+async function delayedAmbiguousMutation(context: BrowserContext, worker: Worker, panel: Page, baseUrl: string) {
+  const page = await context.newPage();
+  await page.goto(`${baseUrl}/action-lab.html`);
+  const tabId = await worker.evaluate(async (url) => (await chrome.tabs.query({ url }))[0]?.id, page.url());
+  assert(typeof tabId === 'number', 'Fixture tab not found.');
+  await waitForBridge(worker, tabId);
+
+  const response = (await sendManualTool(panel, tabId, 'click', {
+    selector: '#delayed-action-button',
+    waitForDialog: false,
+    postcondition: { kind: 'visible', selector: '#never-created' },
+    postconditionTimeoutMs: 9000,
+  })) as {
+    result?: { success?: boolean; code?: string; ambiguousAction?: boolean; automaticReplayBlocked?: boolean };
+  };
+  const result = (response.result || response) as {
+    ambiguousAction?: boolean;
+    automaticReplayBlocked?: boolean;
+  };
+  assert(
+    result.ambiguousAction === true,
+    `delayed mutation was not terminalized ambiguous: ${JSON.stringify(response)}`,
+  );
+  assert(result.automaticReplayBlocked === true, `automatic replay was not blocked: ${JSON.stringify(response)}`);
+  await page.waitForTimeout(1000);
+  const mutationCount = await page.evaluate(() => (window as any).__actionLab.delayedMutation as number);
+  assert(mutationCount === 1, `delayed action expected one mutation, got ${mutationCount}`);
+  await page.close();
+}
+
 async function checkboxFrame(context: BrowserContext, worker: Worker, panel: Page, baseUrl: string) {
   const page = await context.newPage();
   await page.goto(`${baseUrl}/frame-lab.html`);
@@ -248,6 +278,7 @@ const cases = {
   'click-once': clickOnce,
   'find-element': findElement,
   'checkbox-frame': checkboxFrame,
+  'delayed-ambiguous': delayedAmbiguousMutation,
   postcondition,
 } as const;
 if (!(requestedCase in cases)) {

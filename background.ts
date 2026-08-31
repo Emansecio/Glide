@@ -1738,6 +1738,7 @@ class BackgroundService {
       let toolCalls: Array<Record<string, any>> = [];
       let responseMessages: Message[] = [];
       let qualityReport: Record<string, any> | null = null;
+      let visualContextPendingAtFinal = false;
 
       // Fix 3: Backoff for transient provider errors.
       const providerBackoff = createExponentialBackoff({ baseMs: 500, maxMs: 8000 });
@@ -2145,6 +2146,21 @@ class BackgroundService {
         toolResults = passResult.toolResults || [];
         toolCalls = passResult.toolCalls || [];
 
+        const explicitVisionRequested =
+          /\b(screenshot|print|imagem|image)\b/i.test(latestUserText) ||
+          toolCalls.some((call) => SCREENSHOT_TOOLS.has(String(call.toolName || call.name || '')));
+        if (
+          explicitVisionRequested &&
+          !this.visionInbox.hasPending(runMeta.runId) &&
+          (this.visionQueue.activeCount > 0 || this.visionQueue.pendingCount > 0)
+        ) {
+          const visionDeadline = Date.now() + 1000;
+          while (!this.visionInbox.hasPending(runMeta.runId) && Date.now() < visionDeadline) {
+            await new Promise((resolve) => setTimeout(resolve, 50));
+          }
+          visualContextPendingAtFinal = !this.visionInbox.hasPending(runMeta.runId);
+        }
+
         if (this.visionInbox.hasPending(runMeta.runId)) {
           currentHistory = normalizeConversationHistory(
             [
@@ -2440,6 +2456,9 @@ class BackgroundService {
         } else {
           finalText =
             'Não consegui gerar uma resposta final confiável neste turno. Tente novamente em alguns segundos.';
+        }
+        if (visualContextPendingAtFinal) {
+          finalText = `${finalText}\n\nContexto visual ainda pendente; a captura não foi usada nesta resposta.`.trim();
         }
         qualityReport = this.buildQualityReport({
           qualityMode: qualityRuntime.qualityMode,

@@ -4,6 +4,13 @@ import { SidePanelUI } from './panel-ui.js';
 
 export const PANEL_BOOKKEEPING_SET_MAX = 64;
 
+export function shouldAppendAssistantFinalForCommit(input: {
+  contextRevision: number;
+  finalRevision?: number;
+}): boolean {
+  return !Number.isInteger(input.finalRevision) || Number(input.finalRevision) > input.contextRevision;
+}
+
 export function boundPanelIdSet(set: Set<string>, id: string, max = PANEL_BOOKKEEPING_SET_MAX): void {
   const trimmed = String(id || '').trim();
   if (!trimmed) return;

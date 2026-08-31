@@ -13,6 +13,7 @@ export class SidePanelUI {
   elements: Record<string, any>;
   displayHistory: Message[];
   contextHistory: Message[];
+  contextRevision: number;
   sessionId: string;
   activeRunId: string | null;
   completedRunIds: Set<string>;
@@ -260,6 +261,7 @@ export class SidePanelUI {
     this.abortActiveStreaming?.();
     this.displayHistory = [];
     this.contextHistory = [];
+    this.contextRevision = 0;
     this.sessionId = `session-${Date.now()}`;
     this.activeRunId = null;
     this.completedRunIds = new Set();
@@ -310,6 +312,7 @@ export class SidePanelUI {
 
     this.displayHistory = [];
     this.contextHistory = [];
+    this.contextRevision = 0;
     this.sessionId = `session-${Date.now()}`;
     this.activeRunId = null;
     this.completedRunIds = new Set();

@@ -85,6 +85,7 @@ export type AssistantFinal = RuntimeMessageBase & {
     percent?: number;
   };
   responseMessages?: Array<Record<string, unknown>>;
+  contextRevision?: number;
   qualityReport?: Record<string, unknown> | null;
 };
 
@@ -113,6 +114,19 @@ export type RunStopped = RuntimeMessageBase & {
   type: 'run_stopped';
   message: string;
   details?: Record<string, unknown>;
+};
+
+export type ContextCommitMessage = RuntimeMessageBase & {
+  type: 'context_commit';
+  previousSessionId?: string;
+  revision: number;
+  messages: Array<Record<string, unknown>>;
+  compacted: boolean;
+  contextUsage: {
+    approxTokens?: number;
+    contextLimit?: number;
+    percent?: number;
+  };
 };
 
 export type ContextCompacted = RuntimeMessageBase & {
@@ -150,6 +164,7 @@ export type RuntimeMessage =
   | RunError
   | RunWarning
   | RunStopped
+  | ContextCommitMessage
   | ContextCompacted
   | VisionContextReady;
 
@@ -166,6 +181,7 @@ export const runtimeMessageTypes = [
   'run_error',
   'run_warning',
   'run_stopped',
+  'context_commit',
   'context_compacted',
   'vision_context_ready',
 ] as const;
@@ -334,6 +350,9 @@ const validateRuntimeMessageShape = (message: GenericRecord): RuntimeMessageVali
       if (!isOptionalArray(message.responseMessages)) {
         return { ok: false, reason: 'assistant_final.responseMessages must be an array.' };
       }
+      if (message.contextRevision !== undefined && (!Number.isInteger(message.contextRevision) || Number(message.contextRevision) < 0)) {
+        return { ok: false, reason: 'assistant_final.contextRevision must be a non-negative integer.' };
+      }
       if (!isOptionalRecord(message.qualityReport)) {
         return { ok: false, reason: 'assistant_final.qualityReport must be object|null.' };
       }
@@ -352,6 +371,16 @@ const validateRuntimeMessageShape = (message: GenericRecord): RuntimeMessageVali
     case 'run_stopped':
       if (!isString(message.message)) return { ok: false, reason: `${type}.message must be a string.` };
       if (!isOptionalRecord(message.details)) return { ok: false, reason: `${type}.details must be an object.` };
+      return { ok: true, message: message as RuntimeMessage };
+    case 'context_commit':
+      if (!Number.isInteger(message.revision) || Number(message.revision) <= 0) {
+        return { ok: false, reason: 'context_commit.revision must be a positive integer.' };
+      }
+      if (!Array.isArray(message.messages)) return { ok: false, reason: 'context_commit.messages must be an array.' };
+      if (typeof message.compacted !== 'boolean') return { ok: false, reason: 'context_commit.compacted must be boolean.' };
+      if (!isContextUsageLike(message.contextUsage)) {
+        return { ok: false, reason: 'context_commit.contextUsage is invalid.' };
+      }
       return { ok: true, message: message as RuntimeMessage };
     case 'context_compacted':
       if (!isString(message.summary)) return { ok: false, reason: 'context_compacted.summary must be a string.' };

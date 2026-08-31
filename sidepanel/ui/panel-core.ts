@@ -4,7 +4,7 @@ import { isRuntimeMessage } from '../../types/runtime-messages.js';
 import { bindModelPicker } from './bind-model-picker.js';
 import { bindSettings } from './bind-settings.js';
 import { createModalController } from './modal-controller.js';
-import { shouldAcceptContextCompaction } from './panel-guards.js';
+import { shouldAcceptContextCompaction, shouldAppendAssistantFinalForCommit } from './panel-guards.js';
 import { bindSidebarNavigation } from './panel-navigation.js';
 import { connectPanelPort } from './panel-port.js';
 import { SidePanelUI } from './panel-ui.js';
@@ -392,6 +392,36 @@ SidePanelUI.prototype.maybeNotifyRunComplete = function maybeNotifyRunComplete(c
 };
 
 SidePanelUI.prototype.handleRuntimeMessage = function handleRuntimeMessage(message: any) {
+  if (message.type === 'context_commit') {
+    if (
+      !shouldAcceptContextCompaction({
+        messageSessionId: message.sessionId,
+        newSessionId: message.sessionId,
+        previousSessionId: message.previousSessionId,
+        messageRunId: message.runId,
+        activeRunId: this.activeRunId,
+        completedRunIds: this.completedRunIds,
+        sessionId: this.sessionId,
+        pendingSessionId: this.pendingSessionId,
+        acceptedSessionIds: this.acceptedSessionIds,
+      }) ||
+      !Number.isInteger(message.revision) ||
+      message.revision <= this.contextRevision
+    ) {
+      return;
+    }
+    const normalized = normalizeConversationHistory(message.messages as Message[]);
+    this.contextHistory = cloneConversationHistory(normalized);
+    this.contextRevision = message.revision;
+    if (message.sessionId && message.sessionId !== this.sessionId) {
+      this.noteAcceptedSessionId?.(this.sessionId);
+      this.sessionId = message.sessionId;
+      this.noteAcceptedSessionId?.(message.sessionId);
+    }
+    this.swContextSyncedSessions.add(this.sessionId);
+    if (message.contextUsage) this.applyContextUsageSnapshot(message.contextUsage);
+    return;
+  }
   if (message.type === 'context_compacted') {
     if (
       !shouldAcceptContextCompaction({
@@ -503,7 +533,13 @@ SidePanelUI.prototype.handleRuntimeMessage = function handleRuntimeMessage(messa
       message,
     );
     // Empty final that display rejects must not pollute contextHistory.
-    if (accepted !== false) {
+    if (
+      accepted !== false &&
+      shouldAppendAssistantFinalForCommit({
+        contextRevision: this.contextRevision,
+        finalRevision: message.contextRevision,
+      })
+    ) {
       this.appendContextMessages(message.responseMessages, message.content, message.thinking);
     }
     // Context-WINDOW occupancy = the real size of the conversation (bounded by the

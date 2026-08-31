@@ -134,6 +134,7 @@ import {
   resolveTimeoutMs,
   shouldInvalidateDomCache,
 } from './background/service-config.js';
+import { contextTransactionStore } from './background/context-transaction.js';
 import { resolveUserMessageContextAction, sessionContextStore } from './background/session-context-store.js';
 import {
   ActiveRunSentinelRegistry,
@@ -2280,9 +2281,10 @@ class BackgroundService {
       }
 
       const nextHistory = normalizeConversationHistory([...currentHistory, ...responseMessages]);
-      if (!this.sessionTombstones.isTombstoned(sessionId)) {
-        sessionContextStore.set(sessionId, nextHistory);
-      }
+      const contextSourceSessionId = sessionId;
+      const sourceRevision = contextTransactionStore.read(contextSourceSessionId).revision;
+      let terminalHistory = nextHistory;
+      let compacted = false;
       const compactionSettings = DEFAULT_COMPACTION_SETTINGS;
       let contextUsage = estimateContextTokens(nextHistory);
 
@@ -2314,12 +2316,39 @@ class BackgroundService {
           );
           if (compactedHistory) {
             sessionId = runMeta.sessionId;
+            terminalHistory = compactedHistory;
+            compacted = true;
             contextUsage = estimateContextTokens(compactedHistory);
           }
         }
       }
 
+      if (this.sessionTombstones.isTombstoned(contextSourceSessionId) || this.isRunAborted(runMeta.runId)) {
+        throw new Error('Run aborted before context commit.');
+      }
+      const contextCommit = contextTransactionStore.commit({
+        sessionId,
+        ...(sessionId !== contextSourceSessionId ? { previousSessionId: contextSourceSessionId } : {}),
+        sourceRevision,
+        runId: runMeta.runId,
+        turnId: runMeta.turnId,
+        messages: terminalHistory,
+        compacted,
+        contextUsage: { approxTokens: contextUsage.tokens, contextLimit },
+      });
+      sessionContextStore.set(contextCommit.sessionId, contextCommit.messages);
+      if (contextCommit.previousSessionId && contextCommit.previousSessionId !== contextCommit.sessionId) {
+        sessionContextStore.delete(contextCommit.previousSessionId);
+      }
       this.runtimeBatcher.flush(runMeta.runId);
+      this.sendRuntime(runMeta, {
+        type: 'context_commit',
+        previousSessionId: contextCommit.previousSessionId,
+        revision: contextCommit.revision,
+        messages: contextCommit.messages,
+        compacted: contextCommit.compacted,
+        contextUsage: contextCommit.contextUsage,
+      });
       this.sendRuntime(runMeta, {
         type: 'assistant_final',
         content: finalText,
@@ -2336,6 +2365,7 @@ class BackgroundService {
         // the cumulative per-turn input which sums across every tool step.
         contextUsage: { approxTokens: contextUsage.tokens, contextLimit },
         responseMessages,
+        contextRevision: contextCommit.revision,
         qualityReport,
       });
       // Turn terminal: libera o lock após assistant_final. Compaction/warnings

@@ -12,6 +12,7 @@ export type GlideBridgeOp =
   | 'pressKey'
   | 'scroll'
   | 'findElement'
+  | 'readPage'
   | 'selectOption'
   | 'setChecked'
   | 'highlightElement';

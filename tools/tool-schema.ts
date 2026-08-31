@@ -34,6 +34,21 @@ export const FRAME_TARGET_PROPS = {
   frameSelector: FRAME_SELECTOR_PROP,
 } as const;
 
+export const ELEMENT_HANDLE_PROP = {
+  type: 'object',
+  description: 'Optional snapshot-scoped stable element handle returned by readPage or findElement.',
+  properties: {
+    version: { type: 'number' },
+    snapshotId: { type: 'string' },
+    ref: { type: 'string' },
+    tabId: { type: 'number' },
+    frameId: { type: 'number' },
+    selector: { type: 'string' },
+    fingerprint: { type: 'object' },
+    domRevision: { type: 'number' },
+  },
+} as const;
+
 export const defineTool = (
   name: string,
   description: string,

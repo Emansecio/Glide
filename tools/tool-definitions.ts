@@ -1,4 +1,5 @@
 import {
+  ELEMENT_HANDLE_PROP,
   FRAME_TARGET_PROPS,
   RETRIES_PROP,
   SELECTOR_PROP,
@@ -32,6 +33,7 @@ export const buildToolDefinitions = (_maxSessionTabs: number): ToolDefinition[] 
       selector: SELECTOR_PROP(
         'CSS selector or short visible label. Prefer "seguindo", "a[href*=\'/following\']", "#submit" — not .x* utility classes.',
       ),
+      handle: ELEMENT_HANDLE_PROP,
       tabId: TAB_ID_PROP,
       retries: RETRIES_PROP,
       waitForDialog: {
@@ -41,7 +43,6 @@ export const buildToolDefinitions = (_maxSessionTabs: number): ToolDefinition[] 
       },
       ...FRAME_TARGET_PROPS,
     },
-    ['selector'],
   ),
   defineTool(
     'hover',
@@ -79,12 +80,13 @@ export const buildToolDefinitions = (_maxSessionTabs: number): ToolDefinition[] 
     'Type text into an input, textarea, select, or contenteditable element. If the selector fails, use findElement({ query: "placeholder text" }) first to obtain a reliable selector.',
     {
       selector: SELECTOR_PROP('CSS selector for the field. Example: "#email", "[name=password]".'),
+      handle: ELEMENT_HANDLE_PROP,
       text: { type: 'string', description: 'Text to enter.' },
       tabId: TAB_ID_PROP,
       retries: RETRIES_PROP,
       ...FRAME_TARGET_PROPS,
     },
-    ['selector', 'text'],
+    ['text'],
   ),
   defineTool(
     'pressKey',
@@ -98,6 +100,7 @@ export const buildToolDefinitions = (_maxSessionTabs: number): ToolDefinition[] 
           'Optional modifier keys held during the chord, e.g. ["Control"] for Ctrl+key or ["Control","Shift"] for Ctrl+Shift+key.',
       },
       selector: { type: 'string', description: 'Optional selector to focus before pressing the key.' },
+      handle: ELEMENT_HANDLE_PROP,
       tabId: TAB_ID_PROP,
       ...FRAME_TARGET_PROPS,
     },
@@ -161,6 +164,7 @@ export const buildToolDefinitions = (_maxSessionTabs: number): ToolDefinition[] 
     {
       selector: SELECTOR_PROP('CSS selector for the target element.'),
       ref: { type: 'string', description: 'readPage ref such as e1 (alternative to selector).' },
+      handle: ELEMENT_HANDLE_PROP,
       padding: {
         type: 'number',
         description: 'Padding in px around the element. Default 8. Range 0–100.',
@@ -443,13 +447,13 @@ export const buildToolDefinitions = (_maxSessionTabs: number): ToolDefinition[] 
     'Select an option in a native <select> or custom ARIA dropdown (MUI/React-Select combobox + portal listbox). Provide exactly one of value, label, or index.',
     {
       selector: SELECTOR_PROP('CSS selector for the <select> or combobox trigger.'),
+      handle: ELEMENT_HANDLE_PROP,
       value: { type: 'string', description: 'Option value attribute to select.' },
       label: { type: 'string', description: 'Visible option label/text to select.' },
       index: { type: 'number', description: 'Zero-based option index.' },
       tabId: TAB_ID_PROP,
       ...FRAME_TARGET_PROPS,
     },
-    ['selector'],
   ),
   defineTool(
     'fillForm',
@@ -487,6 +491,7 @@ export const buildToolDefinitions = (_maxSessionTabs: number): ToolDefinition[] 
     {
       selector: SELECTOR_PROP('CSS selector for the target element.'),
       ref: { type: 'string', description: 'readPage ref such as e1, e2 (alternative to selector).' },
+      handle: ELEMENT_HANDLE_PROP,
       durationMs: {
         type: 'number',
         description: 'Highlight duration in ms. Default 1200. Range 200–5000.',

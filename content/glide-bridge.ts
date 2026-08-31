@@ -1,4 +1,5 @@
 import { GLIDE_BRIDGE_MESSAGE_TYPE, type GlideBridgeOp } from '../tools/content-bridge.js';
+import { beginElementSnapshot, createElementHandle, resolveSnapshotHandle } from './element-snapshot.js';
 import {
   CLICKABLE_SELECTOR,
   INTERACTIVE_SELECTOR,
@@ -19,6 +20,7 @@ import {
   resolveInteractiveTarget,
   resolveProfileStatLink,
   resolveReadPageRef,
+  readPageInventory,
   scrollPage,
   selectOptionOnTarget,
   setCheckedOnTarget,
@@ -86,14 +88,28 @@ const resolveClickTarget = (selector: string): HTMLElement | null => {
   return bySelector && isVisible(bySelector) ? bySelector : null;
 };
 
+const resolvePayloadHandle = (payload: Record<string, unknown>) => {
+  if (!payload.handle) return null;
+  const target = {
+    tabId: Number(payload.__glideTabId),
+    frameId: Number(payload.__glideFrameId),
+  };
+  return resolveSnapshotHandle(payload.handle, target);
+};
+
 const handleClick = async (payload: Record<string, unknown>) => {
-  const selector = String(payload.selector || '').trim();
+  const handleResolution = resolvePayloadHandle(payload);
+  if (handleResolution && !handleResolution.ok) return handleResolution;
+  const selector = String(handleResolution?.ok ? (payload.handle as { selector: string }).selector : payload.selector || '').trim();
   const retries = typeof payload.retries === 'number' ? Math.max(1, Math.min(5, Number(payload.retries))) : 2;
   const waitForModal = payload.waitForDialog !== false;
   if (!selector) return { success: false, code: 'INVALID_SELECTOR', error: 'Missing selector.' };
 
   for (let attempt = 1; attempt <= retries; attempt += 1) {
-    const element = resolveClickTarget(selector);
+    const element =
+      attempt === 1 && handleResolution?.ok
+        ? (handleResolution.element as HTMLElement)
+        : resolveClickTarget(selector);
     if (element) {
       const disabled =
         (element as HTMLButtonElement).disabled === true || element.getAttribute('aria-disabled') === 'true';
@@ -157,7 +173,9 @@ const handleClick = async (payload: Record<string, unknown>) => {
 };
 
 const handleType = async (payload: Record<string, unknown>) => {
-  const selector = String(payload.selector || '').trim();
+  const handleResolution = resolvePayloadHandle(payload);
+  if (handleResolution && !handleResolution.ok) return handleResolution;
+  const selector = String(handleResolution?.ok ? (payload.handle as { selector: string }).selector : payload.selector || '').trim();
   const text = String(payload.text ?? '');
   const retries = typeof payload.retries === 'number' ? Math.max(1, Math.min(5, Number(payload.retries))) : 2;
   if (!selector) return { success: false, code: 'INVALID_SELECTOR', error: 'Missing selector.' };
@@ -413,8 +431,14 @@ const handleMouse = async (payload: Record<string, unknown>) => {
 };
 
 const handlePressKey = (payload: Record<string, unknown>) => {
+  const handleResolution = resolvePayloadHandle(payload);
+  if (handleResolution && !handleResolution.ok) return handleResolution;
   const key = String(payload.key || '');
-  const selector = payload.selector ? String(payload.selector) : '';
+  const selector = handleResolution?.ok
+    ? String((payload.handle as { selector: string }).selector)
+    : payload.selector
+      ? String(payload.selector)
+      : '';
   const modifiers = Array.isArray(payload.modifiers) ? payload.modifiers.map(String) : undefined;
   if (!key) return { success: false, code: 'INVALID_ARGS', error: 'Missing key.' };
   return pressKeyOnTarget(key, selector || undefined, modifiers);
@@ -427,7 +451,9 @@ const handleSetChecked = (payload: Record<string, unknown>) => {
 };
 
 const handleSelectOption = async (payload: Record<string, unknown>) => {
-  const selector = String(payload.selector || '').trim();
+  const handleResolution = resolvePayloadHandle(payload);
+  if (handleResolution && !handleResolution.ok) return handleResolution;
+  const selector = String(handleResolution?.ok ? (payload.handle as { selector: string }).selector : payload.selector || '').trim();
   if (!selector) return { success: false, code: 'INVALID_SELECTOR', error: 'Missing selector.' };
   const criteria: { value?: string; label?: string; index?: number } = {};
   if (payload.value !== undefined) criteria.value = String(payload.value);
@@ -439,7 +465,13 @@ const handleSelectOption = async (payload: Record<string, unknown>) => {
 };
 
 const handleHighlightElement = (payload: Record<string, unknown>) => {
-  const selector = payload.selector ? String(payload.selector).trim() : '';
+  const handleResolution = resolvePayloadHandle(payload);
+  if (handleResolution && !handleResolution.ok) return handleResolution;
+  const selector = handleResolution?.ok
+    ? String((payload.handle as { selector: string }).selector)
+    : payload.selector
+      ? String(payload.selector).trim()
+      : '';
   const ref = payload.ref ? String(payload.ref).trim() : '';
   const durationMs =
     payload.durationMs !== undefined && Number.isFinite(Number(payload.durationMs))
@@ -478,8 +510,29 @@ const handleScroll = (payload: Record<string, unknown>) => {
   return scrollPage(direction, amount, selector, strategy);
 };
 
+const handleReadPage = (payload: Record<string, unknown>) => {
+  const result = readPageInventory(
+    typeof payload.maxItems === 'number' ? payload.maxItems : 40,
+    payload.interactiveOnly !== false,
+    String(payload.scope || 'auto') as 'auto' | 'page' | 'dialog',
+  );
+  const snapshot = beginElementSnapshot();
+  const target = { tabId: Number(payload.__glideTabId), frameId: Number(payload.__glideFrameId) };
+  return {
+    ...result,
+    snapshotId: snapshot.id,
+    elements: result.elements.map((entry) => {
+      const element = deepQuerySelector(entry.selector);
+      return {
+        ...entry,
+        ...(element ? { handle: createElementHandle(element, target, entry.selector, entry.ref, snapshot) } : {}),
+      };
+    }),
+  };
+};
+
 const handleFindElement = (payload: Record<string, unknown>) => {
-  return findElementsByQuery({
+  const result = findElementsByQuery({
     query: String(payload.query || ''),
     typeFilter: String(payload.type || 'any'),
     maxResults: typeof payload.maxResults === 'number' ? payload.maxResults : 5,
@@ -487,6 +540,22 @@ const handleFindElement = (payload: Record<string, unknown>) => {
     scope: String(payload.scope || 'auto'),
     deep: payload.deep === true,
   });
+  if (!result.success) return result;
+  const snapshot = beginElementSnapshot();
+  const target = { tabId: Number(payload.__glideTabId), frameId: Number(payload.__glideFrameId) };
+  return {
+    ...result,
+    snapshotId: snapshot.id,
+    candidates: result.candidates.map((candidate, index) => {
+      const element = deepQuerySelector(candidate.selector);
+      return {
+        ...candidate,
+        ...(element
+          ? { handle: createElementHandle(element, target, candidate.selector, `e${index + 1}`, snapshot) }
+          : {}),
+      };
+    }),
+  };
 };
 
 const bridgeHandlers: Record<GlideBridgeOp, (payload: Record<string, unknown>) => Promise<unknown> | unknown> = {
@@ -504,6 +573,7 @@ const bridgeHandlers: Record<GlideBridgeOp, (payload: Record<string, unknown>) =
   highlightElement: handleHighlightElement,
   scroll: handleScroll,
   findElement: handleFindElement,
+  readPage: handleReadPage,
 };
 
 export const installGlideBridge = () => {
@@ -511,7 +581,7 @@ export const installGlideBridge = () => {
   if (globalWindow[BRIDGE_FLAG]) return;
   globalWindow[BRIDGE_FLAG] = true;
 
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || message.type !== GLIDE_BRIDGE_MESSAGE_TYPE) return false;
     const op = String(message.op || '') as GlideBridgeOp;
     const handler = bridgeHandlers[op];
@@ -519,7 +589,12 @@ export const installGlideBridge = () => {
       sendResponse({ success: false, error: `Unknown bridge op: ${op}` });
       return true;
     }
-    void Promise.resolve(handler((message.payload || {}) as Record<string, unknown>))
+    const payload = {
+      ...((message.payload || {}) as Record<string, unknown>),
+      __glideTabId: sender.tab?.id ?? -1,
+      __glideFrameId: sender.frameId ?? 0,
+    };
+    void Promise.resolve(handler(payload))
       .then((result) => sendResponse({ bridge: true, ...(result as Record<string, unknown>) }))
       .catch((error) =>
         sendResponse({

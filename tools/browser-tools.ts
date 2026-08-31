@@ -184,6 +184,14 @@ export class BrowserTools {
     const schema = definition.input_schema;
     const properties = this.isRecord(schema?.properties) ? schema.properties : {};
     const normalizedArgs: Record<string, any> = { ...args };
+    if (
+      this.isRecord(normalizedArgs.handle) &&
+      typeof normalizedArgs.handle.tabId === 'number' &&
+      normalizedArgs.tabId === undefined
+    ) {
+      normalizedArgs.tabId = normalizedArgs.handle.tabId;
+      normalizedArgs._strictTabId = true;
+    }
 
     for (const requiredKey of schema.required || []) {
       if (!Object.prototype.hasOwnProperty.call(normalizedArgs, requiredKey)) {
@@ -308,6 +316,13 @@ export class BrowserTools {
       normalizedArgs.action = action;
       if (action === 'send' && (!normalizedArgs.method || !String(normalizedArgs.method).trim())) {
         return { ok: false, error: 'Argument "method" for cdp is required when action="send".' };
+      }
+    }
+
+    if (['click', 'type', 'selectOption'].includes(toolName)) {
+      const hasSelector = typeof normalizedArgs.selector === 'string' && normalizedArgs.selector.trim().length > 0;
+      if (!hasSelector && !this.isRecord(normalizedArgs.handle)) {
+        return { ok: false, error: `Argument "selector" or "handle" for ${toolName} is required.` };
       }
     }
 
@@ -441,11 +456,12 @@ export class BrowserTools {
     if (toolName === 'elementScreenshot') {
       const hasSelector = typeof normalizedArgs.selector === 'string' && normalizedArgs.selector.trim().length > 0;
       const hasRef = typeof normalizedArgs.ref === 'string' && normalizedArgs.ref.trim().length > 0;
-      if (!hasSelector && !hasRef) {
-        return { ok: false, error: 'Argument "selector" or "ref" for elementScreenshot is required.' };
+      const hasHandle = this.isRecord(normalizedArgs.handle);
+      if (!hasSelector && !hasRef && !hasHandle) {
+        return { ok: false, error: 'Argument "selector", "ref", or "handle" for elementScreenshot is required.' };
       }
-      if (hasSelector && hasRef) {
-        return { ok: false, error: 'Provide either selector or ref for elementScreenshot, not both.' };
+      if ([hasSelector, hasRef, hasHandle].filter(Boolean).length > 1) {
+        return { ok: false, error: 'Provide only one of selector, ref, or handle for elementScreenshot.' };
       }
       if (hasSelector) normalizedArgs.selector = normalizedArgs.selector.trim();
       if (hasRef) normalizedArgs.ref = normalizedArgs.ref.trim();
@@ -1764,7 +1780,7 @@ export class BrowserTools {
     if (!resolved.ok) return resolved.result;
     const { resolution } = resolved;
     const tabId = resolution.tabId;
-    const selector = String(args.selector || '');
+    const selector = String(args.selector || args.handle?.selector || '');
     // Default 2 attempts (was 3) — recovery Layer 3 handles hard misses cheaper than inject retries.
     const retries = typeof args.retries === 'number' ? Math.max(1, Math.min(5, Math.round(args.retries))) : 2;
     const waitForDialog = args.waitForDialog !== false;
@@ -1791,8 +1807,9 @@ export class BrowserTools {
       );
     }
 
-    const bridged = await this.tryBridge(tabId, injOpts?.frameId ?? 0, 'click', {
+    const bridged = await this.tryBridge(tabId, Number(args.handle?.frameId ?? injOpts?.frameId ?? 0), 'click', {
       selector,
+      handle: args.handle,
       retries,
       waitForDialog,
     });
@@ -2760,7 +2777,7 @@ export class BrowserTools {
     if (!resolved.ok) return resolved.result;
     const { resolution } = resolved;
     const tabId = resolution.tabId;
-    const selector = String(args.selector || '');
+    const selector = String(args.selector || args.handle?.selector || '');
     const text = String(args.text ?? '');
     const retries = typeof args.retries === 'number' ? Math.max(1, Math.min(5, Math.round(args.retries))) : 2;
     const pageUrl = resolution.tab.url || '';
@@ -2772,7 +2789,12 @@ export class BrowserTools {
     const frameMeta = framePrep.frameMeta;
 
     if (!this.hasFrameTarget(args)) {
-      const bridged = await this.tryBridge(tabId, 0, 'type', { selector, text, retries });
+      const bridged = await this.tryBridge(tabId, Number(args.handle?.frameId ?? 0), 'type', {
+        selector,
+        handle: args.handle,
+        text,
+        retries,
+      });
       if (bridged) {
         return this.attachResolutionMeta(bridged, resolution);
       }
@@ -3303,7 +3325,7 @@ export class BrowserTools {
     const { resolution } = resolved;
     const tabId = resolution.tabId;
     const key = String(args.key || '');
-    const selector = args.selector ? String(args.selector) : '';
+    const selector = String(args.selector || args.handle?.selector || '');
     const modifiers = Array.isArray(args.modifiers) ? args.modifiers.map(String) : [];
     const pageUrl = resolution.tab.url || '';
     const framePrep = await this.prepareFrameInjection(tabId, args, pageUrl);
@@ -3314,9 +3336,10 @@ export class BrowserTools {
     const frameMeta = framePrep.frameMeta;
 
     if (!this.hasFrameTarget(args)) {
-      const bridged = await this.tryBridge(tabId, 0, 'pressKey', {
+      const bridged = await this.tryBridge(tabId, Number(args.handle?.frameId ?? 0), 'pressKey', {
         key,
         selector: selector || undefined,
+        handle: args.handle,
         modifiers: modifiers.length ? modifiers : undefined,
       });
       if (bridged) {
@@ -6612,6 +6635,15 @@ export class BrowserTools {
       const injOpts = framePrep.runOptions;
       const frameMeta = framePrep.frameMeta;
 
+      const bridged = await this.tryBridge(resolution.tabId, injOpts?.frameId ?? 0, 'readPage', {
+        maxItems,
+        interactiveOnly,
+        scope,
+      });
+      if (bridged) {
+        return this.attachResolutionMeta(this.attachFrameMeta(bridged, frameMeta), resolution);
+      }
+
       const result = await this.runInTab(
         resolution.tabId,
         (max: number, interactive: boolean, searchScope: string) => {
@@ -6978,8 +7010,8 @@ export class BrowserTools {
     if (!resolved.ok) return resolved.result;
     const { resolution } = resolved;
     const tabId = resolution.tabId;
-    const selector = String(args.selector || '');
-    const payload: Record<string, unknown> = { selector };
+    const selector = String(args.selector || (args.handle as { selector?: string } | undefined)?.selector || '');
+    const payload: Record<string, unknown> = { selector, handle: args.handle };
     if (args.value !== undefined) payload.value = String(args.value);
     if (args.label !== undefined) payload.label = String(args.label);
     if (args.index !== undefined) payload.index = args.index;
@@ -6992,7 +7024,12 @@ export class BrowserTools {
     const frameMeta = framePrep.frameMeta;
 
     if (!this.hasFrameTarget(args as Record<string, any>)) {
-      const bridged = await this.tryBridge(tabId, 0, 'selectOption', payload);
+      const bridged = await this.tryBridge(
+        tabId,
+        Number((args.handle as { frameId?: number } | undefined)?.frameId ?? 0),
+        'selectOption',
+        payload,
+      );
       if (bridged) {
         return this.attachResolutionMeta(bridged, resolution);
       }
@@ -7327,7 +7364,9 @@ export class BrowserTools {
     if (!resolved.ok) return resolved.result;
     const { resolution } = resolved;
     const tabId = resolution.tabId;
-    const selector = args.selector ? String(args.selector) : '';
+    const selector = args.selector
+      ? String(args.selector)
+      : String((args.handle as { selector?: string } | undefined)?.selector || '');
     const ref = args.ref ? String(args.ref) : '';
     const durationMs =
       args.durationMs !== undefined && Number.isFinite(Number(args.durationMs)) ? Number(args.durationMs) : 1200;
@@ -7340,11 +7379,17 @@ export class BrowserTools {
     const frameMeta = framePrep.frameMeta;
 
     if (!this.hasFrameTarget(args as Record<string, any>)) {
-      const bridged = await this.tryBridge(tabId, 0, 'highlightElement', {
-        selector: selector || undefined,
-        ref: ref || undefined,
-        durationMs,
-      });
+      const bridged = await this.tryBridge(
+        tabId,
+        Number((args.handle as { frameId?: number } | undefined)?.frameId ?? 0),
+        'highlightElement',
+        {
+          selector: selector || undefined,
+          handle: args.handle,
+          ref: ref || undefined,
+          durationMs,
+        },
+      );
       if (bridged) {
         return this.attachResolutionMeta(bridged, resolution);
       }

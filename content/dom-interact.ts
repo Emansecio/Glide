@@ -1164,7 +1164,7 @@ export const scrollPage = (direction: string, amount: number, selector?: string,
   };
 };
 
-const buildOptimalSelector = (element: Element): string => {
+export const buildOptimalSelector = (element: Element): string => {
   const root = element.getRootNode();
   const localSelector = buildUniqueSelector(
     element,
@@ -1174,6 +1174,42 @@ const buildOptimalSelector = (element: Element): string => {
     return `${buildOptimalSelector(root.host)} >>> ${localSelector}`;
   }
   return localSelector;
+};
+
+export type ReadPageEntry = {
+  ref: string;
+  selector: string;
+  tag: string;
+  role?: string;
+  text: string;
+  disabled: boolean;
+};
+
+export const readPageInventory = (
+  maxItems = 40,
+  interactiveOnly = true,
+  scope: 'auto' | 'page' | 'dialog' = 'auto',
+): { success: true; url: string; title: string; scope: string; elements: ReadPageEntry[]; dialogs: DialogInfo[] } => {
+  const root = getPreferredSearchRoot(scope);
+  const query = interactiveOnly
+    ? INTERACTIVE_SELECTOR
+    : `${INTERACTIVE_SELECTOR}, h1, h2, h3, [role="heading"], main, nav`;
+  const elements = collectElements<HTMLElement>(query, root, Math.max(1, Math.min(80, maxItems * 3)))
+    .filter(isVisible)
+    .slice(0, Math.max(1, Math.min(80, maxItems)))
+    .map((element, index) => ({
+      ref: `e${index + 1}`,
+      selector: buildOptimalSelector(element),
+      tag: element.tagName.toLowerCase(),
+      role: element.getAttribute('role') || undefined,
+      text: normalizeText(
+        element.getAttribute('aria-label') || element.textContent || (element as HTMLInputElement).placeholder || '',
+      ).slice(0, 160),
+      disabled:
+        (element as HTMLButtonElement | HTMLInputElement).disabled === true ||
+        element.getAttribute('aria-disabled') === 'true',
+    }));
+  return { success: true, url: location.href, title: document.title, scope, elements, dialogs: listOpenDialogs() };
 };
 
 export type FindElementCandidate = {

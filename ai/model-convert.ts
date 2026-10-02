@@ -3,10 +3,15 @@ import { normalizeConversationHistory } from './message-schema.js';
 import type { Message, MessageContent, ToolCall } from './message-schema.js';
 import { isImagePart, isTextPart } from './message-utils.js';
 
+/** Marcador gravado por persist-serialization no lugar de imagens base64 grandes. */
+const isRedactedImage = (value: string) => value.trim().startsWith('<redacted:');
+
+const OMITTED_IMAGE_TEXT = '[image omitted from saved history]';
+
 function extractImageFromPart(part: Record<string, unknown>): string | null {
-  if (typeof part.image === 'string' && part.image.trim()) return part.image;
+  if (typeof part.image === 'string' && part.image.trim()) return isRedactedImage(part.image) ? null : part.image;
   const imageUrl = part.image_url as { url?: string } | undefined;
-  if (imageUrl?.url) return String(imageUrl.url);
+  if (imageUrl?.url) return isRedactedImage(String(imageUrl.url)) ? null : String(imageUrl.url);
   const source = part.source as { type?: string; media_type?: string; data?: string } | undefined;
   if (source?.data) {
     const mediaType = source.media_type || 'image/png';
@@ -31,7 +36,8 @@ function normalizeUserPart(part: unknown) {
     return { type: 'image', image } as const;
   }
   if (record.type === 'image' || record.type === 'image_url') {
-    return { type: 'text', text: '' } as const;
+    // Imagem redigida/ilegível: texto não vazio (provedores rejeitam bloco de texto vazio).
+    return { type: 'text', text: OMITTED_IMAGE_TEXT } as const;
   }
   return { type: 'text', text: '' } as const;
 }

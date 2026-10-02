@@ -18,11 +18,11 @@ export type ProviderModelsResult = {
   latencyMs?: number;
 };
 
-export async function detectOllamaDetailed(customEndpoint?: string): Promise<OllamaProbeResult> {
+async function detectOllamaDetailed(customEndpoint?: string): Promise<OllamaProbeResult> {
   return probeOllama({ customEndpoint, timeoutMs: 8000 });
 }
 
-export async function detectOpenAiCompatibleModels(
+async function detectOpenAiCompatibleModels(
   provider: string,
   apiKey: string,
   customEndpoint?: string,
@@ -97,5 +97,3 @@ export async function fetchProviderModels(request: ProviderModelsRequest): Promi
     endpoint: resolveProviderBaseUrl(provider, customEndpoint),
   };
 }
-
-export type { OllamaModelInfo, OllamaProbeResult };

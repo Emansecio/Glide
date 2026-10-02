@@ -55,7 +55,10 @@ function isSensitiveKey(key: string): boolean {
     normalized.includes('secret') ||
     normalized.includes('password') ||
     normalized.includes('authorization') ||
-    normalized.includes('credential')
+    normalized.includes('credential') ||
+    normalized.includes('cookie') ||
+    normalized.includes('csrf') ||
+    normalized.includes('xsrf')
   );
 }
 

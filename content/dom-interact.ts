@@ -8,7 +8,7 @@ import { buildUniqueSelector, matchesElementQuery } from './selector-engine.js';
 
 export { deepQuerySelector };
 
-export const DIALOG_SELECTOR =
+const DIALOG_SELECTOR =
   '[role="dialog"], [aria-modal="true"], div[role="dialog"], [data-testid*="modal" i], [class*="Dialog" i], [class*="modal" i]';
 
 export const CLICKABLE_SELECTOR = [
@@ -46,7 +46,7 @@ export const INTERACTIVE_SELECTOR = [
   '[tabindex="0"]',
 ].join(', ');
 
-export const CLOSE_BUTTON_SELECTOR = [
+const CLOSE_BUTTON_SELECTOR = [
   'button[aria-label*="close" i]',
   'button[aria-label*="fechar" i]',
   'button[aria-label*="dismiss" i]',
@@ -59,7 +59,7 @@ export const CLOSE_BUTTON_SELECTOR = [
   'svg[aria-label="Fechar"]',
 ].join(', ');
 
-export const normalizeText = (value: string) =>
+const normalizeText = (value: string) =>
   String(value || '')
     .replace(/\s+/g, ' ')
     .trim();
@@ -197,12 +197,12 @@ export const listOpenShadowHosts = (
   return hosts;
 };
 
-export type CollectElementsOptions = {
+type CollectElementsOptions = {
   /** When false, do not pierce open shadow roots (faster for light-DOM dialogs). Default true. */
   pierceShadow?: boolean;
 };
 
-export const collectElements = <T extends Element>(
+const collectElements = <T extends Element>(
   query: string,
   root: Document | ShadowRoot | Element = document,
   max = 400,
@@ -234,7 +234,7 @@ export const collectElements = <T extends Element>(
 };
 
 /** Collect up to `limit` matches without materializing the full NodeList into an array first. */
-export const queryLimited = <T extends Element>(root: ParentNode, selector: string, limit: number): T[] => {
+const queryLimited = <T extends Element>(root: ParentNode, selector: string, limit: number): T[] => {
   const out: T[] = [];
   if (limit <= 0) return out;
   let matches: NodeListOf<Element>;
@@ -343,7 +343,7 @@ export const listOpenDialogs = (): DialogInfo[] => {
   return dialogs;
 };
 
-export const getPreferredSearchRoot = (scope: 'auto' | 'page' | 'dialog' = 'auto'): Document | Element => {
+const getPreferredSearchRoot = (scope: 'auto' | 'page' | 'dialog' = 'auto'): Document | Element => {
   if (scope === 'page') return document;
   const dialogs = collectElements<HTMLElement>(DIALOG_SELECTOR, document, 12).filter(isVisible);
   if (scope === 'dialog') {
@@ -515,57 +515,7 @@ export const resolveProfileStatLink = (query: string, root: Document | Element =
   return null;
 };
 
-export const findClickableByText = (query: string, root: Document | Element = document): HTMLElement | null => {
-  const needle = normalizeText(query).toLowerCase();
-  if (!needle) return null;
-
-  // Profile stats first — "154 seguindo" must not lose to a random .x* class match elsewhere.
-  const stat = resolveProfileStatLink(needle, root);
-  if (stat) return stat;
-
-  const candidates = collectElements<HTMLElement>(CLICKABLE_SELECTOR, root, 300).filter(isVisible);
-  // Strip leading counts so "154 seguindo" also matches label-only nodes ("seguindo").
-  const labelOnly = needle.replace(/^[\d.,\s]+/, '').trim();
-  const tokens = needle.split(/\s+/).filter((t) => t.length >= 2 && !/^\d+$/.test(t));
-
-  // Prefer exact / prefix matches on short labels (Instagram "seguidores", "followers").
-  const scored: Array<{ el: HTMLElement; score: number }> = [];
-  for (const el of candidates) {
-    const text = normalizeText(el.textContent || '').toLowerCase();
-    const aria = normalizeText(el.getAttribute('aria-label') || '').toLowerCase();
-    const title = normalizeText(el.getAttribute('title') || '').toLowerCase();
-    const href = normalizeText(el.getAttribute('href') || '').toLowerCase();
-    const fields = [aria, title, text.slice(0, 120), href];
-    let score = 0;
-    for (const field of fields) {
-      if (!field) continue;
-      if (field === needle) score = Math.max(score, 100);
-      else if (labelOnly && field === labelOnly) score = Math.max(score, 95);
-      else if (field.startsWith(needle) || (labelOnly && field.startsWith(labelOnly))) score = Math.max(score, 80);
-      else if (field.includes(needle) || (labelOnly && labelOnly.length >= 4 && field.includes(labelOnly))) {
-        score = Math.max(score, 70);
-      }
-      // Instagram profile stats often put the count + label in the same node ("123 seguidores")
-      else if (needle.length >= 4 && field.split(/\s+/).some((w) => w === needle || w.includes(needle))) {
-        score = Math.max(score, 65);
-      } else if (tokens.length >= 1 && tokens.every((t) => field.includes(t))) {
-        score = Math.max(score, 75);
-      }
-    }
-    // Strong boost for stable social hrefs when the query is about that list.
-    if (href.includes('/following') && (needle.includes('seguindo') || needle.includes('following'))) {
-      score = Math.max(score, 110);
-    }
-    if (href.includes('/followers') && (needle.includes('seguidores') || needle.includes('followers'))) {
-      score = Math.max(score, 110);
-    }
-    if (score > 0) scored.push({ el, score });
-  }
-  scored.sort((a, b) => b.score - a.score);
-  return scored[0]?.el || null;
-};
-
-export const findCloseControl = (dialog?: Element | null): HTMLElement | null => {
+const findCloseControl = (dialog?: Element | null): HTMLElement | null => {
   const root = dialog || getPreferredSearchRoot('dialog');
   const candidates = collectElements<HTMLElement>(CLOSE_BUTTON_SELECTOR, root, 40).filter(isVisible);
   if (candidates[0]) return candidates[0];
@@ -581,7 +531,7 @@ export const findCloseControl = (dialog?: Element | null): HTMLElement | null =>
   return null;
 };
 
-export const pressKeyOn = (key: string, target?: HTMLElement | null) => {
+const pressKeyOn = (key: string, target?: HTMLElement | null) => {
   const el = target || (document.activeElement as HTMLElement | null) || document.body;
   const init: KeyboardEventInit = {
     key,
@@ -599,7 +549,7 @@ export const pressKeyOn = (key: string, target?: HTMLElement | null) => {
 const INTERACTIVE_DISMISS_TAGS = new Set(['A', 'BUTTON', 'INPUT', 'SELECT', 'TEXTAREA', 'LABEL']);
 
 /** Backdrop click is safe only for full-viewport overlay layers — not nav/links at (8,8). */
-export const isDismissBackdropTarget = (hit: HTMLElement, dialogEl: HTMLElement): boolean => {
+const isDismissBackdropTarget = (hit: HTMLElement, dialogEl: HTMLElement): boolean => {
   if (dialogEl.contains(hit)) return false;
   if (INTERACTIVE_DISMISS_TAGS.has(hit.tagName)) return false;
   if (hit.closest('a[href], button, input, select, textarea, [role="button"], [role="link"], nav')) return false;
@@ -671,7 +621,7 @@ export const dismissOpenModal = (): {
 
 export const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export const extractTextHint = (selectorText: string, minLen = 2): string => {
+const extractTextHint = (selectorText: string, minLen = 2): string => {
   const quoted = selectorText.match(/["']([^"']+)["']/);
   if (quoted?.[1]) return quoted[1].trim();
   const bare = selectorText
@@ -683,31 +633,26 @@ export const extractTextHint = (selectorText: string, minLen = 2): string => {
   return bare;
 };
 
-export const findInteractiveByText = (
+const findInteractiveByText = (
   query: string,
   root: Document | Element = document,
   selector: string = INTERACTIVE_SELECTOR,
+  exactOnly = false,
 ): HTMLElement | null => {
   const needle = normalizeText(query).toLowerCase();
   if (!needle) return null;
-  return (
-    collectElements<HTMLElement>(selector, root, 300)
-      .filter(isVisible)
-      .find((element) => {
-        const text = normalizeText(element.textContent || '').toLowerCase();
-        const aria = normalizeText(element.getAttribute('aria-label') || '').toLowerCase();
-        const title = normalizeText(element.getAttribute('title') || '').toLowerCase();
-        const testId = normalizeText(element.getAttribute('data-testid') || '').toLowerCase();
-        const value = normalizeText((element as HTMLInputElement).value || '').toLowerCase();
-        return (
-          text.includes(needle) ||
-          aria.includes(needle) ||
-          title.includes(needle) ||
-          testId.includes(needle) ||
-          value.includes(needle)
-        );
-      }) || null
-  );
+  const candidates = collectElements<HTMLElement>(selector, root, 300).filter(isVisible);
+  const fieldsOf = (element: HTMLElement) => [
+    normalizeText(element.textContent || '').toLowerCase(),
+    normalizeText(element.getAttribute('aria-label') || '').toLowerCase(),
+    normalizeText(element.getAttribute('title') || '').toLowerCase(),
+    normalizeText(element.getAttribute('data-testid') || '').toLowerCase(),
+    normalizeText((element as HTMLInputElement).value || '').toLowerCase(),
+  ];
+  // Correspondência exata primeiro: "save" deve achar o botão "Save", não "Save as draft".
+  const exact = candidates.find((element) => fieldsOf(element).some((field) => field === needle));
+  if (exact || exactOnly) return exact || null;
+  return candidates.find((element) => fieldsOf(element).some((field) => field.includes(needle))) || null;
 };
 
 export const resolveInteractiveTarget = (
@@ -715,17 +660,21 @@ export const resolveInteractiveTarget = (
   querySelector: string = INTERACTIVE_SELECTOR,
 ): HTMLElement | null => {
   const selectorText = String(selector || '').trim();
+  let selectorMatchedHidden = false;
   if (selectorText) {
     const bySelector = deepQuerySelector<HTMLElement>(selectorText);
     if (bySelector && isVisible(bySelector)) return bySelector;
+    selectorMatchedHidden = Boolean(bySelector);
   }
+  // O seletor EXATO existe mas está oculto/carregando: um palpite por substring clicaria em outro
+  // elemento (`#save` → "Save as draft"). Só aceita correspondência exata de texto nesse caso.
   const hint = extractTextHint(selectorText, 2);
   if (hint) {
-    const byText = findInteractiveByText(hint, document, querySelector);
+    const byText = findInteractiveByText(hint, document, querySelector, selectorMatchedHidden);
     if (byText) return byText;
   }
   if (selectorText) {
-    const byText = findInteractiveByText(selectorText, document, querySelector);
+    const byText = findInteractiveByText(selectorText, document, querySelector, selectorMatchedHidden);
     if (byText) return byText;
   }
   return null;
@@ -857,7 +806,7 @@ export type KeyModifier = 'Control' | 'Alt' | 'Shift' | 'Meta';
 
 const KEY_MODIFIERS = new Set<KeyModifier>(['Control', 'Alt', 'Shift', 'Meta']);
 
-export const normalizeKeyModifiers = (modifiers?: string[]): KeyModifier[] => {
+const normalizeKeyModifiers = (modifiers?: string[]): KeyModifier[] => {
   if (!Array.isArray(modifiers)) return [];
   const out: KeyModifier[] = [];
   for (const raw of modifiers) {
@@ -875,6 +824,79 @@ export const shouldFireInputChangeForKey = (key: string, modifiers: KeyModifier[
   if (lower === 'backspace' || lower === 'delete') return true;
   if (modifiers.length > 0) return false;
   return k.length === 1;
+};
+
+const KEY_CODE_TABLE: Record<string, [string, number]> = {
+  Enter: ['Enter', 13],
+  Escape: ['Escape', 27],
+  Tab: ['Tab', 9],
+  Backspace: ['Backspace', 8],
+  Delete: ['Delete', 46],
+  ' ': ['Space', 32],
+  ArrowLeft: ['ArrowLeft', 37],
+  ArrowUp: ['ArrowUp', 38],
+  ArrowRight: ['ArrowRight', 39],
+  ArrowDown: ['ArrowDown', 40],
+  Home: ['Home', 36],
+  End: ['End', 35],
+  PageUp: ['PageUp', 33],
+  PageDown: ['PageDown', 34],
+};
+
+/** `code`/`keyCode` legados: handlers `e.keyCode === 13` / `e.code === 'Enter'` ignoravam o evento sintético. */
+const resolveKeyCodes = (key: string): { code?: string; keyCode?: number } => {
+  const known = KEY_CODE_TABLE[key];
+  if (known) return { code: known[0], keyCode: known[1] };
+  if (/^[a-z]$/i.test(key)) return { code: `Key${key.toUpperCase()}`, keyCode: key.toUpperCase().charCodeAt(0) };
+  if (/^[0-9]$/.test(key)) return { code: `Digit${key}`, keyCode: 48 + Number(key) };
+  return {};
+};
+
+const NON_SUBMITTING_INPUT_TYPES = new Set([
+  'button',
+  'submit',
+  'reset',
+  'checkbox',
+  'radio',
+  'file',
+  'image',
+  'range',
+  'color',
+]);
+
+/**
+ * Eventos sintéticos não disparam a ação padrão do navegador. Reproduz as duas que mais importam
+ * ("digitar na busca e apertar Enter"; Enter/Espaço em botão) quando a página não tratou o keydown.
+ */
+const runKeyDefaultAction = (target: HTMLElement, key: string): 'submit' | 'click' | undefined => {
+  if (key === 'Enter') {
+    if (target instanceof HTMLInputElement) {
+      const type = (target.type || 'text').toLowerCase();
+      if (type === 'button' || type === 'submit' || type === 'reset' || type === 'image') {
+        target.click();
+        return 'click';
+      }
+      if (!NON_SUBMITTING_INPUT_TYPES.has(type) && target.form && typeof target.form.requestSubmit === 'function') {
+        target.form.requestSubmit();
+        return 'submit';
+      }
+      return undefined;
+    }
+    if (target instanceof HTMLButtonElement || (target instanceof HTMLAnchorElement && target.href)) {
+      target.click();
+      return 'click';
+    }
+    return undefined;
+  }
+  if (
+    key === ' ' &&
+    (target instanceof HTMLButtonElement ||
+      (target instanceof HTMLInputElement && ['button', 'submit', 'checkbox', 'radio'].includes(target.type)))
+  ) {
+    target.click();
+    return 'click';
+  }
+  return undefined;
 };
 
 export const pressKeyOnTarget = (key: string, selector?: string, modifiers?: string[]) => {
@@ -900,8 +922,11 @@ export const pressKeyOnTarget = (key: string, selector?: string, modifiers?: str
     }
   }
   const mods = normalizeKeyModifiers(modifiers);
+  const codes = resolveKeyCodes(key);
   const init: KeyboardEventInit = {
     key,
+    ...(codes.code ? { code: codes.code } : {}),
+    ...(codes.keyCode ? { keyCode: codes.keyCode, which: codes.keyCode } : {}),
     bubbles: true,
     cancelable: true,
     composed: true,
@@ -910,9 +935,22 @@ export const pressKeyOnTarget = (key: string, selector?: string, modifiers?: str
     shiftKey: mods.includes('Shift'),
     metaKey: mods.includes('Meta'),
   };
-  target.dispatchEvent(new KeyboardEvent('keydown', init));
-  target.dispatchEvent(new KeyboardEvent('keypress', init));
+  const keydownEvent = new KeyboardEvent('keydown', init);
+  target.dispatchEvent(keydownEvent);
+  const keypressEvent = new KeyboardEvent('keypress', init);
+  target.dispatchEvent(keypressEvent);
   target.dispatchEvent(new KeyboardEvent('keyup', init));
+  // Navegador real não faz a ação implícita se keydown OU keypress foi cancelado (React costuma
+  // tratar Enter em onKeyPress): senão a busca/envio rodava duas vezes.
+  const blocked =
+    (target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement ||
+      target instanceof HTMLButtonElement) &&
+    (target.disabled || ('readOnly' in target && target.readOnly));
+  const defaultAction =
+    !keydownEvent.defaultPrevented && !keypressEvent.defaultPrevented && !blocked && mods.length === 0
+      ? runKeyDefaultAction(target, key)
+      : undefined;
   if (shouldFireInputChangeForKey(key, mods)) {
     if (typeof InputEvent !== 'undefined') {
       target.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true }));
@@ -921,7 +959,11 @@ export const pressKeyOnTarget = (key: string, selector?: string, modifiers?: str
     }
     target.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
   }
-  return { success: true as const, modifiers: mods.length ? mods : undefined };
+  return {
+    success: true as const,
+    modifiers: mods.length ? mods : undefined,
+    ...(defaultAction ? { defaultAction } : {}),
+  };
 };
 
 // Pure scroll math: where a scroll should land, clamped to the element bounds.
@@ -1134,7 +1176,7 @@ export const scrollPage = (direction: string, amount: number, selector?: string,
   };
 };
 
-export const buildOptimalSelector = (element: Element): string => {
+const buildOptimalSelector = (element: Element): string => {
   const root = element.getRootNode();
   const localSelector = buildUniqueSelector(
     element,
@@ -1193,7 +1235,7 @@ export type FindElementCandidate = {
 
 export const FIND_ELEMENT_SCAN_CAP_DEFAULT = 80;
 export const FIND_ELEMENT_SCAN_CAP_DEEP = 300;
-export const FIND_ELEMENT_SELECTOR_CACHE_MAX = 20;
+const FIND_ELEMENT_SELECTOR_CACHE_MAX = 20;
 
 export type FindElementScopeKind = 'dialog' | 'form' | 'landmark' | 'page';
 
@@ -1214,7 +1256,7 @@ export const buildFindElementScopeOrder = (searchScope: string, typeFilter: stri
   return order;
 };
 
-export const buildFindElementCacheKey = (
+const buildFindElementCacheKey = (
   url: string,
   query: string,
   typeFilter: string,
@@ -1236,7 +1278,7 @@ const setCachedFindElementSelector = (key: string, selector: string) => {
   findElementSelectorCache.set(key, { selector });
 };
 
-export const resolveFindElementSearchRoot = (
+const resolveFindElementSearchRoot = (
   kind: FindElementScopeKind,
   documentRef: Document = document,
 ): Document | Element | null => {
@@ -1855,40 +1897,52 @@ export const extractPageStructure = (
   };
 };
 
-/** Wait until ANY dialog is open (for wait tool). Returns immediately if already open. */
-export const waitForDialog = async (timeoutMs = 2500): Promise<DialogInfo | null> => {
-  const started = Date.now();
-  while (Date.now() - started < timeoutMs) {
-    const dialogs = listOpenDialogs();
-    if (dialogs.length) return dialogs[dialogs.length - 1];
-    await sleep(50);
-  }
-  return null;
-};
+/** Sem mutação no DOM por este tempo depois do clique, nenhum diálogo está a caminho. */
+const DIALOG_SETTLE_MS = 150;
+const DIALOG_CHECK_INTERVAL_MS = 40;
 
 /**
  * Post-click helper: wait only for a *new* dialog relative to `dialogsBefore`.
- * Early-exits when a new dialog appears; otherwise stops at timeout without
- * blocking the full window when nothing is opening (usage bottleneck fix).
  *
- * Uses a short progressive poll so Instagram sheets (~100–400ms) are caught
- * without adding ~900ms tax on every normal click.
+ * Driven by DOM mutations instead of a fixed poll: resolves as soon as a new
+ * dialog is open, and gives up once the page has been quiet for
+ * DIALOG_SETTLE_MS — a click that opens nothing no longer pays the whole
+ * timeout. `timeoutMs` still caps pages that never stop mutating.
  */
-export const waitForNewDialog = async (dialogsBefore: number, timeoutMs = 450): Promise<DialogInfo | null> => {
+export const waitForNewDialog = (dialogsBefore: number, timeoutMs = 450): Promise<DialogInfo | null> => {
+  const newest = () => {
+    const dialogs = listOpenDialogs();
+    return dialogs.length > dialogsBefore ? dialogs[dialogs.length - 1] : null;
+  };
   // Immediate re-check (modal may already be in DOM after click).
-  let dialogs = listOpenDialogs();
-  if (dialogs.length > dialogsBefore) return dialogs[dialogs.length - 1];
+  const immediate = newest();
+  if (immediate) return Promise.resolve(immediate);
 
-  const started = Date.now();
-  // Progressive intervals: 40 → 80 → 120… until timeout
-  let delay = 40;
-  while (Date.now() - started < timeoutMs) {
-    await sleep(delay);
-    dialogs = listOpenDialogs();
-    if (dialogs.length > dialogsBefore) return dialogs[dialogs.length - 1];
-    delay = Math.min(120, delay + 20);
-  }
-  return null;
+  return new Promise((resolve) => {
+    let settleTimer: ReturnType<typeof setTimeout> | undefined;
+    let checkTimer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (dialog: DialogInfo | null) => {
+      observer.disconnect();
+      clearTimeout(settleTimer);
+      clearTimeout(checkTimer);
+      clearTimeout(capTimer);
+      resolve(dialog);
+    };
+    const giveUp = () => finish(newest());
+    const observer = new MutationObserver(() => {
+      clearTimeout(settleTimer);
+      settleTimer = setTimeout(giveUp, DIALOG_SETTLE_MS);
+      // Páginas que mutam sem parar não devem rodar a busca a cada lote.
+      checkTimer ??= setTimeout(() => {
+        checkTimer = undefined;
+        const dialog = newest();
+        if (dialog) finish(dialog);
+      }, DIALOG_CHECK_INTERVAL_MS);
+    });
+    observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true });
+    settleTimer = setTimeout(giveUp, DIALOG_SETTLE_MS);
+    const capTimer = setTimeout(giveUp, timeoutMs);
+  });
 };
 
 const normalizeOptionText = (value: string) =>

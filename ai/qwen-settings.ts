@@ -6,20 +6,20 @@
  * OpenAI-compatible com chave `sk-sp-…` (Coding Plan ou Token Plan).
  */
 
-export const QWEN_CODING_PLAN_BASE_URL_INTL = 'https://coding-intl.dashscope.aliyuncs.com/v1';
-export const QWEN_TOKEN_PLAN_BASE_URL = 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1';
+const QWEN_CODING_PLAN_BASE_URL_INTL = 'https://coding-intl.dashscope.aliyuncs.com/v1';
+const QWEN_TOKEN_PLAN_BASE_URL = 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1';
 
 /** Default Glide: Coding Plan internacional (o que o CLI do usuário usa). */
 export const QWEN_DEFAULT_BASE_URL = QWEN_CODING_PLAN_BASE_URL_INTL;
 
-export const QWEN_CODING_PLAN_ENV_KEY = 'BAILIAN_CODING_PLAN_API_KEY';
-export const QWEN_TOKEN_PLAN_ENV_KEY = 'BAILIAN_TOKEN_PLAN_API_KEY';
+const QWEN_CODING_PLAN_ENV_KEY = 'BAILIAN_CODING_PLAN_API_KEY';
+const QWEN_TOKEN_PLAN_ENV_KEY = 'BAILIAN_TOKEN_PLAN_API_KEY';
 
 /**
  * IDs canônicos do Coding Plan (intl).
  * Fonte: ~/.qwen/settings.json + respostas reais da API.
  */
-export const QWEN_CODING_PLAN_MODELS = [
+const QWEN_CODING_PLAN_MODELS = [
   'qwen3-coder-plus',
   'qwen3-coder-next',
   'qwen3.5-plus',
@@ -37,7 +37,7 @@ export const QWEN_CODING_PLAN_MODELS = [
  * Atenção: `deepseek-v4-flash` SEM sufixo devolve 403 AccessDenied;
  * o ID elegível é `deepseek-v4-flash-0731`.
  */
-export const QWEN_TOKEN_PLAN_MODELS = [
+const QWEN_TOKEN_PLAN_MODELS = [
   'deepseek-v4-flash-0731',
   'deepseek-v4-pro',
   'qwen3.6-flash',
@@ -49,7 +49,7 @@ export const QWEN_TOKEN_PLAN_MODELS = [
 ] as const;
 
 /** Aliases legados / nomes de display → id aceito pela API. */
-export const QWEN_MODEL_ALIASES: Record<string, string> = {
+const QWEN_MODEL_ALIASES: Record<string, string> = {
   'deepseek-v4-flash': 'deepseek-v4-flash-0731',
   'DeepSeek-V4-Flash': 'deepseek-v4-flash-0731',
   'DeepSeek-V4-Flash-0731': 'deepseek-v4-flash-0731',
@@ -87,14 +87,14 @@ const looksLikeBailianKey = (value: string) => {
   return t.startsWith('sk-sp-') || t.startsWith('sk-') || t.length >= 20;
 };
 
-export function detectQwenPlanFromBaseUrl(baseUrl: string): QwenPlan {
+function detectQwenPlanFromBaseUrl(baseUrl: string): QwenPlan {
   const u = String(baseUrl || '').toLowerCase();
   if (u.includes('token-plan') || u.includes('compatible-mode')) return 'token-plan';
   if (u.includes('coding') || u.includes('dashscope')) return 'coding-plan';
   return 'unknown';
 }
 
-export function defaultBaseUrlForPlan(plan: QwenPlan): string {
+function defaultBaseUrlForPlan(plan: QwenPlan): string {
   if (plan === 'token-plan') return QWEN_TOKEN_PLAN_BASE_URL;
   return QWEN_CODING_PLAN_BASE_URL_INTL;
 }
@@ -220,7 +220,7 @@ export function parseQwenSettings(raw: unknown): QwenImportResult | null {
   };
 }
 
-export type QwenAuthProbeResult = {
+type QwenAuthProbeResult = {
   ok: boolean;
   status: number;
   /** Auth aceita (inclui 429 cota / 403 modelo sem compra) — só 401 = chave morta. */
@@ -232,7 +232,7 @@ export type QwenAuthProbeResult = {
  * Probe leve: POST mínimo em /chat/completions.
  * 401 → chave inválida; 429/403 com body de cota/modelo → chave OK.
  */
-export async function probeQwenAuth(
+async function probeQwenAuth(
   apiKey: string,
   baseUrl: string,
   model = 'qwen3-coder-plus',

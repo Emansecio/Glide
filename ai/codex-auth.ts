@@ -23,7 +23,7 @@ export type CodexChatGptAuthBundle = {
   refreshRejectedAt?: number;
 };
 
-export type CodexAuthMetadata = {
+type CodexAuthMetadata = {
   authMode: CodexAuthMode | 'unknown';
   hasOpenAiApiKey: boolean;
   hasAccessToken: boolean;
@@ -39,7 +39,7 @@ export type CodexAuthParseResult =
   | { mode: 'chatgpt'; bundle: CodexChatGptAuthBundle; metadata: CodexAuthMetadata }
   | { mode: 'invalid'; reason: string; metadata?: CodexAuthMetadata };
 
-export class CodexRefreshError extends Error {
+class CodexRefreshError extends Error {
   status: number;
   invalidGrant: boolean;
   constructor(message: string, status: number, invalidGrant = false) {
@@ -334,7 +334,7 @@ export async function refreshCodexChatGptToken(refreshToken: string): Promise<Co
   });
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
-    const invalidGrant = /invalid_grant/i.test(detail);
+    const invalidGrant = /invalid_grant|refresh_token_(?:expired|reused|invalidated)/i.test(detail);
     throw new CodexRefreshError(
       `Codex token refresh failed (HTTP ${response.status})${detail ? `: ${detail.slice(0, 180)}` : ''}`,
       response.status,
@@ -369,7 +369,11 @@ export async function refreshCodexChatGptToken(refreshToken: string): Promise<Co
 
 async function markCodexRefreshRejected(bundle: CodexChatGptAuthBundle): Promise<void> {
   if (!hasChromeStorage()) return;
-  const rejected = { ...bundle, refreshRejectedAt: Date.now() };
+  // Não sobrescreve credencial nova gravada (re-login) enquanto o refresh antigo estava em voo.
+  invalidateBundleCache();
+  const current = await readCodexChatGptAuth();
+  if (!current || current.refreshToken !== bundle.refreshToken) return;
+  const rejected = { ...current, refreshRejectedAt: Date.now() };
   setCachedBundle(rejected);
   await chrome.storage.local.set({ [CODEX_CHATGPT_STORAGE_KEY]: rejected });
 }

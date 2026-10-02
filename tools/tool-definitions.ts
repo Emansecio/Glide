@@ -58,7 +58,7 @@ export const buildToolDefinitions = (_maxSessionTabs: number): ToolDefinition[] 
       handle: ELEMENT_HANDLE_PROP,
       native: {
         type: 'boolean',
-        description: 'Use opt-in CDP native pointer input. Requires debugger permission.',
+        description: 'Use CDP native (trusted) pointer input instead of synthetic bridge events. Requires a handle.',
       },
       tabId: TAB_ID_PROP,
       retries: RETRIES_PROP,
@@ -82,7 +82,7 @@ export const buildToolDefinitions = (_maxSessionTabs: number): ToolDefinition[] 
       },
       native: {
         type: 'boolean',
-        description: 'Use opt-in CDP native pointer input for drag. Requires debugger permission.',
+        description: 'Use CDP native (trusted) pointer input for drag. Requires a handle.',
       },
       tabId: TAB_ID_PROP,
       retries: RETRIES_PROP,
@@ -451,6 +451,7 @@ export const buildToolDefinitions = (_maxSessionTabs: number): ToolDefinition[] 
       selector: SELECTOR_PROP('CSS selector for the file input.'),
       files: {
         type: 'array',
+        items: { type: 'object' },
         description:
           'Array of { name, content?, contentBase64?, mimeType? }. content is plain UTF-8 text; contentBase64 is base64-encoded binary.',
       },
@@ -480,6 +481,7 @@ export const buildToolDefinitions = (_maxSessionTabs: number): ToolDefinition[] 
     {
       fields: {
         type: 'array',
+        items: { type: 'object' },
         description: 'Array of { selector, text?, checked?, option? }. option selects via selectOption semantics.',
       },
       submitSelector: {
@@ -599,7 +601,7 @@ export const buildToolDefinitions = (_maxSessionTabs: number): ToolDefinition[] 
   ),
   defineTool(
     'cdp',
-    'Chrome DevTools Protocol via chrome.debugger (opt-in: toolPermissions.debugger). action: attach|detach|status|send. For send: method like Network.enable, Network.getResponseBody, Runtime.evaluate, Input.dispatchKeyEvent. Prefer getNetworkRequests/httpRequest/executeScript first — CDP shows a yellow debugger banner and is for hard cases only.',
+    'Chrome DevTools Protocol via chrome.debugger (always available). action: attach|detach|status|send. For send: method like Network.enable, Network.getResponseBody, Runtime.evaluate, Input.dispatchKeyEvent. Prefer getNetworkRequests/httpRequest/executeScript first — CDP shows a yellow debugger banner and is for hard cases only.',
     {
       action: {
         type: 'string',

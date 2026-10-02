@@ -9,9 +9,11 @@
  */
 
 export const XAI_API_BASE_URL = 'https://api.x.ai/v1';
-export const XAI_TOKEN_URL = 'https://auth.x.ai/oauth2/token';
+const XAI_TOKEN_URL = 'https://auth.x.ai/oauth2/token';
 const STORAGE_KEY = 'xaiOAuth';
 const REFRESH_MARGIN_MS = 5 * 60 * 1000;
+/** TTL assumido quando o endpoint de token não devolve expires_in. */
+const DEFAULT_ACCESS_TTL_MS = 30 * 60 * 1000;
 const OAUTH_FETCH_TIMEOUT_MS = 15_000;
 
 export type XaiOAuthBundle = {
@@ -29,7 +31,7 @@ export type XaiAuthHealth = {
   reason?: 'reauth';
 };
 
-export class XaiRefreshError extends Error {
+class XaiRefreshError extends Error {
   status: number;
   invalidGrant: boolean;
   constructor(message: string, status: number, invalidGrant = false) {
@@ -125,7 +127,7 @@ export async function writeXaiOAuth(bundle: XaiOAuthBundle): Promise<void> {
   });
 }
 
-export async function clearXaiOAuth(): Promise<void> {
+async function clearXaiOAuth(): Promise<void> {
   if (!hasChromeStorage()) return;
   await chrome.storage.local.remove(STORAGE_KEY);
 }
@@ -160,7 +162,7 @@ async function markRefreshRejected(failed: XaiOAuthBundle): Promise<void> {
   });
 }
 
-export async function refreshXaiToken(bundle: XaiOAuthBundle): Promise<XaiOAuthBundle> {
+async function refreshXaiToken(bundle: XaiOAuthBundle): Promise<XaiOAuthBundle> {
   if (!bundle.refreshToken || !bundle.clientId || bundle.clientId === 'unknown') {
     throw new XaiRefreshError('Missing refresh_token or client_id for xAI OAuth refresh.', 0, false);
   }
@@ -190,7 +192,9 @@ export async function refreshXaiToken(bundle: XaiOAuthBundle): Promise<XaiOAuthB
   return {
     accessToken,
     refreshToken: data?.refresh_token ? String(data.refresh_token) : bundle.refreshToken,
-    expiresAt: Number.isFinite(expiresIn) && expiresIn > 0 ? Date.now() + expiresIn * 1000 : 0,
+    // Sem expires_in, expiresAt=0 forçava refresh (e rotação do refresh_token) a CADA request.
+    expiresAt:
+      Number.isFinite(expiresIn) && expiresIn > 0 ? Date.now() + expiresIn * 1000 : Date.now() + DEFAULT_ACCESS_TTL_MS,
     clientId: bundle.clientId,
     email: bundle.email,
   };
@@ -228,6 +232,7 @@ export async function ensureFreshXaiToken(currentToken: string, options?: { forc
       if (error instanceof XaiRefreshError && error.invalidGrant) {
         await markRefreshRejected(bundle).catch(() => {});
       }
+      if (bundle.accessToken && bundle.expiresAt > Date.now()) return bundle.accessToken;
       return manualOverride || bundle.accessToken || currentToken;
     } finally {
       refreshInFlight = null;

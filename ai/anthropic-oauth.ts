@@ -30,7 +30,7 @@ export type AnthropicAuthHealth = {
 };
 
 /** Erro de refresh com o status HTTP para o chamador distinguir revogação de falha de rede. */
-export class AnthropicRefreshError extends Error {
+class AnthropicRefreshError extends Error {
   status: number;
   /**
    * true só quando o servidor respondeu `invalid_grant` — refresh_token revogado
@@ -149,7 +149,7 @@ export async function writeAnthropicOAuth(bundle: AnthropicOAuthBundle): Promise
   setCachedBundle(fresh);
 }
 
-export async function clearAnthropicOAuth(): Promise<void> {
+async function clearAnthropicOAuth(): Promise<void> {
   if (!hasChromeStorage()) return;
   invalidateBundleCache();
   // Também limpa slots de key que ainda espelham o access token do bundle —
@@ -199,14 +199,19 @@ export async function getAnthropicAuthHealth(): Promise<AnthropicAuthHealth> {
 
 async function markRefreshRejected(bundle: AnthropicOAuthBundle): Promise<void> {
   if (!hasChromeStorage()) return;
-  const rejected = { ...bundle, refreshRejectedAt: Date.now() };
+  // Se o usuário refez o login enquanto o refresh com o token antigo estava em voo, o storage já
+  // tem credencial nova: gravar o bundle velho + flag apagaria o login e exigiria reconectar.
+  invalidateBundleCache();
+  const current = await readAnthropicOAuth();
+  if (!current || current.refreshToken !== bundle.refreshToken) return;
+  const rejected = { ...current, refreshRejectedAt: Date.now() };
   // Espelho antes do await: é justamente este flag que impede a próxima request
   // de martelar o endpoint de refresh já revogado.
   setCachedBundle(rejected);
   await chrome.storage.local.set({ [STORAGE_KEY]: rejected });
 }
 
-export async function refreshAnthropicToken(refreshToken: string): Promise<AnthropicOAuthBundle> {
+async function refreshAnthropicToken(refreshToken: string): Promise<AnthropicOAuthBundle> {
   const response = await fetch(ANTHROPIC_OAUTH_TOKEN_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -294,6 +299,9 @@ export async function ensureFreshAnthropicToken(
       if (error instanceof AnthropicRefreshError && error.invalidGrant) {
         await markRefreshRejected(bundle).catch(() => {});
       }
+      // `currentToken` é capturado na criação do modelo e fica velho após um refresh: o token do
+      // bundle, se ainda válido, é o certo (senão o 401 é garantido).
+      if (bundle.accessToken && bundle.expiresAt > Date.now()) return bundle.accessToken;
       return manualOverride || bundle.accessToken || currentToken;
     } finally {
       if (refreshInFlight?.key === refreshKey) {

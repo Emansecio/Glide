@@ -101,7 +101,7 @@ export const GPT_56_MODELS = ['gpt-5.6-luna', 'gpt-5.6-terra'] as const;
 
 const GPT_56_MODEL_SET = new Set<string>(GPT_56_MODELS);
 
-export function isGpt56Model(model: string): boolean {
+function isGpt56Model(model: string): boolean {
   return GPT_56_MODEL_SET.has(
     String(model || '')
       .trim()
@@ -175,5 +175,4 @@ export {
   PROVIDER_DEFAULT_MODELS,
   migrateStoredProvider,
   normalizeProviderId,
-  resolveProviderBaseUrl,
 } from './sdk-client.js';

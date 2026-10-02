@@ -482,7 +482,8 @@ SidePanelUI.prototype.displayAssistantMessage = function displayAssistantMessage
     this.renderExecutionSemanticSummary?.(executionSummary, streamedContainer);
     this.finalizeExecutionDetails?.(executionSummary, streamedContainer);
 
-    this.scrollToBottom();
+    // O resumo entra acima do texto: pular direto evita ver a resposta descer e voltar.
+    this.scrollToBottom({ instant: true });
     this.updateStatus(terminalStatus.text, terminalStatus.tone);
     this.stopRunLiveness();
     this.setComposerBusy(false);

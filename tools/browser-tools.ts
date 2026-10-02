@@ -31,7 +31,7 @@ import {
 } from './frame-target.js';
 import { performHttpRequest, sanitizeHttpHeaders } from './http-request.js';
 import { chooseInputBackend } from './input-backend.js';
-import { highlightTargetOverlay, measureScreenshotTarget } from './ref-resolver.js';
+import { glidePageDomOp } from './page-dom-ops.js';
 import { waitForHistoryTransition, waitForTabReadiness } from './tab-readiness.js';
 import { type TabResolution, withResolvedTab } from './tab-resolve.js';
 import { type ToolExecutionContext, abortedToolResult, isToolContextAborted, sleepWithSignal } from './tool-context.js';
@@ -39,9 +39,7 @@ import { buildToolDefinitions } from './tool-definitions.js';
 import { INLINE_TOOL_HANDLERS, TOOL_HANDLER_REGISTRY } from './tool-registry.js';
 import type { ToolDefinition } from './tool-schema.js';
 import { clampInt, isHttpUrl, requireHttpUrl } from './validation.js';
-
-export { absoluteFrameUrl, matchFramesByUrlSubstring, resolveTargetFrameId } from './frame-target.js';
-export type { FrameInfo, ResolveTargetFrameResult } from './frame-target.js';
+export type { ResolveTargetFrameResult } from './frame-target.js';
 
 export type RunInTabOptions = {
   allFrames?: boolean;
@@ -82,6 +80,8 @@ export const SET_INPUT_FILES_MAX_TOTAL_BYTES = 10 * 1024 * 1024;
 
 export function normalizeSetInputFileSpecs(filesRaw: unknown): SetInputFileSpec[] | { error: string } {
   if (!Array.isArray(filesRaw)) return [];
+  if (filesRaw.length > 10)
+    return { error: `setInputFiles accepts at most 10 files per call (got ${filesRaw.length}).` };
   const specs: SetInputFileSpec[] = [];
   let totalBytes = 0;
   for (const f of filesRaw.filter((entry) => entry && typeof entry === 'object').slice(0, 10)) {
@@ -647,7 +647,12 @@ export class BrowserTools {
         return { ok: false, error: 'Argument "fields" for fillForm must be a non-empty array.' };
       }
       if (normalizedArgs.fields.length > 20) {
-        normalizedArgs.fields = normalizedArgs.fields.slice(0, 20);
+        // Truncar em silêncio fazia o modelo achar que preencheu tudo.
+        return {
+          ok: false,
+          error: `fillForm accepts at most 20 fields per call (got ${normalizedArgs.fields.length}).`,
+          hint: 'Split the fields across several fillForm calls.',
+        };
       }
       const normalizedFields: Record<string, unknown>[] = [];
       for (const rawField of normalizedArgs.fields) {
@@ -869,21 +874,35 @@ export class BrowserTools {
   }
 
   private async pruneSessionTabs() {
-    const tabs = await chrome.tabs.query({ currentWindow: true });
+    // `currentWindow` no service worker = janela focada: abas da sessão em outra janela eram
+    // removidas e depois falhavam com TAB_NOT_IN_SESSION. Confere cada aba pelo id.
+    const idsToCheck = new Set<number>(this.sessionTabs.keys());
+    if (this.currentSessionTabId !== null) idsToCheck.add(this.currentSessionTabId);
     const activeIds = new Set<number>();
-    tabs.forEach((tab) => {
-      if (typeof tab.id === 'number') {
-        activeIds.add(tab.id);
-      }
-    });
+    await Promise.all(
+      [...idsToCheck].map(async (tabId) => {
+        try {
+          await chrome.tabs.get(tabId);
+          activeIds.add(tabId);
+        } catch {
+          // aba fechada
+        }
+      }),
+    );
 
+    // Só remove o que foi conferido: uma aba adicionada por openTab durante o await (tool calls
+    // paralelas) não está em activeIds e seria apagada por engano.
     for (const tabId of Array.from(this.sessionTabs.keys())) {
-      if (!activeIds.has(tabId)) {
+      if (idsToCheck.has(tabId) && !activeIds.has(tabId)) {
         this.sessionTabs.delete(tabId);
       }
     }
 
-    if (this.currentSessionTabId !== null && !activeIds.has(this.currentSessionTabId)) {
+    if (
+      this.currentSessionTabId !== null &&
+      idsToCheck.has(this.currentSessionTabId) &&
+      !activeIds.has(this.currentSessionTabId)
+    ) {
       const nextId = this.sessionTabs.keys().next().value;
       this.currentSessionTabId = typeof nextId === 'number' ? nextId : null;
     }
@@ -948,7 +967,8 @@ export class BrowserTools {
   }
 
   async executeTool(toolName: string, args: Record<string, any> = {}, context?: ToolExecutionContext) {
-    this.currentToolContext = context || null;
+    const ownContext = context || null;
+    this.currentToolContext = ownContext;
     try {
       if (isToolContextAborted(this.currentToolContext)) {
         return abortedToolResult();
@@ -1009,7 +1029,9 @@ export class BrowserTools {
         outcomeCertainty: 'unknown',
       };
     } finally {
-      this.currentToolContext = null;
+      // Tool calls paralelas compartilham este campo: a que termina primeiro não pode zerar o
+      // contexto (e o signal de Stop) das que ainda estão em voo.
+      if (this.currentToolContext === ownContext) this.currentToolContext = null;
     }
   }
 
@@ -1115,32 +1137,35 @@ export class BrowserTools {
           }
         : null;
     }
-    const response = await this.bridgeClient.send(tabId, frameId, op, payload, {
-      signal: this.currentToolContext?.signal,
-    });
+    // O content script espera/pós-condiciona dentro da página: o prazo do canal precisa cobrir
+    // esse tempo (antes: 8s fixos, então wait de 15s dava BRIDGE_TIMEOUT "unknown" aos 8s).
+    const inPageWaitMs = Math.min(
+      30000,
+      Math.max(0, Number(payload.postconditionTimeoutMs) || 0, Number(payload.timeoutMs) || 0, Number(payload.ms) || 0),
+    );
+    const sendOptions = { signal: this.currentToolContext?.signal, timeoutMs: 8000 + inPageWaitMs };
+    let response = await this.bridgeClient.send(tabId, frameId, op, payload, sendOptions);
+    if (response.code === 'BRIDGE_UNAVAILABLE' && response.noReceiver === true) {
+      // Aba aberta antes de instalar/recarregar a extensão (ou frame sem script): injeta uma vez e repete.
+      if (await this.injectContentScript(tabId, frameId)) {
+        response = await this.bridgeClient.send(tabId, frameId, op, payload, sendOptions);
+      }
+    }
     if (response.code === 'BRIDGE_UNAVAILABLE' && !isMutativeBridgeOp(op) && !payload.handle) return null;
     return response;
   }
 
-  private async runNativeInput(tabId: number, tool: 'hover' | 'mouse', args: Record<string, any>) {
-    let debuggerEnabled = false;
+  private async injectContentScript(tabId: number, frameId: number): Promise<boolean> {
     try {
-      const stored = await chrome.storage.local.get(['settings', 'toolPermissions']);
-      const settings = stored.settings as { toolPermissions?: { debugger?: boolean } } | undefined;
-      const permissions = stored.toolPermissions as { debugger?: boolean } | undefined;
-      debuggerEnabled = settings?.toolPermissions?.debugger === true || permissions?.debugger === true;
+      await chrome.scripting.executeScript({ target: { tabId, frameIds: [frameId] }, files: ['content.js'] });
+      return true;
     } catch {
-      debuggerEnabled = false;
+      return false;
     }
-    const backend = chooseInputBackend(tool, args, debuggerEnabled);
-    if (backend === 'bridge') return null;
-    if (typeof backend === 'object') {
-      return {
-        success: false,
-        code: backend.error,
-        error: 'Native input requires opt-in debugger permission.',
-      };
-    }
+  }
+
+  private async runNativeInput(tabId: number, tool: 'hover' | 'mouse', args: Record<string, any>) {
+    if (chooseInputBackend(tool, args) === 'bridge') return null;
     if (!args.handle) {
       return {
         success: false,
@@ -1155,28 +1180,28 @@ export class BrowserTools {
     const from = source.point as { x: number; y: number };
     let to: { x: number; y: number } | undefined;
     if (tool === 'mouse' && args.action === 'drag') {
-      const measured = await this.runInTab(
-        tabId,
-        (selector: string) => {
-          const element = document.querySelector(selector);
-          if (!element) return null;
-          const rect = element.getBoundingClientRect();
-          return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-        },
-        [String(args.toSelector || '')],
-      );
+      const measured = await this.runInTab(tabId, glidePageDomOp, [
+        'dragTargetPoint',
+        { sel: String(args.toSelector || '') },
+      ]);
       if (!measured) return { success: false, code: 'ELEMENT_NOT_FOUND', error: 'Drag destination not found.' };
       to = measured;
     }
     return dispatchNativePointer(tabId, { action: tool === 'hover' ? 'hover' : 'drag', from, to });
   }
 
+  private lastKnownAllowedDomains: string[] | null = null;
+
   private async loadAllowedDomains(): Promise<string[]> {
     try {
       const stored = await chrome.storage.local.get('allowedDomains');
-      return parseAllowedDomains(String(stored.allowedDomains || ''));
+      this.lastKnownAllowedDomains = parseAllowedDomains(String(stored.allowedDomains || ''));
+      return this.lastKnownAllowedDomains;
     } catch {
-      return [];
+      // Lista vazia significa "tudo permitido": devolver [] em erro de leitura abria a allowlist.
+      // Usa a última lista conhecida; sem ela, uma lista que não casa com nenhum host real
+      // (TLD .invalid é reservado) bloqueia até o storage voltar.
+      return this.lastKnownAllowedDomains ?? ['allowlist-unavailable.invalid'];
     }
   }
 
@@ -1263,7 +1288,8 @@ export class BrowserTools {
       }
       const privateStrict = this.rejectPrivateTab(toolName, strictTab);
       if (privateStrict && typeof strictTab.id === 'number') {
-        await this.quarantineSessionTab(strictTab.id);
+        // Aba do usuário (não aberta/redirecionada pelo Glide): só bloqueia, nunca fecha.
+        await this.quarantineSessionTab(strictTab.id, { closeIfRollbackFails: false });
         return {
           ok: false as const,
           result: {
@@ -1334,7 +1360,7 @@ export class BrowserTools {
 
     const privateSelected = this.rejectPrivateTab(toolName, selected);
     if (privateSelected) {
-      await this.quarantineSessionTab(selected.id);
+      await this.quarantineSessionTab(selected.id, { closeIfRollbackFails: false });
       return {
         ok: false as const,
         result: {
@@ -1493,31 +1519,7 @@ export class BrowserTools {
 
     let urlNeedle = frameUrl;
     if (frameSelector) {
-      const srcResult = await this.runInTab(
-        tabId,
-        (sel: string) => {
-          let element: Element | null = null;
-          try {
-            element = document.querySelector(sel);
-          } catch {
-            return { success: false, code: 'INVALID_SELECTOR', error: `Invalid frameSelector: ${sel}` };
-          }
-          if (!element) {
-            return { success: false, code: 'FRAME_NOT_FOUND', error: `No element matched frameSelector: ${sel}` };
-          }
-          if (element.tagName !== 'IFRAME') {
-            return {
-              success: false,
-              code: 'FRAME_NOT_FOUND',
-              error: `frameSelector matched <${element.tagName.toLowerCase()}>, not an iframe.`,
-            };
-          }
-          const iframe = element as HTMLIFrameElement;
-          const rawSrc = iframe.src || iframe.getAttribute('src') || '';
-          return { success: true, src: rawSrc };
-        },
-        [frameSelector],
-      );
+      const srcResult = await this.runInTab(tabId, glidePageDomOp, ['frameSrc', { sel: frameSelector }]);
       if (!srcResult?.success) {
         return {
           ok: false,
@@ -1831,278 +1833,8 @@ export class BrowserTools {
 
     let result = await this.runInTab(
       tabId,
-      async (sel, maxAttempts, shouldWaitDialog) => {
-        const selectorText = String(sel || '').trim();
-        const attempts = Number.isFinite(maxAttempts) ? Math.max(1, Math.floor(maxAttempts)) : 3;
-        const sleep = (ms: number) => new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
-        const normalize = (value: string) =>
-          String(value || '')
-            .replace(/\s+/g, ' ')
-            .trim();
-        const clickableQuery =
-          'button, a[href], [role="tab"], [role="button"], [role="link"], [role="menuitem"], input[type="submit"], input[type="button"], [onclick], [tabindex="0"]';
-        const dialogSelector = '[role="dialog"], [aria-modal="true"], div[role="dialog"], [data-testid*="modal" i]';
-        const allElements = <T extends Element>(query: string, root: Document | Element = document) => {
-          const results: T[] = [];
-          // Caps: este é o caminho de fallback (bridge indisponível); sem limite,
-          // a varredura de shadow hosts com '*' percorre a página inteira
-          // (dezenas de milhares de nós em SPAs) a cada tentativa de clique.
-          const MAX_RESULTS = 800;
-          const MAX_SHADOW_SCAN = 4000;
-          let shadowScanned = 0;
-          const walkShadowHosts = (
-            node: Document | ShadowRoot | Element,
-            visitShadow: (shadow: ShadowRoot) => void,
-          ) => {
-            const walker = document.createTreeWalker(node, NodeFilter.SHOW_ELEMENT);
-            let current = walker.nextNode() as HTMLElement | null;
-            while (current && shadowScanned < MAX_SHADOW_SCAN) {
-              shadowScanned += 1;
-              if (current.shadowRoot) visitShadow(current.shadowRoot);
-              current = walker.nextNode() as HTMLElement | null;
-            }
-          };
-          const visit = (node: Document | ShadowRoot | Element) => {
-            if (results.length >= MAX_RESULTS) return;
-            let matches: Element[] = [];
-            try {
-              matches = Array.from(node.querySelectorAll(query));
-            } catch {
-              return;
-            }
-            for (const element of matches) {
-              results.push(element as T);
-              if (results.length >= MAX_RESULTS) return;
-            }
-            if (shadowScanned >= MAX_SHADOW_SCAN) return;
-            walkShadowHosts(node, visit);
-          };
-          visit(root);
-          return results;
-        };
-        const deepQuerySelector = <T extends Element>(query: string) => {
-          if (!query.includes('>>>')) {
-            try {
-              return document.querySelector<T>(query);
-            } catch {
-              return null;
-            }
-          }
-          const parts = query
-            .split('>>>')
-            .map((part) => part.trim())
-            .filter(Boolean);
-          let root: Document | ShadowRoot | Element = document;
-          for (let index = 0; index < parts.length; index += 1) {
-            let next: Element | null = null;
-            try {
-              next = root.querySelector(parts[index]);
-            } catch {
-              return null;
-            }
-            if (!next) return null;
-            if (index === parts.length - 1) return next as T;
-            const shadow = (next as HTMLElement).shadowRoot;
-            if (!shadow) return null;
-            root = shadow;
-          }
-          return null;
-        };
-
-        const listOpenDialogs = () =>
-          allElements<HTMLElement>(dialogSelector)
-            .filter((el) => {
-              const rect = el.getBoundingClientRect();
-              return rect.width > 0 && rect.height > 0;
-            })
-            .map((el) => ({
-              label: normalize(
-                el.getAttribute('aria-label') || el.querySelector('h1,h2,h3')?.textContent || 'dialog',
-              ).slice(0, 80),
-            }));
-
-        const textHint = (() => {
-          const quoted = selectorText.match(/["']([^"']+)["']/);
-          if (quoted?.[1]) return quoted[1].trim();
-          const bare = selectorText.replace(/^[#.]/, '').replace(/[_-]+/g, ' ').trim();
-          if (!bare || bare.length < 2) return '';
-          if (/[ >:[\]()]/.test(selectorText) && !quoted) return '';
-          return bare;
-        })();
-
-        const clickCandidate = (element: HTMLElement | null, strategy: string) => {
-          if (!element) return null;
-          const disabled =
-            (element as HTMLButtonElement | HTMLInputElement).disabled === true ||
-            element.getAttribute('aria-disabled') === 'true';
-          if (disabled) return null;
-          element.scrollIntoView({ block: 'center', inline: 'center' });
-          const rect = element.getBoundingClientRect();
-          const clientX = Math.round(rect.left + Math.min(rect.width / 2, Math.max(4, rect.width - 4)));
-          const clientY = Math.round(rect.top + Math.min(rect.height / 2, Math.max(4, rect.height - 4)));
-          // Instagram often layers transparent divs � prefer intended element even if hit-test differs.
-          const hitElement = document.elementFromPoint(clientX, clientY);
-          let eventTarget = element;
-          if (hitElement instanceof HTMLElement) {
-            if (hitElement === element || element.contains(hitElement) || hitElement.contains(element)) {
-              eventTarget = (hitElement.closest(clickableQuery) as HTMLElement | null) || hitElement;
-            }
-          }
-          const eventInit = {
-            bubbles: true,
-            cancelable: true,
-            composed: true,
-            view: window,
-            clientX,
-            clientY,
-            button: 0,
-            buttons: 1,
-          };
-          try {
-            eventTarget.focus?.({ preventScroll: true } as FocusOptions);
-          } catch {
-            eventTarget.focus?.();
-          }
-          if (typeof PointerEvent !== 'undefined') {
-            eventTarget.dispatchEvent(
-              new PointerEvent('pointerdown', { ...eventInit, pointerId: 1, pointerType: 'mouse' }),
-            );
-          }
-          eventTarget.dispatchEvent(new MouseEvent('mousedown', eventInit));
-          if (typeof PointerEvent !== 'undefined') {
-            eventTarget.dispatchEvent(
-              new PointerEvent('pointerup', { ...eventInit, pointerId: 1, pointerType: 'mouse', buttons: 0 }),
-            );
-          }
-          eventTarget.dispatchEvent(new MouseEvent('mouseup', { ...eventInit, buttons: 0 }));
-          eventTarget.dispatchEvent(new MouseEvent('click', { ...eventInit, buttons: 0 }));
-          try {
-            eventTarget.click();
-          } catch {
-            // ignore
-          }
-          return {
-            success: true,
-            strategy,
-            matched: normalize(element.textContent || element.getAttribute('aria-label') || '').slice(0, 100),
-            coordinates: { x: clientX, y: clientY },
-            targetTag: eventTarget.tagName.toLowerCase(),
-          };
-        };
-
-        const findClickables = () => allElements<HTMLElement>(clickableQuery);
-
-        const findByText = (query: string) => {
-          const needle = normalize(query).toLowerCase();
-          if (!needle) return null;
-          return (
-            findClickables().find((element) => {
-              const text = normalize(element.textContent || '').toLowerCase();
-              const aria = normalize(element.getAttribute('aria-label') || '').toLowerCase();
-              const title = normalize(element.getAttribute('title') || '').toLowerCase();
-              const value = normalize((element as HTMLInputElement).value || '').toLowerCase();
-              return text.includes(needle) || aria.includes(needle) || title.includes(needle) || value.includes(needle);
-            }) || null
-          );
-        };
-
-        const findByAttributeHint = (hint: string) => {
-          const escaped = hint.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-          const selectors = [
-            `[aria-label*="${escaped}" i]`,
-            `[title*="${escaped}" i]`,
-            `[data-testid*="${escaped}" i]`,
-            `button[name*="${escaped}" i]`,
-            `input[name*="${escaped}" i]`,
-          ];
-          for (const candidateSelector of selectors) {
-            try {
-              const candidate = document.querySelector<HTMLElement>(candidateSelector);
-              if (candidate) return candidate;
-            } catch {
-              // Ignore malformed selectors produced by edge-case hints.
-            }
-          }
-          return null;
-        };
-
-        // Wait only for a *new* dialog after click. Progressive poll, early exit.
-        // Avoids the previous ~900ms tax on every non-modal click.
-        const waitForNewDialog = async (dialogsBefore: number, timeoutMs = 320) => {
-          let dialogs = listOpenDialogs();
-          if (dialogs.length > dialogsBefore) return dialogs[dialogs.length - 1];
-          const started = Date.now();
-          let delay = 40;
-          while (Date.now() - started < timeoutMs) {
-            await sleep(delay);
-            dialogs = listOpenDialogs();
-            if (dialogs.length > dialogsBefore) return dialogs[dialogs.length - 1];
-            delay = Math.min(100, delay + 20);
-          }
-          return undefined;
-        };
-
-        const tryClick = async (element: HTMLElement | null, strategy: string, attempt: number) => {
-          if (!element) return null;
-          // Measure BEFORE click so post-click wait only detects *new* modals.
-          const dialogsBefore = listOpenDialogs().length;
-          const base = clickCandidate(element, strategy);
-          if (!base) return null;
-          let openedDialog: { label: string } | undefined;
-          if (shouldWaitDialog) {
-            openedDialog = await waitForNewDialog(dialogsBefore, 320);
-          }
-          return {
-            ...base,
-            attempt,
-            openedDialog,
-            dialogOpen: Boolean(openedDialog),
-            dialogsOpen: listOpenDialogs().length,
-          };
-        };
-
-        for (let attempt = 1; attempt <= attempts; attempt += 1) {
-          if (selectorText) {
-            try {
-              const exact = await tryClick(deepQuerySelector<HTMLElement>(selectorText), 'selector', attempt);
-              if (exact) return exact;
-            } catch {
-              // Invalid selector syntax - continue with fallback strategies.
-            }
-          }
-
-          const byText = await tryClick(findByText(textHint || selectorText), 'text_match', attempt);
-          if (byText) return byText;
-
-          const byHint = await tryClick(findByAttributeHint(textHint || selectorText), 'attribute_hint', attempt);
-          if (byHint) return byHint;
-
-          if (attempt < attempts) {
-            await sleep(200 * attempt);
-          }
-        }
-
-        const candidates = findClickables()
-          .slice(0, 10)
-          .map((element) => ({
-            tag: element.tagName.toLowerCase(),
-            text: normalize(element.textContent || '').slice(0, 80),
-            aria: normalize(element.getAttribute('aria-label') || '').slice(0, 80),
-            classes: String(element.className || '').slice(0, 100),
-            role: element.getAttribute('role') || '',
-          }));
-
-        return {
-          success: false,
-          code: 'ELEMENT_NOT_FOUND',
-          error: `Element not found for selector: ${selectorText}`,
-          hint: 'Try findElement({ query, scope: "auto" }) or getContent({ mode: "structure" }). Prefer short labels like "seguidores".',
-          similar_elements: candidates,
-          attempts,
-          dialogsOpen: listOpenDialogs().length,
-        };
-      },
-      [selector, retries, waitForDialog],
+      glidePageDomOp,
+      ['click', { sel: selector, maxAttempts: retries, shouldWaitDialog: waitForDialog }],
       8000,
       injOpts,
     );
@@ -2110,190 +1842,9 @@ export class BrowserTools {
     if (!injOpts && result?.success === false && result?.code === 'ELEMENT_NOT_FOUND' && selector.trim()) {
       const frameId = await this.findFrameWithSelector(tabId, selector);
       if (frameId != null) {
-        result = await this.runInTab(
-          tabId,
-          async (sel, maxAttempts) => {
-            const selectorText = String(sel || '').trim();
-            const attempts = Number.isFinite(maxAttempts) ? Math.max(1, Math.floor(maxAttempts)) : 1;
-            const sleep = (ms: number) => new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
-            const normalize = (value: string) =>
-              String(value || '')
-                .replace(/\s+/g, ' ')
-                .trim();
-            const clickableQuery =
-              'button, a[href], [role="tab"], [role="button"], [role="link"], input[type="submit"], input[type="button"], [onclick]';
-            const allElements = <T extends Element>(query: string) => {
-              const results: T[] = [];
-              let shadowScanned = 0;
-              const walkShadowHosts = (
-                root: Document | ShadowRoot | Element,
-                visitShadow: (shadow: ShadowRoot) => void,
-              ) => {
-                const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
-                let current = walker.nextNode() as HTMLElement | null;
-                while (current && shadowScanned < 4000) {
-                  shadowScanned += 1;
-                  if (current.shadowRoot) visitShadow(current.shadowRoot);
-                  current = walker.nextNode() as HTMLElement | null;
-                }
-              };
-              const visit = (root: Document | ShadowRoot | Element) => {
-                let matches: Element[] = [];
-                try {
-                  matches = Array.from(root.querySelectorAll(query));
-                } catch {
-                  return;
-                }
-                for (const element of matches) {
-                  results.push(element as T);
-                }
-                walkShadowHosts(root, visit);
-              };
-              visit(document);
-              return results;
-            };
-            const deepQuerySelector = <T extends Element>(query: string) => {
-              if (!query.includes('>>>')) {
-                try {
-                  return document.querySelector<T>(query);
-                } catch {
-                  return null;
-                }
-              }
-              const parts = query
-                .split('>>>')
-                .map((part) => part.trim())
-                .filter(Boolean);
-              let root: Document | ShadowRoot | Element = document;
-              for (let index = 0; index < parts.length; index += 1) {
-                let next: Element | null = null;
-                try {
-                  next = root.querySelector(parts[index]);
-                } catch {
-                  return null;
-                }
-                if (!next) return null;
-                if (index === parts.length - 1) return next as T;
-                const shadow = (next as HTMLElement).shadowRoot;
-                if (!shadow) return null;
-                root = shadow;
-              }
-              return null;
-            };
-            const textHint = (() => {
-              const quoted = selectorText.match(/["']([^"']+)["']/);
-              if (quoted?.[1]) return quoted[1].trim();
-              const bare = selectorText.replace(/^[#.]/, '').replace(/[_-]+/g, ' ').trim();
-              if (!bare || bare.length < 3) return '';
-              if (/[ >:[\]()]/.test(selectorText)) return '';
-              return bare;
-            })();
-            const clickCandidate = (element: HTMLElement | null, strategy: string) => {
-              if (!element) return null;
-              const disabled =
-                (element as HTMLButtonElement | HTMLInputElement).disabled === true ||
-                element.getAttribute('aria-disabled') === 'true';
-              if (disabled) return null;
-              element.scrollIntoView({ block: 'center', inline: 'center' });
-              const rect = element.getBoundingClientRect();
-              const clientX = Math.round(rect.left + rect.width / 2);
-              const clientY = Math.round(rect.top + rect.height / 2);
-              const hitElement = document.elementFromPoint(clientX, clientY);
-              const eventTarget =
-                hitElement instanceof HTMLElement && (hitElement === element || element.contains(hitElement))
-                  ? hitElement
-                  : element;
-              const eventInit = {
-                bubbles: true,
-                cancelable: true,
-                composed: true,
-                view: window,
-                clientX,
-                clientY,
-                button: 0,
-                buttons: 1,
-              };
-              eventTarget.focus?.();
-              if (typeof PointerEvent !== 'undefined') {
-                eventTarget.dispatchEvent(
-                  new PointerEvent('pointerdown', { ...eventInit, pointerId: 1, pointerType: 'mouse' }),
-                );
-              }
-              eventTarget.dispatchEvent(new MouseEvent('mousedown', eventInit));
-              if (typeof PointerEvent !== 'undefined') {
-                eventTarget.dispatchEvent(
-                  new PointerEvent('pointerup', { ...eventInit, pointerId: 1, pointerType: 'mouse' }),
-                );
-              }
-              eventTarget.dispatchEvent(new MouseEvent('mouseup', { ...eventInit, buttons: 0 }));
-              eventTarget.click();
-              return {
-                success: true,
-                strategy,
-                matched: normalize(element.textContent || element.getAttribute('aria-label') || '').slice(0, 100),
-                coordinates: { x: clientX, y: clientY },
-                targetTag: eventTarget.tagName.toLowerCase(),
-              };
-            };
-            const findClickables = () => allElements<HTMLElement>(clickableQuery);
-            const findByText = (query: string) => {
-              const needle = normalize(query).toLowerCase();
-              if (!needle) return null;
-              return (
-                findClickables().find((element) => {
-                  const text = normalize(element.textContent || '').toLowerCase();
-                  const aria = normalize(element.getAttribute('aria-label') || '').toLowerCase();
-                  const title = normalize(element.getAttribute('title') || '').toLowerCase();
-                  const value = normalize((element as HTMLInputElement).value || '').toLowerCase();
-                  return (
-                    text.includes(needle) || aria.includes(needle) || title.includes(needle) || value.includes(needle)
-                  );
-                }) || null
-              );
-            };
-            const findByAttributeHint = (hint: string) => {
-              const needle = normalize(hint).toLowerCase();
-              if (!needle) return null;
-              return (
-                allElements<HTMLElement>(
-                  '[aria-label], [title], [data-testid], button[name], input[name], [role="button"], [role="link"]',
-                ).find((element) => {
-                  const aria = normalize(element.getAttribute('aria-label') || '').toLowerCase();
-                  const title = normalize(element.getAttribute('title') || '').toLowerCase();
-                  const testId = normalize(element.getAttribute('data-testid') || '').toLowerCase();
-                  const name = normalize(element.getAttribute('name') || '').toLowerCase();
-                  return (
-                    aria.includes(needle) || title.includes(needle) || testId.includes(needle) || name.includes(needle)
-                  );
-                }) || null
-              );
-            };
-            for (let attempt = 1; attempt <= attempts; attempt += 1) {
-              if (selectorText) {
-                try {
-                  const exact = clickCandidate(deepQuerySelector<HTMLElement>(selectorText), 'frame_selector');
-                  if (exact) return { ...exact, attempt };
-                } catch {
-                  // Invalid selector syntax - continue with fallback strategies.
-                }
-              }
-              const byText = clickCandidate(findByText(textHint || selectorText), 'frame_text_match');
-              if (byText) return { ...byText, attempt };
-              const byHint = clickCandidate(findByAttributeHint(textHint || selectorText), 'frame_attribute_hint');
-              if (byHint) return { ...byHint, attempt };
-              if (attempt < attempts) await sleep(250 * attempt);
-            }
-            return {
-              success: false,
-              code: 'ELEMENT_NOT_FOUND',
-              error: `Element not found in main document or accessible frames for selector: ${selectorText}`,
-              attempts,
-            };
-          },
-          [selector, 1],
-          8000,
-          { frameId },
-        );
+        result = await this.runInTab(tabId, glidePageDomOp, ['clickFrame', { sel: selector, maxAttempts: 1 }], 8000, {
+          frameId,
+        });
       }
     }
     const baseResult = result || { success: false, error: 'Script execution failed.' };
@@ -2319,182 +1870,13 @@ export class BrowserTools {
       return this.attachResolutionMeta(bridged, resolution);
     }
 
-    const hoverScript = async (sel: string, maxAttempts: number, frameMode = false) => {
-      const selectorText = String(sel || '').trim();
-      const attempts = Number.isFinite(maxAttempts) ? Math.max(1, Math.floor(maxAttempts)) : 3;
-      const sleep = (ms: number) => new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
-      const normalize = (value: string) =>
-        String(value || '')
-          .replace(/\s+/g, ' ')
-          .trim();
-      const hoverQuery =
-        'button, a[href], input, textarea, select, [role="button"], [role="link"], [role="menuitem"], [role="tab"], [aria-label], [title], [data-testid], [onclick]';
-      const allElements = <T extends Element>(query: string) => {
-        const results: T[] = [];
-        let shadowScanned = 0;
-        const walkShadowHosts = (root: Document | ShadowRoot | Element, visitShadow: (shadow: ShadowRoot) => void) => {
-          const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
-          let current = walker.nextNode() as HTMLElement | null;
-          while (current && shadowScanned < 4000) {
-            shadowScanned += 1;
-            if (current.shadowRoot) visitShadow(current.shadowRoot);
-            current = walker.nextNode() as HTMLElement | null;
-          }
-        };
-        const visit = (root: Document | ShadowRoot | Element) => {
-          let matches: Element[] = [];
-          try {
-            matches = Array.from(root.querySelectorAll(query));
-          } catch {
-            return;
-          }
-          for (const element of matches) {
-            results.push(element as T);
-          }
-          walkShadowHosts(root, visit);
-        };
-        visit(document);
-        return results;
-      };
-      const deepQuerySelector = <T extends Element>(query: string) => {
-        if (!query.includes('>>>')) {
-          try {
-            return document.querySelector<T>(query);
-          } catch {
-            return null;
-          }
-        }
-        const parts = query
-          .split('>>>')
-          .map((part) => part.trim())
-          .filter(Boolean);
-        let root: Document | ShadowRoot | Element = document;
-        for (let index = 0; index < parts.length; index += 1) {
-          let next: Element | null = null;
-          try {
-            next = root.querySelector(parts[index]);
-          } catch {
-            return null;
-          }
-          if (!next) return null;
-          if (index === parts.length - 1) return next as T;
-          const shadow = (next as HTMLElement).shadowRoot;
-          if (!shadow) return null;
-          root = shadow;
-        }
-        return null;
-      };
-      const textHint = (() => {
-        const quoted = selectorText.match(/["']([^"']+)["']/);
-        if (quoted?.[1]) return quoted[1].trim();
-        const bare = selectorText.replace(/^[#.]/, '').replace(/[_-]+/g, ' ').trim();
-        if (!bare || bare.length < 3) return '';
-        if (/[ >:[\]()]/.test(selectorText)) return '';
-        return bare;
-      })();
-      const findByText = (query: string) => {
-        const needle = normalize(query).toLowerCase();
-        if (!needle) return null;
-        return (
-          allElements<HTMLElement>(hoverQuery).find((element) => {
-            const text = normalize(element.textContent || '').toLowerCase();
-            const aria = normalize(element.getAttribute('aria-label') || '').toLowerCase();
-            const title = normalize(element.getAttribute('title') || '').toLowerCase();
-            const testId = normalize(element.getAttribute('data-testid') || '').toLowerCase();
-            const value = normalize((element as HTMLInputElement).value || '').toLowerCase();
-            return (
-              text.includes(needle) ||
-              aria.includes(needle) ||
-              title.includes(needle) ||
-              testId.includes(needle) ||
-              value.includes(needle)
-            );
-          }) || null
-        );
-      };
-      const hoverCandidate = (element: HTMLElement | null, strategy: string) => {
-        if (!element) return null;
-        element.scrollIntoView({ block: 'center', inline: 'center' });
-        const rect = element.getBoundingClientRect();
-        const clientX = Math.round(rect.left + rect.width / 2);
-        const clientY = Math.round(rect.top + rect.height / 2);
-        const hitElement = document.elementFromPoint(clientX, clientY);
-        const eventTarget =
-          hitElement instanceof HTMLElement && (hitElement === element || element.contains(hitElement))
-            ? hitElement
-            : element;
-        const eventInit = {
-          bubbles: true,
-          cancelable: true,
-          composed: true,
-          view: window,
-          clientX,
-          clientY,
-          button: 0,
-          buttons: 0,
-        };
-        eventTarget.focus?.();
-        if (typeof PointerEvent !== 'undefined') {
-          eventTarget.dispatchEvent(
-            new PointerEvent('pointerover', { ...eventInit, pointerId: 1, pointerType: 'mouse' }),
-          );
-          eventTarget.dispatchEvent(
-            new PointerEvent('pointerenter', { ...eventInit, pointerId: 1, pointerType: 'mouse', bubbles: false }),
-          );
-          eventTarget.dispatchEvent(
-            new PointerEvent('pointermove', { ...eventInit, pointerId: 1, pointerType: 'mouse' }),
-          );
-        }
-        eventTarget.dispatchEvent(new MouseEvent('mouseover', eventInit));
-        eventTarget.dispatchEvent(new MouseEvent('mouseenter', { ...eventInit, bubbles: false }));
-        eventTarget.dispatchEvent(new MouseEvent('mousemove', eventInit));
-        return {
-          success: true,
-          strategy,
-          matched: normalize(element.textContent || element.getAttribute('aria-label') || '').slice(0, 100),
-          coordinates: { x: clientX, y: clientY },
-          targetTag: eventTarget.tagName.toLowerCase(),
-        };
-      };
+    const hoverArgs = (frameMode: boolean) => ['hover' as const, { sel: selector, maxAttempts: retries, frameMode }];
 
-      for (let attempt = 1; attempt <= attempts; attempt += 1) {
-        if (selectorText) {
-          const exact = hoverCandidate(
-            deepQuerySelector<HTMLElement>(selectorText),
-            frameMode ? 'frame_selector' : 'selector',
-          );
-          if (exact) return { ...exact, attempt };
-        }
-        const byText = hoverCandidate(
-          findByText(textHint || selectorText),
-          frameMode ? 'frame_text_match' : 'text_match',
-        );
-        if (byText) return { ...byText, attempt };
-        if (attempt < attempts) await sleep(250 * attempt);
-      }
-      const candidates = allElements<HTMLElement>(hoverQuery)
-        .slice(0, 10)
-        .map((element) => ({
-          tag: element.tagName.toLowerCase(),
-          text: normalize(element.textContent || '').slice(0, 80),
-          aria: normalize(element.getAttribute('aria-label') || '').slice(0, 80),
-          role: element.getAttribute('role') || '',
-        }));
-      return {
-        success: false,
-        code: 'ELEMENT_NOT_FOUND',
-        error: `Hover target not found${frameMode ? ' in main document or accessible frames' : ''}: ${selectorText}`,
-        hint: 'Use findElement() or getContent({ mode: "structure" }) to locate a stable hover target.',
-        similar_elements: candidates,
-        attempts,
-      };
-    };
-
-    let result = await this.runInTab(tabId, hoverScript, [selector, retries, false]);
+    let result = await this.runInTab(tabId, glidePageDomOp, hoverArgs(false));
     if (result?.success === false && result?.code === 'ELEMENT_NOT_FOUND' && selector.trim()) {
       const frameId = await this.findFrameWithSelector(tabId, selector);
       if (frameId != null) {
-        result = await this.runInTab(tabId, hoverScript, [selector, retries, false], 8000, { frameId });
+        result = await this.runInTab(tabId, glidePageDomOp, hoverArgs(true), 8000, { frameId });
       }
     }
     const baseResult = result || { success: false, error: 'Script execution failed.' };
@@ -2520,7 +1902,7 @@ export class BrowserTools {
         {
           success: false,
           code: 'BRIDGE_UNAVAILABLE',
-          error: 'Verified handle drag requires opt-in native input.',
+          error: 'Verified handle drag requires native input (pass native: true).',
           dispatched: false,
           outcomeCertainty: 'known_not_executed',
         },
@@ -2539,269 +1921,16 @@ export class BrowserTools {
       }
     }
 
-    const mouseScript = async (sel: string, act: string, maxAttempts: number, frameMode = false, dropSel = '') => {
-      const selectorText = String(sel || '').trim();
-      const actionName = String(act || '');
-      const attempts = Number.isFinite(maxAttempts) ? Math.max(1, Math.floor(maxAttempts)) : 3;
-      const sleep = (ms: number) => new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
-      const normalize = (value: string) =>
-        String(value || '')
-          .replace(/\s+/g, ' ')
-          .trim();
-      const targetQuery =
-        'button, a[href], input, textarea, select, [role="button"], [role="link"], [role="menuitem"], [role="tab"], [aria-label], [title], [data-testid], [onclick]';
-      const allElements = <T extends Element>(query: string) => {
-        const results: T[] = [];
-        let shadowScanned = 0;
-        const walkShadowHosts = (root: Document | ShadowRoot | Element, visitShadow: (shadow: ShadowRoot) => void) => {
-          const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
-          let current = walker.nextNode() as HTMLElement | null;
-          while (current && shadowScanned < 4000) {
-            shadowScanned += 1;
-            if (current.shadowRoot) visitShadow(current.shadowRoot);
-            current = walker.nextNode() as HTMLElement | null;
-          }
-        };
-        const visit = (root: Document | ShadowRoot | Element) => {
-          let matches: Element[] = [];
-          try {
-            matches = Array.from(root.querySelectorAll(query));
-          } catch {
-            return;
-          }
-          for (const element of matches) {
-            results.push(element as T);
-          }
-          walkShadowHosts(root, visit);
-        };
-        visit(document);
-        return results;
-      };
-      const deepQuerySelector = <T extends Element>(query: string) => {
-        if (!query.includes('>>>')) {
-          try {
-            return document.querySelector<T>(query);
-          } catch {
-            return null;
-          }
-        }
-        const parts = query
-          .split('>>>')
-          .map((part) => part.trim())
-          .filter(Boolean);
-        let root: Document | ShadowRoot | Element = document;
-        for (let index = 0; index < parts.length; index += 1) {
-          let next: Element | null = null;
-          try {
-            next = root.querySelector(parts[index]);
-          } catch {
-            return null;
-          }
-          if (!next) return null;
-          if (index === parts.length - 1) return next as T;
-          const shadow = (next as HTMLElement).shadowRoot;
-          if (!shadow) return null;
-          root = shadow;
-        }
-        return null;
-      };
-      const textHint = (() => {
-        const quoted = selectorText.match(/["']([^"']+)["']/);
-        if (quoted?.[1]) return quoted[1].trim();
-        const bare = selectorText.replace(/^[#.]/, '').replace(/[_-]+/g, ' ').trim();
-        if (!bare || bare.length < 3) return '';
-        if (/[ >:[\]()]/.test(selectorText)) return '';
-        return bare;
-      })();
-      const findByText = (query: string) => {
-        const needle = normalize(query).toLowerCase();
-        if (!needle) return null;
-        return (
-          allElements<HTMLElement>(targetQuery).find((element) => {
-            const text = normalize(element.textContent || '').toLowerCase();
-            const aria = normalize(element.getAttribute('aria-label') || '').toLowerCase();
-            const title = normalize(element.getAttribute('title') || '').toLowerCase();
-            const testId = normalize(element.getAttribute('data-testid') || '').toLowerCase();
-            const value = normalize((element as HTMLInputElement).value || '').toLowerCase();
-            return (
-              text.includes(needle) ||
-              aria.includes(needle) ||
-              title.includes(needle) ||
-              testId.includes(needle) ||
-              value.includes(needle)
-            );
-          }) || null
-        );
-      };
-      const resolveTarget = (query: string) => {
-        const q = String(query || '').trim();
-        if (!q) return null;
-        return deepQuerySelector<HTMLElement>(q) || findByText(q);
-      };
-      const centerOf = (el: HTMLElement) => {
-        const rect = el.getBoundingClientRect();
-        return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
-      };
-      const performMouseAction = (element: HTMLElement | null, strategy: string) => {
-        if (!element) return null;
-        const disabled =
-          (element as HTMLButtonElement | HTMLInputElement).disabled === true ||
-          element.getAttribute('aria-disabled') === 'true';
-        if (disabled) return null;
-        element.scrollIntoView({ block: 'center', inline: 'center' });
-        const { x: clientX, y: clientY } = centerOf(element);
-        const hitElement = document.elementFromPoint(clientX, clientY);
-        const eventTarget =
-          hitElement instanceof HTMLElement && (hitElement === element || element.contains(hitElement))
-            ? hitElement
-            : element;
-        const button = actionName === 'rightClick' ? 2 : 0;
-        const buttons = actionName === 'rightClick' ? 2 : 1;
-        const baseEventInit = {
-          bubbles: true,
-          cancelable: true,
-          composed: true,
-          view: window,
-          clientX,
-          clientY,
-          button,
-          buttons,
-        };
+    const mouseArgs = (frameMode: boolean) => [
+      'mouse' as const,
+      { sel: selector, act: action, maxAttempts: retries, frameMode, dropSel: toSelector },
+    ];
 
-        if (actionName === 'drag') {
-          const dropEl = resolveTarget(dropSel);
-          if (!dropEl) {
-            return {
-              success: false,
-              code: 'ELEMENT_NOT_FOUND',
-              error: `Drag drop target not found: ${dropSel}`,
-            };
-          }
-          dropEl.scrollIntoView({ block: 'center', inline: 'center' });
-          const from = centerOf(element);
-          const to = centerOf(dropEl);
-          const fire = (type: string, x: number, y: number, target: Element, extra: Record<string, unknown> = {}) => {
-            const init = {
-              bubbles: true,
-              cancelable: true,
-              composed: true,
-              view: window,
-              clientX: x,
-              clientY: y,
-              button: 0,
-              buttons: type === 'mouseup' || type === 'pointerup' ? 0 : 1,
-              ...extra,
-            };
-            if (type.startsWith('pointer') && typeof PointerEvent !== 'undefined') {
-              target.dispatchEvent(new PointerEvent(type, { ...init, pointerId: 1, pointerType: 'mouse' } as any));
-            } else {
-              target.dispatchEvent(new MouseEvent(type, init));
-            }
-          };
-          fire('pointerdown', from.x, from.y, eventTarget);
-          fire('mousedown', from.x, from.y, eventTarget);
-          fire('pointermove', from.x, from.y, eventTarget);
-          fire('mousemove', from.x, from.y, eventTarget);
-          fire('pointermove', to.x, to.y, dropEl);
-          fire('mousemove', to.x, to.y, dropEl);
-          fire('pointerup', to.x, to.y, dropEl);
-          fire('mouseup', to.x, to.y, dropEl);
-          try {
-            const dt = new DataTransfer();
-            eventTarget.dispatchEvent(
-              new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: dt }),
-            );
-            dropEl.dispatchEvent(new DragEvent('dragenter', { bubbles: true, cancelable: true, dataTransfer: dt }));
-            dropEl.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt }));
-            dropEl.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
-            eventTarget.dispatchEvent(new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer: dt }));
-          } catch {
-            /* some pages lack DragEvent / DataTransfer — pointer path still ran */
-          }
-          return {
-            success: true,
-            action: 'drag',
-            strategy,
-            from: from,
-            to,
-            matched: normalize(element.textContent || element.getAttribute('aria-label') || '').slice(0, 100),
-          };
-        }
-
-        const dispatchClickCycle = (detail: number) => {
-          if (typeof PointerEvent !== 'undefined') {
-            eventTarget.dispatchEvent(
-              new PointerEvent('pointerdown', { ...baseEventInit, pointerId: 1, pointerType: 'mouse' }),
-            );
-          }
-          eventTarget.dispatchEvent(new MouseEvent('mousedown', { ...baseEventInit, detail }));
-          if (typeof PointerEvent !== 'undefined') {
-            eventTarget.dispatchEvent(
-              new PointerEvent('pointerup', { ...baseEventInit, buttons: 0, pointerId: 1, pointerType: 'mouse' }),
-            );
-          }
-          eventTarget.dispatchEvent(new MouseEvent('mouseup', { ...baseEventInit, buttons: 0, detail }));
-          if (actionName !== 'rightClick') {
-            eventTarget.dispatchEvent(new MouseEvent('click', { ...baseEventInit, buttons: 0, detail }));
-          }
-        };
-        eventTarget.focus?.();
-        if (actionName === 'doubleClick') {
-          dispatchClickCycle(1);
-          dispatchClickCycle(2);
-          eventTarget.dispatchEvent(new MouseEvent('dblclick', { ...baseEventInit, buttons: 0, detail: 2 }));
-        } else {
-          dispatchClickCycle(1);
-          eventTarget.dispatchEvent(new MouseEvent('contextmenu', { ...baseEventInit, detail: 1 }));
-        }
-        return {
-          success: true,
-          action: actionName,
-          strategy,
-          matched: normalize(element.textContent || element.getAttribute('aria-label') || '').slice(0, 100),
-          coordinates: { x: clientX, y: clientY },
-          targetTag: eventTarget.tagName.toLowerCase(),
-        };
-      };
-
-      for (let attempt = 1; attempt <= attempts; attempt += 1) {
-        if (selectorText) {
-          const exact = performMouseAction(
-            deepQuerySelector<HTMLElement>(selectorText),
-            frameMode ? 'frame_selector' : 'selector',
-          );
-          if (exact) return { ...exact, attempt };
-        }
-        const byText = performMouseAction(
-          findByText(textHint || selectorText),
-          frameMode ? 'frame_text_match' : 'text_match',
-        );
-        if (byText) return { ...byText, attempt };
-        if (attempt < attempts) await sleep(250 * attempt);
-      }
-      const candidates = allElements<HTMLElement>(targetQuery)
-        .slice(0, 10)
-        .map((element) => ({
-          tag: element.tagName.toLowerCase(),
-          text: normalize(element.textContent || '').slice(0, 80),
-          aria: normalize(element.getAttribute('aria-label') || '').slice(0, 80),
-          role: element.getAttribute('role') || '',
-        }));
-      return {
-        success: false,
-        code: 'ELEMENT_NOT_FOUND',
-        error: `Mouse target not found${frameMode ? ' in main document or accessible frames' : ''}: ${selectorText}`,
-        hint: 'Use findElement() or getContent({ mode: "structure" }) to locate a stable mouse target.',
-        similar_elements: candidates,
-        attempts,
-      };
-    };
-
-    let result = await this.runInTab(tabId, mouseScript, [selector, action, retries, false, toSelector]);
+    let result = await this.runInTab(tabId, glidePageDomOp, mouseArgs(false));
     if (result?.success === false && result?.code === 'ELEMENT_NOT_FOUND' && selector.trim()) {
       const frameId = await this.findFrameWithSelector(tabId, selector);
       if (frameId != null) {
-        result = await this.runInTab(tabId, mouseScript, [selector, action, retries, false, toSelector], 8000, {
+        result = await this.runInTab(tabId, glidePageDomOp, mouseArgs(true), 8000, {
           frameId,
         });
       }
@@ -2840,263 +1969,8 @@ export class BrowserTools {
 
     let result = await this.runInTab(
       tabId,
-      async (sel, value, maxAttempts) => {
-        const selectorText = String(sel || '').trim();
-        const attempts = Number.isFinite(maxAttempts) ? Math.max(1, Math.floor(maxAttempts)) : 3;
-        const targetValue = String(value ?? '');
-        const sleep = (ms: number) => new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
-        const normalize = (input: string) =>
-          String(input || '')
-            .replace(/\s+/g, ' ')
-            .trim();
-
-        const textHint = (() => {
-          const quoted = selectorText.match(/["']([^"']+)["']/);
-          if (quoted?.[1]) return quoted[1].trim();
-          const bare = selectorText.replace(/^[#.]/, '').replace(/[_-]+/g, ' ').trim();
-          if (!bare || bare.length < 3) return '';
-          if (/[ >:[\]()]/.test(selectorText)) return '';
-          return bare;
-        })();
-
-        const getLabel = (inputElement: Element) => {
-          const id = inputElement.getAttribute('id');
-          if (id) {
-            const labelByFor = document.querySelector(`label[for="${CSS.escape(id)}"]`);
-            if (labelByFor?.textContent) return normalize(labelByFor.textContent);
-          }
-          const parentLabel = inputElement.closest('label');
-          if (parentLabel?.textContent) return normalize(parentLabel.textContent);
-          return '';
-        };
-
-        const getInputCandidates = () =>
-          (() => {
-            const results: Array<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLElement> = [];
-            let shadowScanned = 0;
-            const walkShadowHosts = (
-              root: Document | ShadowRoot | Element,
-              visitShadow: (shadow: ShadowRoot) => void,
-            ) => {
-              const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
-              let current = walker.nextNode() as HTMLElement | null;
-              while (current && shadowScanned < 4000) {
-                shadowScanned += 1;
-                if (current.shadowRoot) visitShadow(current.shadowRoot);
-                current = walker.nextNode() as HTMLElement | null;
-              }
-            };
-            const visit = (root: Document | ShadowRoot | Element) => {
-              const matches = Array.from(
-                root.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLElement>(
-                  'input, textarea, select, [contenteditable="true"]',
-                ),
-              );
-              for (const element of matches) {
-                results.push(element);
-              }
-              walkShadowHosts(root, visit);
-            };
-            visit(document);
-            return results;
-          })();
-        const deepQuerySelector = (query: string) => {
-          if (!query.includes('>>>')) {
-            try {
-              return document.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLElement>(
-                query,
-              );
-            } catch {
-              return null;
-            }
-          }
-          const parts = query
-            .split('>>>')
-            .map((part) => part.trim())
-            .filter(Boolean);
-          let root: Document | ShadowRoot | Element = document;
-          for (let index = 0; index < parts.length; index += 1) {
-            let next: Element | null = null;
-            try {
-              next = root.querySelector(parts[index]);
-            } catch {
-              return null;
-            }
-            if (!next) return null;
-            if (index === parts.length - 1) {
-              return next as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLElement;
-            }
-            const shadow = (next as HTMLElement).shadowRoot;
-            if (!shadow) return null;
-            root = shadow;
-          }
-          return null;
-        };
-
-        const findByHint = (hint: string) => {
-          const needle = normalize(hint).toLowerCase();
-          if (!needle) return null;
-          return (
-            getInputCandidates().find((candidate) => {
-              const placeholder = normalize((candidate as HTMLInputElement).placeholder || '').toLowerCase();
-              const name = normalize(candidate.getAttribute('name') || '').toLowerCase();
-              const aria = normalize(candidate.getAttribute('aria-label') || '').toLowerCase();
-              const title = normalize(candidate.getAttribute('title') || '').toLowerCase();
-              const label = getLabel(candidate).toLowerCase();
-              return (
-                placeholder.includes(needle) ||
-                name.includes(needle) ||
-                aria.includes(needle) ||
-                title.includes(needle) ||
-                label.includes(needle)
-              );
-            }) || null
-          );
-        };
-
-        const applyValue = (
-          element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLElement,
-          nextValue: string,
-        ) => {
-          const isSelect = element instanceof HTMLSelectElement;
-          const isTextFormField = element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement;
-          const disabled =
-            ((isTextFormField || isSelect) && element.disabled === true) ||
-            element.getAttribute('aria-disabled') === 'true';
-          const readOnly = isTextFormField && element.readOnly === true;
-          if (disabled || readOnly) return false;
-
-          element.scrollIntoView({ block: 'center', inline: 'nearest' });
-          element.focus();
-
-          if (isSelect) {
-            const normalizedValue = normalize(nextValue).toLowerCase();
-            const options = Array.from(element.options);
-            const option =
-              options.find((candidate) => candidate.value === nextValue) ||
-              options.find((candidate) => normalize(candidate.textContent || '') === normalize(nextValue)) ||
-              options.find(
-                (candidate) =>
-                  candidate.value.toLowerCase() === normalizedValue ||
-                  normalize(candidate.textContent || '').toLowerCase() === normalizedValue,
-              ) ||
-              options.find(
-                (candidate) =>
-                  candidate.value.toLowerCase().includes(normalizedValue) ||
-                  normalize(candidate.textContent || '')
-                    .toLowerCase()
-                    .includes(normalizedValue),
-              );
-            if (!option) return false;
-            element.value = option.value;
-            option.selected = true;
-            element.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
-            element.dispatchEvent(new Event('change', { bubbles: true }));
-            return element.value === option.value;
-          }
-
-          const beforeInput =
-            typeof InputEvent !== 'undefined'
-              ? new InputEvent('beforeinput', {
-                  bubbles: true,
-                  cancelable: true,
-                  composed: true,
-                  inputType: 'insertText',
-                  data: nextValue,
-                })
-              : new Event('beforeinput', { bubbles: true, cancelable: true });
-          const shouldContinue = element.dispatchEvent(beforeInput);
-          if (!shouldContinue) return false;
-
-          if (isTextFormField) {
-            try {
-              element.setSelectionRange(0, element.value.length);
-            } catch {
-              // Some input types do not support text selection.
-            }
-            const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element), 'value');
-            if (descriptor?.set) {
-              descriptor.set.call(element, nextValue);
-            } else {
-              element.value = nextValue;
-            }
-            element.dispatchEvent(
-              typeof InputEvent !== 'undefined'
-                ? new InputEvent('input', {
-                    bubbles: true,
-                    cancelable: false,
-                    composed: true,
-                    inputType: 'insertText',
-                    data: nextValue,
-                  })
-                : new Event('input', { bubbles: true }),
-            );
-            element.dispatchEvent(new Event('change', { bubbles: true }));
-            return String(element.value) === String(nextValue);
-          }
-          element.textContent = nextValue;
-          if (typeof InputEvent !== 'undefined') {
-            element.dispatchEvent(
-              new InputEvent('input', {
-                bubbles: true,
-                cancelable: false,
-                composed: true,
-                inputType: 'insertText',
-                data: nextValue,
-              }),
-            );
-          } else {
-            element.dispatchEvent(new Event('input', { bubbles: true }));
-          }
-          element.dispatchEvent(new Event('change', { bubbles: true }));
-          const applied = normalize(element.textContent || '');
-          const want = normalize(nextValue);
-          return !want || applied === want || applied.includes(want);
-        };
-
-        for (let attempt = 1; attempt <= attempts; attempt += 1) {
-          let target: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLElement | null = null;
-          let strategy = 'selector';
-          if (selectorText) {
-            try {
-              target = deepQuerySelector(selectorText);
-            } catch {
-              target = null;
-            }
-          }
-          if (!target) {
-            target = findByHint(textHint || selectorText);
-            strategy = 'hint_match';
-          }
-          if (target) {
-            if (applyValue(target, targetValue)) {
-              return {
-                success: true,
-                strategy,
-                attempt,
-                inputType:
-                  target instanceof HTMLSelectElement
-                    ? 'select'
-                    : target instanceof HTMLInputElement
-                      ? target.type || 'text'
-                      : target.tagName.toLowerCase(),
-              };
-            }
-          }
-          if (attempt < attempts) {
-            await sleep(250 * attempt);
-          }
-        }
-
-        return {
-          success: false,
-          code: 'ELEMENT_NOT_FOUND',
-          error: `Element not found for selector: ${selectorText}`,
-          hint: 'Use getContent({ mode: "structure" }) to locate form fields by placeholder/label before retrying type().',
-          attempts,
-        };
-      },
-      [selector, text, retries],
+      glidePageDomOp,
+      ['type', { sel: selector, value: text, maxAttempts: retries }],
       8000,
       injOpts,
     );
@@ -3105,249 +1979,8 @@ export class BrowserTools {
       if (frameId != null) {
         result = await this.runInTab(
           tabId,
-          async (sel, value, maxAttempts) => {
-            const selectorText = String(sel || '').trim();
-            const attempts = Number.isFinite(maxAttempts) ? Math.max(1, Math.floor(maxAttempts)) : 3;
-            const targetValue = String(value ?? '');
-            const sleep = (ms: number) => new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
-            const normalize = (input: string) =>
-              String(input || '')
-                .replace(/\s+/g, ' ')
-                .trim();
-            const textHint = (() => {
-              const quoted = selectorText.match(/["']([^"']+)["']/);
-              if (quoted?.[1]) return quoted[1].trim();
-              const bare = selectorText.replace(/^[#.]/, '').replace(/[_-]+/g, ' ').trim();
-              if (!bare || bare.length < 3) return '';
-              if (/[ >:[\]()]/.test(selectorText)) return '';
-              return bare;
-            })();
-            const getLabel = (inputElement: Element) => {
-              const id = inputElement.getAttribute('id');
-              if (id) {
-                const labelByFor = document.querySelector(`label[for="${CSS.escape(id)}"]`);
-                if (labelByFor?.textContent) return normalize(labelByFor.textContent);
-              }
-              const parentLabel = inputElement.closest('label');
-              if (parentLabel?.textContent) return normalize(parentLabel.textContent);
-              return '';
-            };
-            const getInputCandidates = () => {
-              const results: Array<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLElement> = [];
-              let shadowScanned = 0;
-              const walkShadowHosts = (
-                root: Document | ShadowRoot | Element,
-                visitShadow: (shadow: ShadowRoot) => void,
-              ) => {
-                const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
-                let current = walker.nextNode() as HTMLElement | null;
-                while (current && shadowScanned < 4000) {
-                  shadowScanned += 1;
-                  if (current.shadowRoot) visitShadow(current.shadowRoot);
-                  current = walker.nextNode() as HTMLElement | null;
-                }
-              };
-              const visit = (root: Document | ShadowRoot | Element) => {
-                const matches = Array.from(
-                  root.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLElement>(
-                    'input, textarea, select, [contenteditable="true"]',
-                  ),
-                );
-                for (const element of matches) {
-                  results.push(element);
-                }
-                walkShadowHosts(root, visit);
-              };
-              visit(document);
-              return results;
-            };
-            const deepQuerySelector = (query: string) => {
-              if (!query.includes('>>>')) {
-                try {
-                  return document.querySelector<
-                    HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLElement
-                  >(query);
-                } catch {
-                  return null;
-                }
-              }
-              const parts = query
-                .split('>>>')
-                .map((part) => part.trim())
-                .filter(Boolean);
-              let root: Document | ShadowRoot | Element = document;
-              for (let index = 0; index < parts.length; index += 1) {
-                let next: Element | null = null;
-                try {
-                  next = root.querySelector(parts[index]);
-                } catch {
-                  return null;
-                }
-                if (!next) return null;
-                if (index === parts.length - 1) {
-                  return next as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLElement;
-                }
-                const shadow = (next as HTMLElement).shadowRoot;
-                if (!shadow) return null;
-                root = shadow;
-              }
-              return null;
-            };
-            const findByHint = (hint: string) => {
-              const needle = normalize(hint).toLowerCase();
-              if (!needle) return null;
-              return (
-                getInputCandidates().find((candidate) => {
-                  const placeholder = normalize((candidate as HTMLInputElement).placeholder || '').toLowerCase();
-                  const name = normalize(candidate.getAttribute('name') || '').toLowerCase();
-                  const aria = normalize(candidate.getAttribute('aria-label') || '').toLowerCase();
-                  const title = normalize(candidate.getAttribute('title') || '').toLowerCase();
-                  const label = getLabel(candidate).toLowerCase();
-                  return (
-                    placeholder.includes(needle) ||
-                    name.includes(needle) ||
-                    aria.includes(needle) ||
-                    title.includes(needle) ||
-                    label.includes(needle)
-                  );
-                }) || null
-              );
-            };
-            const applyValue = (
-              element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLElement,
-              nextValue: string,
-            ) => {
-              const isSelect = element instanceof HTMLSelectElement;
-              const isTextFormField = element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement;
-              const disabled =
-                ((isTextFormField || isSelect) && element.disabled === true) ||
-                element.getAttribute('aria-disabled') === 'true';
-              const readOnly = isTextFormField && element.readOnly === true;
-              if (disabled || readOnly) return false;
-
-              element.scrollIntoView({ block: 'center', inline: 'nearest' });
-              element.focus();
-
-              if (isSelect) {
-                const normalizedValue = normalize(nextValue).toLowerCase();
-                const options = Array.from(element.options);
-                const option =
-                  options.find((candidate) => candidate.value === nextValue) ||
-                  options.find((candidate) => normalize(candidate.textContent || '') === normalize(nextValue)) ||
-                  options.find(
-                    (candidate) =>
-                      candidate.value.toLowerCase() === normalizedValue ||
-                      normalize(candidate.textContent || '').toLowerCase() === normalizedValue,
-                  ) ||
-                  options.find(
-                    (candidate) =>
-                      candidate.value.toLowerCase().includes(normalizedValue) ||
-                      normalize(candidate.textContent || '')
-                        .toLowerCase()
-                        .includes(normalizedValue),
-                  );
-                if (!option) return false;
-                element.value = option.value;
-                option.selected = true;
-                element.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
-                element.dispatchEvent(new Event('change', { bubbles: true }));
-                return element.value === option.value;
-              }
-
-              const beforeInput =
-                typeof InputEvent !== 'undefined'
-                  ? new InputEvent('beforeinput', {
-                      bubbles: true,
-                      cancelable: true,
-                      composed: true,
-                      inputType: 'insertText',
-                      data: nextValue,
-                    })
-                  : new Event('beforeinput', { bubbles: true, cancelable: true });
-              const shouldContinue = element.dispatchEvent(beforeInput);
-              if (!shouldContinue) return false;
-
-              if (isTextFormField) {
-                try {
-                  element.setSelectionRange(0, element.value.length);
-                } catch {
-                  // Some input types do not support text selection.
-                }
-                const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element), 'value');
-                if (descriptor?.set) descriptor.set.call(element, nextValue);
-                else element.value = nextValue;
-                element.dispatchEvent(
-                  typeof InputEvent !== 'undefined'
-                    ? new InputEvent('input', {
-                        bubbles: true,
-                        cancelable: false,
-                        composed: true,
-                        inputType: 'insertText',
-                        data: nextValue,
-                      })
-                    : new Event('input', { bubbles: true }),
-                );
-                element.dispatchEvent(new Event('change', { bubbles: true }));
-                return String(element.value) === String(nextValue);
-              }
-              element.textContent = nextValue;
-              if (typeof InputEvent !== 'undefined') {
-                element.dispatchEvent(
-                  new InputEvent('input', {
-                    bubbles: true,
-                    cancelable: false,
-                    composed: true,
-                    inputType: 'insertText',
-                    data: nextValue,
-                  }),
-                );
-              } else {
-                element.dispatchEvent(new Event('input', { bubbles: true }));
-              }
-              element.dispatchEvent(new Event('change', { bubbles: true }));
-              const applied = normalize(element.textContent || '');
-              const want = normalize(nextValue);
-              return !want || applied === want || applied.includes(want);
-            };
-            for (let attempt = 1; attempt <= attempts; attempt += 1) {
-              let target: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLElement | null = null;
-              let strategy = 'frame_selector';
-              if (selectorText) {
-                try {
-                  target = deepQuerySelector(selectorText);
-                } catch {
-                  target = null;
-                }
-              }
-              if (!target) {
-                target = findByHint(textHint || selectorText);
-                strategy = 'frame_hint_match';
-              }
-              if (target) {
-                if (applyValue(target, targetValue)) {
-                  return {
-                    success: true,
-                    strategy,
-                    attempt,
-                    inputType:
-                      target instanceof HTMLSelectElement
-                        ? 'select'
-                        : target instanceof HTMLInputElement
-                          ? target.type || 'text'
-                          : target.tagName.toLowerCase(),
-                  };
-                }
-              }
-              if (attempt < attempts) await sleep(250 * attempt);
-            }
-            return {
-              success: false,
-              code: 'ELEMENT_NOT_FOUND',
-              error: `Input not found in main document or accessible frames for selector: ${selectorText}`,
-              attempts,
-            };
-          },
-          [selector, text, 1],
+          glidePageDomOp,
+          ['type', { sel: selector, value: text, maxAttempts: 1, frameMode: true }],
           8000,
           { frameId },
         );
@@ -3383,84 +2016,13 @@ export class BrowserTools {
       return this.attachResolutionMeta(this.attachFrameMeta(bridged, frameMeta), resolution);
     }
 
-    const pressKeyScript = (k: string, sel: string, mods: string[]) => {
-      const deepQuerySelector = (query: string) => {
-        if (!query.includes('>>>')) return document.querySelector<HTMLElement>(query);
-        const parts = query
-          .split('>>>')
-          .map((part) => part.trim())
-          .filter(Boolean);
-        let root: Document | ShadowRoot | Element = document;
-        for (let index = 0; index < parts.length; index += 1) {
-          const next = root.querySelector(parts[index]);
-          if (!next) return null;
-          if (index === parts.length - 1) return next as HTMLElement;
-          const shadow = (next as HTMLElement).shadowRoot;
-          if (!shadow) return null;
-          root = shadow;
-        }
-        return null;
-      };
-      const allowed = new Set(['Control', 'Alt', 'Shift', 'Meta']);
-      const normalizedMods = Array.isArray(mods)
-        ? mods.map((m) => String(m || '').trim()).filter((m) => allowed.has(m))
-        : [];
-      const shouldEdit = (keyName: string) => {
-        const lower = String(keyName || '').toLowerCase();
-        if (lower === 'backspace' || lower === 'delete') return true;
-        if (normalizedMods.length > 0) return false;
-        return String(keyName || '').length === 1;
-      };
-      let target: HTMLElement | null = null;
-      if (sel) {
-        try {
-          target = deepQuerySelector(sel);
-        } catch {
-          return {
-            success: false,
-            code: 'INVALID_SELECTOR',
-            error: `Invalid selector syntax: ${String(sel)}`,
-          };
-        }
-        if (!target) return { success: false, code: 'ELEMENT_NOT_FOUND', error: 'Target not found.' };
-        try {
-          target.focus?.({ preventScroll: true } as FocusOptions);
-        } catch {
-          target.focus?.();
-        }
-      } else {
-        target = (document.activeElement as HTMLElement | null) || document.body;
-      }
-      if (!target) return { success: false, error: 'Target not found.' };
-      const init: KeyboardEventInit = {
-        key: k,
-        bubbles: true,
-        cancelable: true,
-        composed: true,
-        ctrlKey: normalizedMods.includes('Control'),
-        altKey: normalizedMods.includes('Alt'),
-        shiftKey: normalizedMods.includes('Shift'),
-        metaKey: normalizedMods.includes('Meta'),
-      };
-      target.dispatchEvent(new KeyboardEvent('keydown', init));
-      target.dispatchEvent(new KeyboardEvent('keypress', init));
-      target.dispatchEvent(new KeyboardEvent('keyup', init));
-      if (shouldEdit(k)) {
-        if (typeof InputEvent !== 'undefined') {
-          target.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true }));
-        } else {
-          target.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
-        }
-        target.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
-      }
-      return { success: true, modifiers: normalizedMods.length ? normalizedMods : undefined };
-    };
+    const pressKeyArgs = ['pressKey' as const, { k: key, sel: selector, mods: modifiers }];
 
-    let result = await this.runInTab(tabId, pressKeyScript, [key, selector, modifiers], 8000, injOpts);
+    let result = await this.runInTab(tabId, glidePageDomOp, pressKeyArgs, 8000, injOpts);
     if (!injOpts && selector && result?.success === false && result?.code === 'ELEMENT_NOT_FOUND') {
       const frameId = await this.findFrameWithSelector(tabId, selector);
       if (frameId != null) {
-        result = await this.runInTab(tabId, pressKeyScript, [key, selector, modifiers], 8000, { frameId });
+        result = await this.runInTab(tabId, glidePageDomOp, pressKeyArgs, 8000, { frameId });
       }
     }
     const baseResult = result || { success: false, error: 'Script execution failed.' };
@@ -3489,149 +2051,10 @@ export class BrowserTools {
 
     // Fallback when the content bridge is unavailable: self-contained mirror of
     // scrollPage — multi-wheel + intoView + scrollTop on modal list scroller.
-    const result = await this.runInTab(
-      tabId,
-      (dir, amt, sel, strat) => {
-        const step = Math.abs(amt) || 600;
-        const mode = String(strat || 'auto').toLowerCase();
-        const isScrollable = (el) => {
-          if (!el || el.nodeType !== 1) return false;
-          if (el.scrollHeight - el.clientHeight <= 4) return false;
-          const oy = getComputedStyle(el).overflowY;
-          return oy === 'auto' || oy === 'scroll' || oy === 'overlay';
-        };
-        const nearest = (start) => {
-          let node = start;
-          for (let d = 0; node && d < 30; d += 1) {
-            if (isScrollable(node)) return node;
-            node = node.parentElement;
-          }
-          return null;
-        };
-        const DIALOG_SEL =
-          '[role="dialog"], [aria-modal="true"], [data-testid*="modal" i], [class*="Dialog" i], [class*="modal" i]';
-        const visible = (el) => {
-          const r = el.getBoundingClientRect();
-          return r.width > 0 && r.height > 0;
-        };
-        const resolveTarget = () => {
-          if (sel) {
-            const scoped = nearest(document.querySelector(sel));
-            if (scoped) return scoped;
-          }
-          const dialogs = Array.from(document.querySelectorAll(DIALOG_SEL)).filter(visible);
-          const dialog = dialogs[dialogs.length - 1];
-          if (!dialog) return null;
-          let best = null;
-          let bestOverflow = 0;
-          const scan = (el) => {
-            if (!isScrollable(el)) return;
-            const overflow = el.scrollHeight - el.clientHeight;
-            if (overflow > bestOverflow) {
-              best = el;
-              bestOverflow = overflow;
-            }
-          };
-          scan(dialog);
-          const nodes = dialog.querySelectorAll('*');
-          const limit = Math.min(nodes.length, 3000);
-          for (let i = 0; i < limit; i += 1) scan(nodes[i]);
-          return best;
-        };
-        const container = resolveTarget();
-        if (container) {
-          const before = container.scrollTop;
-          const maxBefore = container.scrollHeight - container.clientHeight;
-          let target = before + step;
-          if (dir === 'top') target = 0;
-          else if (dir === 'bottom') target = maxBefore;
-          else if (dir === 'up') target = Math.max(0, before - step);
-          else target = Math.min(maxBefore, before + step);
-          const deltaY = dir === 'up' || dir === 'top' ? -step : step;
-          let intoViewUsed = false;
-          if (mode === 'auto' || mode === 'intoview') {
-            const kids = container.querySelectorAll('a, [role="listitem"], li');
-            if (kids.length) {
-              const preferEnd = dir === 'down' || dir === 'bottom';
-              const edge = preferEnd ? kids[kids.length - 1] : kids[0];
-              try {
-                edge.scrollIntoView({
-                  block: preferEnd ? 'end' : 'start',
-                  inline: 'nearest',
-                  behavior: 'instant',
-                });
-                intoViewUsed = true;
-              } catch (_e) {}
-            }
-          }
-          if (mode === 'auto' || mode === 'wheel') {
-            const rect = container.getBoundingClientRect();
-            const cx = rect.left + rect.width / 2;
-            const cy = rect.top + Math.min(rect.height * 0.85, rect.height - 8);
-            const burst = 5;
-            const stepDelta = deltaY / burst;
-            for (let i = 0; i < burst; i += 1) {
-              try {
-                container.dispatchEvent(
-                  new WheelEvent('wheel', {
-                    deltaY: stepDelta,
-                    deltaMode: 0,
-                    bubbles: true,
-                    cancelable: true,
-                    composed: true,
-                    clientX: cx,
-                    clientY: cy,
-                    view: window,
-                  }),
-                );
-              } catch (_e) {}
-            }
-          }
-          if (mode !== 'intoview') container.scrollTop = target;
-          else if (!intoViewUsed) container.scrollTop = target;
-          try {
-            container.dispatchEvent(new Event('scroll', { bubbles: true }));
-          } catch (_e) {}
-          const after = container.scrollTop;
-          const maxAfter = container.scrollHeight - container.clientHeight;
-          const delta = after - before;
-          return {
-            success: true,
-            direction: dir,
-            amount: amt,
-            strategy: mode,
-            target: 'container',
-            intoViewUsed,
-            scrolled: Math.abs(delta) > 0.5 || intoViewUsed,
-            delta,
-            scrollTop: after,
-            maxScrollTop: maxAfter,
-            atBottom: after >= maxAfter - 4,
-          };
-        }
-        const beforeY = window.scrollY;
-        if (dir === 'top') window.scrollTo({ top: 0, behavior: 'instant' });
-        else if (dir === 'bottom') window.scrollTo({ top: document.body.scrollHeight, behavior: 'instant' });
-        else if (dir === 'up') window.scrollBy({ top: -step, behavior: 'instant' });
-        else window.scrollBy({ top: step, behavior: 'instant' });
-        const afterY = window.scrollY;
-        const maxY = Math.max(0, document.body.scrollHeight - window.innerHeight);
-        const delta = afterY - beforeY;
-        return {
-          success: true,
-          direction: dir,
-          amount: amt,
-          strategy: mode,
-          target: 'window',
-          scrolled: Math.abs(delta) > 0.5,
-          delta,
-          scrollTop: afterY,
-          maxScrollTop: maxY,
-          atBottom: afterY >= maxY - 4,
-        };
-      },
-      [direction, amount, selector, strategy],
-    );
+    const result = await this.runInTab(tabId, glidePageDomOp, [
+      'scroll',
+      { dir: direction, amt: amount, sel: selector, strat: strategy },
+    ]);
     const baseResult = result || { success: false, error: 'Script execution failed.' };
     return this.attachResolutionMeta(baseResult, resolution);
   }
@@ -3666,369 +2089,20 @@ export class BrowserTools {
         return this.attachResolutionMeta(this.attachFrameMeta(bridged, frameMeta), resolution);
       }
 
-      const findScript = (
-        searchQuery: string,
-        filterType: string,
-        maxRes: number,
-        useFuzzy: boolean,
-        searchScope: string,
-        deepScan: boolean,
-      ) => {
-        // Selector helpers inlined (no eval) so injection works under strict page CSP (e.g. Instagram).
-        function buildLocalSelector(element: any, options?: any) {
-          options = options || {};
-          const root = element.getRootNode();
-          const unique = (selector: string) => {
-            try {
-              const matches = root.querySelectorAll(selector);
-              return matches.length === 1 && matches[0] === element;
-            } catch {
-              return false;
-            }
-          };
-          const candidates: string[] = [];
-          if (element.id) candidates.push('#' + CSS.escape(element.id));
-          const attributes = ['data-testid', 'name', 'aria-label'];
-          if (options.includePlaceholder) attributes.push('placeholder');
-          for (const attribute of attributes) {
-            const value = element.getAttribute(attribute);
-            if (value) candidates.push('[' + attribute + '="' + CSS.escape(value) + '"]');
-          }
-          const classes = Array.from(element.classList).filter(
-            (c: any) => /^[a-z][a-z0-9_-]{2,40}$/i.test(c) && !/[0-9]{5,}/.test(c) && !/^x[a-z0-9]{4,}$/i.test(c),
-          ) as string[];
-          for (let count = 1; count <= Math.min(3, classes.length); count += 1) {
-            candidates.push(
-              classes
-                .slice(0, count)
-                .map((name) => '.' + CSS.escape(name))
-                .join(''),
-            );
-          }
-          for (const candidate of candidates) {
-            if (unique(candidate)) return candidate;
-          }
-          const segments: string[] = [];
-          let current = element;
-          while (current && current !== root) {
-            const tag = current.tagName.toLowerCase();
-            const parent = current.parentElement;
-            const siblings = parent
-              ? Array.from(parent.children).filter((child: any) => child.tagName === current.tagName)
-              : [];
-            const index = siblings.indexOf(current) + 1;
-            segments.unshift(siblings.length > 1 ? tag + ':nth-of-type(' + index + ')' : tag);
-            const selector = segments.join(' > ');
-            if (unique(selector)) return selector;
-            current = parent;
-          }
-          return segments.join(' > ') || element.tagName.toLowerCase();
-        }
-        function buildOptimalSelector(element: any) {
-          const localSelector = buildLocalSelector(element, { includePlaceholder: true });
-          const root = element.getRootNode();
-          if (root instanceof ShadowRoot) {
-            return buildOptimalSelector(root.host) + ' >>> ' + localSelector;
-          }
-          return localSelector;
-        }
-        const normalize = (value: string) =>
-          String(value || '')
-            .replace(/\s+/g, ' ')
-            .trim();
-        const needle = normalize(searchQuery).toLowerCase();
-        if (!needle) return { success: false, error: 'Empty query.' };
-
-        // Levenshtein with early length-band skip (avoids O(|a|�|b|) on long fields).
-        const MAX_FUZZY_FIELD_LEN = 40;
-        const MAX_CANDIDATE_SCAN = deepScan ? 300 : 80;
-        const levenshtein = (a: string, b: string): number => {
-          const m = a.length;
-          const n = b.length;
-          if (m === 0) return n;
-          if (n === 0) return m;
-          if (Math.abs(m - n) > 3) return Math.abs(m - n);
-          let prev = new Array(n + 1);
-          let curr = new Array(n + 1);
-          for (let j = 0; j <= n; j++) prev[j] = j;
-          for (let i = 1; i <= m; i++) {
-            curr[0] = i;
-            const ca = a.charCodeAt(i - 1);
-            for (let j = 1; j <= n; j++) {
-              const cost = ca === b.charCodeAt(j - 1) ? 0 : 1;
-              curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
-            }
-            const tmp = prev;
-            prev = curr;
-            curr = tmp;
-          }
-          return prev[n];
-        };
-
-        const fuzzyThreshold = (q: string): number => {
-          const len = q.length;
-          if (len <= 4) return 0;
-          if (len <= 8) return 1;
-          if (len <= 15) return 2;
-          return 3;
-        };
-
-        // Cheap visibility: skip getComputedStyle unless offsetParent is null (and still not fixed/sticky edge cases).
-        const isVisible = (element: HTMLElement) => {
-          if (element.hidden) return false;
-          if ((element as HTMLInputElement).type === 'hidden') return false;
-          const rect = element.getBoundingClientRect();
-          if (rect.width <= 0 || rect.height <= 0) return false;
-          if (element.offsetParent === null) {
-            const style = window.getComputedStyle(element);
-            if (style.position !== 'fixed' && style.position !== 'sticky') return false;
-            if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
-          }
-          return true;
-        };
-
-        const INTERACTIVE =
-          'button, a[href], input, textarea, select, [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="option"], label, [tabindex="0"]';
-        const DIALOG_SEL = '[role="dialog"], [aria-modal="true"], div[role="dialog"], [data-testid*="modal" i]';
-        let shadowScanned = 0;
-        const walkShadowHosts = (root: Document | ShadowRoot | Element, visitShadow: (shadow: ShadowRoot) => void) => {
-          const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
-          let current = walker.nextNode() as HTMLElement | null;
-          while (current && shadowScanned < 4000) {
-            shadowScanned += 1;
-            if (current.shadowRoot) visitShadow(current.shadowRoot);
-            current = walker.nextNode() as HTMLElement | null;
-          }
-        };
-        const collectInto = (root: Document | ShadowRoot | Element, bucket: HTMLElement[]) => {
-          if (bucket.length >= MAX_CANDIDATE_SCAN) return;
-          const matches = Array.from(root.querySelectorAll<HTMLElement>(INTERACTIVE));
-          for (const element of matches) {
-            bucket.push(element);
-            if (bucket.length >= MAX_CANDIDATE_SCAN) return;
-          }
-          walkShadowHosts(root, (shadow) => collectInto(shadow, bucket));
-        };
-        const collectElements = (root: Document | ShadowRoot | Element): HTMLElement[] => {
-          const bucket: HTMLElement[] = [];
-          collectInto(root, bucket);
-          return bucket;
-        };
-        const resolveScopeRoot = (kind: string): Document | Element | null => {
-          if (kind === 'page') return document;
-          if (kind === 'dialog') {
-            const dialogs = Array.from(document.querySelectorAll<HTMLElement>(DIALOG_SEL)).filter((el) => {
-              const rect = el.getBoundingClientRect();
-              return rect.width > 0 && rect.height > 0;
-            });
-            return dialogs.length > 0 ? dialogs[dialogs.length - 1] : null;
-          }
-          if (kind === 'form') {
-            const forms = Array.from(document.querySelectorAll<HTMLFormElement>('form')).filter((el) => {
-              const rect = el.getBoundingClientRect();
-              return rect.width > 0 && rect.height > 0;
-            });
-            return forms.length > 0 ? forms[0] : null;
-          }
-          if (kind === 'landmark') {
-            for (const sel of ['main', '[role="main"]', 'nav']) {
-              const el = document.querySelector(sel);
-              if (el instanceof HTMLElement) {
-                const rect = el.getBoundingClientRect();
-                if (rect.width > 0 && rect.height > 0) return el;
-              }
-            }
-            return null;
-          }
-          return document;
-        };
-        const buildScopeOrder = (): string[] => {
-          if (searchScope === 'page') return ['page'];
-          if (searchScope === 'dialog') return ['dialog'];
-          const order = ['dialog'];
-          if (String(filterType || 'any').toLowerCase() === 'input') order.push('form');
-          order.push('landmark', 'page');
-          return order;
-        };
-
-        const matchCandidates = (allElements: HTMLElement[]) => {
-          const exactCandidates: HTMLElement[] = [];
-          const fuzzyCandidates: Array<{ element: HTMLElement; distance: number }> = [];
-          const threshold = useFuzzy ? fuzzyThreshold(needle) : 0;
-          const passesTypeFilter = (element: HTMLElement, tag: string) => {
-            if (filterType === 'any') return true;
-            if (
-              filterType === 'button' &&
-              !['button', 'input'].includes(tag) &&
-              element.getAttribute('role') !== 'button'
-            )
-              return false;
-            if (filterType === 'link' && tag !== 'a' && element.getAttribute('role') !== 'link') return false;
-            if (filterType === 'input' && !['input', 'textarea', 'select'].includes(tag)) return false;
-            return true;
-          };
-
-          for (const element of allElements) {
-            if (!isVisible(element)) continue;
-            const tag = element.tagName.toLowerCase();
-            if (!passesTypeFilter(element, tag)) continue;
-            const shortFields = [
-              normalize(element.getAttribute('aria-label') || ''),
-              normalize(element.getAttribute('title') || ''),
-              normalize((element as HTMLInputElement).placeholder || ''),
-              normalize(element.getAttribute('name') || ''),
-              normalize(element.getAttribute('data-testid') || ''),
-              normalize(element.id || ''),
-            ]
-              .filter(Boolean)
-              .map((f) => f.toLowerCase());
-            if (
-              shortFields.some(
-                (field) => field === needle || field.includes(needle) || (field.length >= 3 && needle.includes(field)),
-              )
-            ) {
-              exactCandidates.push(element);
-              if (exactCandidates.length >= maxRes) break;
-            }
-          }
-
-          if (exactCandidates.length < maxRes) {
-            for (const element of allElements) {
-              if (exactCandidates.includes(element)) continue;
-              if (!isVisible(element)) continue;
-              const tag = element.tagName.toLowerCase();
-              if (!passesTypeFilter(element, tag)) continue;
-              const text = normalize(element.innerText || element.textContent || '').toLowerCase();
-              if (text && text.length <= 200 && text.includes(needle)) {
-                exactCandidates.push(element);
-                if (exactCandidates.length >= maxRes) break;
-              }
-            }
-          }
-
-          if (useFuzzy && threshold > 0 && exactCandidates.length < maxRes) {
-            for (const element of allElements) {
-              if (exactCandidates.includes(element)) continue;
-              if (!isVisible(element)) continue;
-              const tag = element.tagName.toLowerCase();
-              if (!passesTypeFilter(element, tag)) continue;
-              const fields = [
-                normalize(element.getAttribute('aria-label') || ''),
-                normalize(element.getAttribute('title') || ''),
-                normalize((element as HTMLInputElement).placeholder || ''),
-                normalize(element.getAttribute('name') || ''),
-                normalize(element.getAttribute('data-testid') || ''),
-              ].filter((field) => field && field.length <= MAX_FUZZY_FIELD_LEN);
-              let minDist = Number.POSITIVE_INFINITY;
-              for (const field of fields) {
-                const lower = field.toLowerCase();
-                if (Math.abs(lower.length - needle.length) > threshold + 1) continue;
-                const dist = levenshtein(needle, lower);
-                if (dist < minDist) minDist = dist;
-                if (minDist === 0) break;
-                if (field.includes(' ')) {
-                  for (const word of field.split(/\s+/)) {
-                    if (word.length < needle.length - threshold || word.length > needle.length + threshold) continue;
-                    const wdist = levenshtein(needle, word.toLowerCase());
-                    if (wdist < minDist) minDist = wdist;
-                  }
-                }
-              }
-              if (minDist <= threshold) fuzzyCandidates.push({ element, distance: minDist });
-            }
-          }
-
-          const combined = exactCandidates.slice(0, maxRes);
-          if (combined.length < maxRes && fuzzyCandidates.length > 0) {
-            fuzzyCandidates.sort((a, b) => a.distance - b.distance);
-            const remaining = maxRes - combined.length;
-            for (const fc of fuzzyCandidates.slice(0, remaining)) {
-              if (!combined.includes(fc.element)) combined.push(fc.element);
-            }
-          }
-          return combined;
-        };
-
-        let searchRoot: Document | Element = document;
-        let combined: HTMLElement[] = [];
-        for (const kind of buildScopeOrder()) {
-          const root = resolveScopeRoot(kind);
-          if (!root) continue;
-          combined = matchCandidates(collectElements(root));
-          if (combined.length > 0) {
-            searchRoot = root;
-            break;
-          }
-        }
-
-        const openDialogs = Array.from(document.querySelectorAll<HTMLElement>(DIALOG_SEL)).filter((el) => {
-          const rect = el.getBoundingClientRect();
-          return rect.width > 0 && rect.height > 0;
-        });
-
-        const results = combined.map((element) => {
-          const rect = element.getBoundingClientRect();
-          return {
-            selector: buildOptimalSelector(element),
-            tag: element.tagName.toLowerCase(),
-            text: normalize(element.innerText || element.textContent || element.getAttribute('aria-label') || '').slice(
-              0,
-              120,
-            ),
-            visible: isVisible(element),
-            position: {
-              top: Math.round(rect.top),
-              left: Math.round(rect.left),
-              width: Math.round(rect.width),
-              height: Math.round(rect.height),
-            },
-            attributes: {
-              id: element.id || undefined,
-              name: element.getAttribute('name') || undefined,
-              'data-testid': element.getAttribute('data-testid') || undefined,
-              'aria-label': element.getAttribute('aria-label') || undefined,
-              placeholder: (element as HTMLInputElement).placeholder || undefined,
-              type: (element as HTMLInputElement).type || undefined,
-            },
-          };
-        });
-
-        if (results.length === 0) {
-          return {
-            success: false,
-            code: 'ELEMENT_NOT_FOUND',
-            error: `No visible element found matching "${searchQuery}".`,
-            hint: 'Try getContent({ mode: "structure" }) to inspect available interactive elements.',
-            query: searchQuery,
-          };
-        }
-
-        return {
-          success: true,
-          query: searchQuery,
-          count: results.length,
-          candidates: results,
-          fuzzy: useFuzzy,
-          scope: searchScope,
-          dialogsOpen: openDialogs.length,
-          searchedInDialog: searchRoot !== document,
-        };
-      };
-      let result = await this.runInTab(
-        tabId,
-        findScript,
-        [query, typeFilter, maxResults, fuzzy, scope, deep],
-        8000,
-        injOpts,
-      );
+      const findArgs = () => [
+        'findElement' as const,
+        {
+          searchQuery: query,
+          filterType: typeFilter,
+          maxRes: maxResults,
+          useFuzzy: fuzzy,
+          searchScope: scope,
+          deepScan: deep,
+        },
+      ];
+      let result = await this.runInTab(tabId, glidePageDomOp, findArgs(), 8000, injOpts);
       if (!injOpts && !result?.success) {
-        const frameResult = await this.runInTab(
-          tabId,
-          findScript,
-          [query, typeFilter, maxResults, fuzzy, scope, deep],
-          8000,
-          { allFrames: true },
-        );
+        const frameResult = await this.runInTab(tabId, glidePageDomOp, findArgs(), 8000, { allFrames: true });
         if (frameResult?.success) result = frameResult;
       }
       const baseResult = result || { success: false, error: 'Script execution failed.' };
@@ -4047,104 +2121,7 @@ export class BrowserTools {
       return this.attachResolutionMeta(bridged, resolution);
     }
 
-    const result = await this.runInTab(
-      tabId,
-      async () => {
-        const dialogSel = '[role="dialog"], [aria-modal="true"], div[role="dialog"], [data-testid*="modal" i]';
-        const closeSel =
-          'button[aria-label*="close" i], button[aria-label*="fechar" i], [role="button"][aria-label*="close" i], svg[aria-label="Close"], svg[aria-label="Fechar"]';
-        const isVis = (el: HTMLElement) => {
-          const r = el.getBoundingClientRect();
-          return r.width > 0 && r.height > 0;
-        };
-        const dialogs = Array.from(document.querySelectorAll<HTMLElement>(dialogSel)).filter(isVis);
-        const pressEscape = () => {
-          const target = dialogs[dialogs.length - 1] || document.body;
-          const init = { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true };
-          target.dispatchEvent(new KeyboardEvent('keydown', init));
-          target.dispatchEvent(new KeyboardEvent('keyup', init));
-        };
-        const richClick = (el: HTMLElement) => {
-          el.scrollIntoView({ block: 'center', inline: 'center' });
-          const rect = el.getBoundingClientRect();
-          const clientX = Math.round(rect.left + rect.width / 2);
-          const clientY = Math.round(rect.top + rect.height / 2);
-          const init = { bubbles: true, cancelable: true, composed: true, view: window, clientX, clientY, button: 0 };
-          el.dispatchEvent(new MouseEvent('mousedown', init));
-          el.dispatchEvent(new MouseEvent('mouseup', { ...init, buttons: 0 }));
-          el.dispatchEvent(new MouseEvent('click', { ...init, buttons: 0 }));
-          try {
-            el.click();
-          } catch {
-            // ignore
-          }
-        };
-
-        const before = dialogs.length;
-        const root = dialogs[dialogs.length - 1] || document;
-        let closeBtn =
-          Array.from(root.querySelectorAll<HTMLElement>(closeSel)).find(isVis) ||
-          Array.from(document.querySelectorAll<HTMLElement>(closeSel)).find(isVis) ||
-          null;
-        if (closeBtn?.tagName === 'svg') {
-          closeBtn = (closeBtn.closest('button, [role="button"]') as HTMLElement | null) || closeBtn;
-        }
-        if (closeBtn) {
-          richClick(closeBtn);
-          const remaining = Array.from(document.querySelectorAll<HTMLElement>(dialogSel)).filter(isVis).length;
-          if (remaining < before) {
-            return { success: true, strategy: 'close-button', dialogsRemaining: remaining };
-          }
-        }
-        pressEscape();
-        await new Promise((r) => setTimeout(r, 200));
-        let after = Array.from(document.querySelectorAll<HTMLElement>(dialogSel)).filter(isVis).length;
-        if (after < before) {
-          return { success: true, strategy: 'escape', dialogsRemaining: after };
-        }
-        const dialogEl = dialogs[dialogs.length - 1] || null;
-        if (dialogEl) {
-          const isBackdropOverlay = (hit: HTMLElement, dialog: HTMLElement) => {
-            if (dialog.contains(hit)) return false;
-            const tag = hit.tagName;
-            if (tag === 'A' || tag === 'BUTTON' || tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') {
-              return false;
-            }
-            if (hit.closest('a[href], button, input, select, textarea, [role="button"], [role="link"], nav')) {
-              return false;
-            }
-            const rect = hit.getBoundingClientRect();
-            const vw = window.innerWidth;
-            const vh = window.innerHeight;
-            if (rect.width < vw * 0.85 || rect.height < vh * 0.85) return false;
-            const style = window.getComputedStyle(hit);
-            if (style.position !== 'fixed' && style.position !== 'absolute') return false;
-            const opacity = Number.parseFloat(style.opacity);
-            if (Number.isFinite(opacity) && opacity <= 0.05) return false;
-            return true;
-          };
-          const backdrop = document.elementFromPoint(8, 8) as HTMLElement | null;
-          if (backdrop && isBackdropOverlay(backdrop, dialogEl)) {
-            richClick(backdrop);
-            await new Promise((r) => setTimeout(r, 200));
-            after = Array.from(document.querySelectorAll<HTMLElement>(dialogSel)).filter(isVis).length;
-            if (after < before) {
-              return { success: true, strategy: 'backdrop-click', dialogsRemaining: after };
-            }
-          }
-        }
-        if (before === 0) {
-          return { success: true, strategy: 'escape-no-dialog', dialogsRemaining: after, noop: true };
-        }
-        return {
-          success: false,
-          error: 'Could not dismiss modal.',
-          hint: 'Try pressKey({ key: "Escape" }) or findElement({ query: "Close", scope: "dialog" }) then click.',
-          dialogsRemaining: after,
-        };
-      },
-      [],
-    );
+    const result = await this.runInTab(tabId, glidePageDomOp, ['dismissModal', {}]);
     return this.attachResolutionMeta(result || { success: false, error: 'dismissModal failed' }, resolution);
   }
 
@@ -4171,38 +2148,8 @@ export class BrowserTools {
       if (bridged) return this.attachResolutionMeta(bridged, resolution);
       const result = await this.runInTab(
         tabId,
-        (to: number) =>
-          new Promise((resolve) => {
-            const t0 = Date.now();
-            const sel = '[role="dialog"], [aria-modal="true"], div[role="dialog"]';
-            const tick = () => {
-              const open = Array.from(document.querySelectorAll<HTMLElement>(sel)).filter((el) => {
-                const r = el.getBoundingClientRect();
-                return r.width > 0 && r.height > 0;
-              });
-              if (open.length) {
-                resolve({
-                  success: true,
-                  condition: 'dialog',
-                  dialogsOpen: open.length,
-                  elapsed: Date.now() - t0,
-                });
-                return;
-              }
-              if (Date.now() - t0 >= to) {
-                resolve({
-                  success: false,
-                  code: 'WAIT_TIMEOUT',
-                  error: 'No dialog appeared.',
-                  elapsed: Date.now() - t0,
-                });
-                return;
-              }
-              setTimeout(tick, 100);
-            };
-            tick();
-          }),
-        [timeout],
+        glidePageDomOp,
+        ['waitDialog', { to: timeout }],
         Math.min(16000, timeout + 1000),
       );
       return this.attachResolutionMeta(result || { success: false, error: 'wait dialog failed' }, resolution);
@@ -4246,192 +2193,22 @@ export class BrowserTools {
 
     let result = await this.runInTab(
       tabId,
-      (sel: string, to: number, intv: number, hidden: boolean, resolvedCondition: string) => {
-        return new Promise<{
-          success: boolean;
-          found: boolean;
-          elapsed: number;
-          selector: string;
-          condition: string;
-        }>((resolve) => {
-          const t0 = Date.now();
-          const deepQuerySelector = (query: string) => {
-            if (!query.includes('>>>')) return document.querySelector(query);
-            const parts = query
-              .split('>>>')
-              .map((part) => part.trim())
-              .filter(Boolean);
-            let root: Document | ShadowRoot | Element = document;
-            for (let index = 0; index < parts.length; index += 1) {
-              const next = root.querySelector(parts[index]);
-              if (!next) return null;
-              if (index === parts.length - 1) return next;
-              const shadow = (next as HTMLElement).shadowRoot;
-              if (!shadow) return null;
-              root = shadow;
-            }
-            return null;
-          };
-          const isVisible = (element: HTMLElement) => {
-            if (!element || element.hidden) return false;
-            if ((element as HTMLInputElement).type === 'hidden') return false;
-            if (element.getAttribute('aria-hidden') === 'true') return false;
-            const checkVisibility = (
-              element as HTMLElement & {
-                checkVisibility?: (options?: {
-                  checkOpacity?: boolean;
-                  checkVisibilityCSS?: boolean;
-                }) => boolean;
-              }
-            ).checkVisibility;
-            if (typeof checkVisibility === 'function') {
-              try {
-                if (
-                  !checkVisibility.call(element, {
-                    checkOpacity: true,
-                    checkVisibilityCSS: true,
-                  })
-                ) {
-                  return false;
-                }
-                const rect = element.getBoundingClientRect();
-                return rect.width > 0 && rect.height > 0;
-              } catch {
-                // fall through
-              }
-            }
-            const rect = element.getBoundingClientRect();
-            if (rect.width <= 0 || rect.height <= 0) return false;
-            if (element.offsetParent === null) {
-              const style = window.getComputedStyle(element);
-              if (style.position !== 'fixed' && style.position !== 'sticky') {
-                let parent: HTMLElement | null = element.parentElement;
-                let fixedAncestor = false;
-                while (parent && parent !== document.body) {
-                  const ps = window.getComputedStyle(parent);
-                  if (ps.position === 'fixed' || ps.position === 'sticky') {
-                    fixedAncestor = true;
-                    break;
-                  }
-                  parent = parent.parentElement;
-                }
-                if (!fixedAncestor) return false;
-              }
-              if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
-            } else {
-              const style = window.getComputedStyle(element);
-              if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) {
-                return false;
-              }
-            }
-            return true;
-          };
-          const check = () => {
-            try {
-              const element = deepQuerySelector(sel);
-              const ready = hidden
-                ? !element || !isVisible(element as HTMLElement)
-                : Boolean(element && isVisible(element as HTMLElement));
-              if (ready) {
-                resolve({
-                  success: true,
-                  found: true,
-                  elapsed: Date.now() - t0,
-                  selector: sel,
-                  condition: resolvedCondition,
-                });
-                return;
-              }
-            } catch {
-              // Invalid selector, keep waiting
-            }
-            if (Date.now() - t0 >= to) {
-              resolve({
-                success: true,
-                found: false,
-                elapsed: Date.now() - t0,
-                selector: sel,
-                condition: resolvedCondition,
-              });
-              return;
-            }
-            setTimeout(check, intv);
-          };
-          check();
-        });
-      },
-      [selector, timeout, interval, waitHidden, condition],
+      glidePageDomOp,
+      [
+        'waitSelector',
+        { sel: selector, to: timeout, intv: interval, hidden: waitHidden, resolvedCondition: condition },
+      ],
       timeout + 1000,
       injOpts,
     );
     if (!injOpts && result?.success === true && result?.found === false && !waitHidden) {
       result = await this.runInTab(
         tabId,
-        (sel: string, to: number, intv: number, hidden: boolean, resolvedCondition: string) => {
-          return new Promise<{
-            success: boolean;
-            found: boolean;
-            elapsed: number;
-            selector: string;
-            condition: string;
-          }>((resolve) => {
-            const t0 = Date.now();
-            const deepQuerySelector = (query: string) => {
-              if (!query.includes('>>>')) return document.querySelector(query);
-              const parts = query
-                .split('>>>')
-                .map((part) => part.trim())
-                .filter(Boolean);
-              let root: Document | ShadowRoot | Element = document;
-              for (let index = 0; index < parts.length; index += 1) {
-                const next = root.querySelector(parts[index]);
-                if (!next) return null;
-                if (index === parts.length - 1) return next;
-                const shadow = (next as HTMLElement).shadowRoot;
-                if (!shadow) return null;
-                root = shadow;
-              }
-              return null;
-            };
-            const check = () => {
-              try {
-                const element = deepQuerySelector(sel);
-                const isVisible = (el: HTMLElement) => {
-                  const rect = el.getBoundingClientRect();
-                  return rect.width > 0 && rect.height > 0;
-                };
-                const ready = hidden
-                  ? !element || !isVisible(element as HTMLElement)
-                  : Boolean(element && isVisible(element as HTMLElement));
-                if (ready) {
-                  resolve({
-                    success: true,
-                    found: true,
-                    elapsed: Date.now() - t0,
-                    selector: sel,
-                    condition: resolvedCondition,
-                  });
-                  return;
-                }
-              } catch {
-                // Invalid selector, keep waiting.
-              }
-              if (Date.now() - t0 >= to) {
-                resolve({
-                  success: true,
-                  found: false,
-                  elapsed: Date.now() - t0,
-                  selector: sel,
-                  condition: resolvedCondition,
-                });
-                return;
-              }
-              setTimeout(check, intv);
-            };
-            check();
-          });
-        },
-        [selector, timeout, interval, waitHidden, condition],
+        glidePageDomOp,
+        [
+          'waitSelector',
+          { sel: selector, to: timeout, intv: interval, hidden: waitHidden, resolvedCondition: condition, loose: true },
+        ],
         timeout + 1000,
         { allFrames: true },
       );
@@ -4595,590 +2372,10 @@ export class BrowserTools {
         });
         if (bridged) return this.attachResolutionMeta(bridged, resolution);
       }
-      const result = await this.runInTab(
-        tabId,
-        (t: string, sel: string, limit: number, maxPerSection: number) => {
-          // Selector helper inlined (no eval) so injection works under strict page CSP.
-          function buildLocalSelector(element: any, options?: any) {
-            options = options || {};
-            if (element.id) return '#' + CSS.escape(element.id);
-            const dataTestId = element.getAttribute('data-testid');
-            if (dataTestId) return '[data-testid="' + CSS.escape(dataTestId) + '"]';
-            const name = element.getAttribute('name');
-            if (name) return '[name="' + CSS.escape(name) + '"]';
-            const ariaLabel = element.getAttribute('aria-label');
-            if (ariaLabel) return '[aria-label="' + CSS.escape(ariaLabel) + '"]';
-            if (options.includePlaceholder) {
-              const placeholder = element.placeholder;
-              if (placeholder) return '[placeholder="' + CSS.escape(placeholder) + '"]';
-            }
-            const cls = Array.from(element.classList).find(
-              (c: any) => /^[a-z][a-z0-9_-]{2,40}$/i.test(c) && !/[0-9]{5,}/.test(c),
-            );
-            if (cls) return '.' + cls;
-            const parent = element.parentElement;
-            if (parent) {
-              const tag = element.tagName.toLowerCase();
-              const siblings = Array.from(parent.children).filter((c: any) => c.tagName.toLowerCase() === tag);
-              const index = siblings.indexOf(element) + 1;
-              return tag + ':nth-of-type(' + index + ')';
-            }
-            return element.tagName.toLowerCase();
-          }
-          const deepQuerySelector = (query: string) => {
-            if (!query.includes('>>>')) return document.querySelector<HTMLElement>(query);
-            const parts = query
-              .split('>>>')
-              .map((part) => part.trim())
-              .filter(Boolean);
-            let root: Document | ShadowRoot | Element = document;
-            for (let index = 0; index < parts.length; index += 1) {
-              const next = root.querySelector(parts[index]);
-              if (!next) return null;
-              if (index === parts.length - 1) return next as HTMLElement;
-              const shadow = (next as HTMLElement).shadowRoot;
-              if (!shadow) return null;
-              root = shadow;
-            }
-            return null;
-          };
-          const base = sel ? deepQuerySelector(sel) : document.body;
-          if (!base) return { success: false, error: 'Target not found.' };
-          const normalizedType = ['text', 'html', 'title', 'url', 'links', 'structure'].includes(t) ? t : 'text';
-          const safeLimit = Number.isFinite(limit) ? Math.max(200, Math.floor(limit)) : 8000;
-          const safeMaxItems = Number.isFinite(maxPerSection) ? Math.max(10, Math.floor(maxPerSection)) : 40;
-          const truncate = (value: string) => {
-            const length = value.length;
-            if (length <= safeLimit) {
-              return { content: value, truncated: false, contentLength: length };
-            }
-            return { content: value.slice(0, safeLimit), truncated: true, contentLength: length };
-          };
-          const extractVisibleText = (root: HTMLElement, maxLen: number) => {
-            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-              acceptNode: (node) => {
-                const parent = node.parentElement;
-                if (!parent) return NodeFilter.FILTER_REJECT;
-                const tag = parent.tagName;
-                if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') return NodeFilter.FILTER_REJECT;
-                if (parent.hidden || parent.getAttribute('aria-hidden') === 'true') return NodeFilter.FILTER_REJECT;
-                // Prefer checkVisibility over getComputedStyle when available.
-                const cv = (parent as HTMLElement & { checkVisibility?: (o?: object) => boolean }).checkVisibility;
-                if (typeof cv === 'function') {
-                  try {
-                    if (!cv.call(parent, { checkOpacity: true, checkVisibilityCSS: true })) {
-                      return NodeFilter.FILTER_REJECT;
-                    }
-                    return node.textContent?.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
-                  } catch {
-                    // fall through
-                  }
-                }
-                const style = window.getComputedStyle(parent);
-                if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
-                  return NodeFilter.FILTER_REJECT;
-                }
-                return node.textContent?.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
-              },
-            });
-
-            const chunks: string[] = [];
-            let consumed = 0;
-            let truncated = false;
-            let node: Node | null;
-            while ((node = walker.nextNode())) {
-              const text = node.textContent?.trim() || '';
-              if (!text) continue;
-              const remaining = maxLen - consumed;
-              if (remaining <= 0) {
-                truncated = true;
-                break;
-              }
-              if (text.length > remaining) {
-                chunks.push(text.slice(0, remaining));
-                consumed += remaining;
-                truncated = true;
-                break;
-              }
-              chunks.push(text);
-              consumed += text.length + 1;
-            }
-
-            const content = chunks.join(' ').trim();
-            return {
-              content,
-              truncated,
-              contentLength: content.length,
-            };
-          };
-          const extractHtmlPreview = (root: HTMLElement, maxLen: number) => {
-            const escapeAttr = (value: string) => value.replace(/"/g, '&quot;');
-            const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
-            let content = '';
-            let truncated = false;
-            let node: Node | null;
-
-            while ((node = walker.nextNode()) && content.length < maxLen) {
-              let chunk = '';
-              if (node.nodeType === Node.ELEMENT_NODE) {
-                const element = node as Element;
-                const attrs = Array.from(element.attributes)
-                  .slice(0, 4)
-                  .map((attr) => `${attr.name}="${escapeAttr(attr.value)}"`)
-                  .join(' ');
-                chunk = attrs ? `<${element.tagName.toLowerCase()} ${attrs}>` : `<${element.tagName.toLowerCase()}>`;
-              } else {
-                chunk = node.textContent?.trim() || '';
-              }
-
-              if (!chunk) continue;
-              const remaining = maxLen - content.length;
-              if (remaining <= 0) {
-                truncated = true;
-                break;
-              }
-              if (chunk.length > remaining) {
-                content += chunk.slice(0, remaining);
-                truncated = true;
-                break;
-              }
-              content += chunk;
-            }
-
-            if (!truncated && content.length >= maxLen) {
-              truncated = true;
-            }
-
-            return {
-              content,
-              truncated,
-              contentLength: content.length,
-            };
-          };
-          const extractStructure = (root: HTMLElement, maxLen: number, maxPerSectionCount: number) => {
-            const clip = (value: string, length: number) => {
-              const text = String(value || '').trim();
-              if (text.length <= length) return text;
-              return `${text.slice(0, length)}...`;
-            };
-            const getSelector = (element: Element): string => buildLocalSelector(element);
-
-            // Prefer scanning inside the topmost open dialog for Instagram/SPA sheets.
-            const dialogNodes = Array.from(
-              document.querySelectorAll<HTMLElement>(
-                '[role="dialog"], [aria-modal="true"], div[role="dialog"], [data-testid*="modal" i]',
-              ),
-            ).filter((el) => {
-              const r = el.getBoundingClientRect();
-              return r.width > 0 && r.height > 0;
-            });
-            const activeDialog = dialogNodes[dialogNodes.length - 1] || null;
-            const scanRoot: HTMLElement = activeDialog || root;
-
-            const summarizeField = (element: Element) => {
-              const tag = element.tagName.toLowerCase();
-              const type = element.getAttribute('type') || '';
-              const name = element.getAttribute('name') || '';
-              const id = element.getAttribute('id') || '';
-              const placeholder = element.getAttribute('placeholder') || '';
-              const label =
-                element.getAttribute('aria-label') ||
-                element.getAttribute('title') ||
-                element.getAttribute('alt') ||
-                '';
-              return {
-                tag,
-                type: clip(type, 40),
-                name: clip(name, 120),
-                id: clip(id, 120),
-                label: clip(label, 140),
-                placeholder: clip(placeholder, 120),
-                required: element.hasAttribute('required'),
-                disabled: element.hasAttribute('disabled'),
-                selector: getSelector(element),
-              };
-            };
-
-            const structure: Record<string, any> = {
-              title: clip(document.title || '', 220),
-              url: clip(window.location.href || '', 420),
-              dialogOpen: Boolean(activeDialog),
-              dialogs: dialogNodes.slice(0, 5).map((el) => ({
-                label: clip(
-                  el.getAttribute('aria-label') || el.querySelector('h1,h2,h3')?.textContent || 'dialog',
-                  120,
-                ),
-                selector: getSelector(el),
-              })),
-              searchedInDialog: Boolean(activeDialog),
-              headings: [],
-              forms: [],
-              actions: [],
-              sidebarItems: [],
-              cards: [],
-              tables: [],
-              filters: [],
-              tabs: [],
-              badges: [],
-              kpis: [],
-              landmarks: [],
-            };
-
-            let truncated = false;
-            // Approximate JSON bytes — avoid JSON.stringify per item on the hot path.
-            const approxBytes = (value: unknown): number => {
-              if (value == null) return 4;
-              if (typeof value === 'string') return value.length + 2;
-              if (typeof value === 'number' || typeof value === 'boolean') return 8;
-              if (Array.isArray(value)) {
-                let n = 2;
-                for (let i = 0; i < value.length; i += 1) n += approxBytes(value[i]) + (i > 0 ? 1 : 0);
-                return n;
-              }
-              if (typeof value === 'object') {
-                let n = 2;
-                let first = true;
-                for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-                  if (v === undefined) continue;
-                  n += k.length + 3 + approxBytes(v) + (first ? 0 : 1);
-                  first = false;
-                }
-                return n;
-              }
-              return 8;
-            };
-            let structureSerializedLength = Math.ceil(
-              approxBytes({
-                title: structure.title,
-                url: structure.url,
-                dialogOpen: structure.dialogOpen,
-                dialogs: structure.dialogs,
-                searchedInDialog: structure.searchedInDialog,
-              }) * 1.08,
-            );
-            const budgetLimit = Math.floor(maxLen * 0.92);
-            const tryPush = (
-              key:
-                | 'headings'
-                | 'forms'
-                | 'actions'
-                | 'sidebarItems'
-                | 'cards'
-                | 'tables'
-                | 'filters'
-                | 'tabs'
-                | 'badges'
-                | 'kpis'
-                | 'landmarks',
-              item: Record<string, any>,
-            ) => {
-              const list = structure[key] as Record<string, any>[];
-              const add = approxBytes(item) + 1;
-              if (structureSerializedLength + add > budgetLimit) {
-                truncated = true;
-                return false;
-              }
-              list.push(item);
-              structureSerializedLength += add;
-              return true;
-            };
-
-            const take = <T extends Element>(sel: string, limit: number): T[] => {
-              const out: T[] = [];
-              let nodes: NodeListOf<Element>;
-              try {
-                nodes = scanRoot.querySelectorAll(sel);
-              } catch {
-                return out;
-              }
-              const cap = Math.min(limit, nodes.length);
-              for (let i = 0; i < cap; i += 1) out.push(nodes[i] as T);
-              return out;
-            };
-            const overscan = maxPerSectionCount + 1;
-
-            const headings = take<HTMLElement>('h1, h2, h3', overscan);
-            for (let i = 0; i < headings.length && i < maxPerSectionCount; i += 1) {
-              const heading = headings[i];
-              const item = {
-                level: heading.tagName.toLowerCase(),
-                text: clip(heading.textContent || '', 220),
-              };
-              if (!tryPush('headings', item)) break;
-            }
-            if (headings.length > maxPerSectionCount) truncated = true;
-
-            const forms = take<HTMLFormElement>('form', overscan);
-            for (let i = 0; i < forms.length && i < maxPerSectionCount; i += 1) {
-              const form = forms[i];
-              const fieldNodes = form.querySelectorAll('input, select, textarea, button');
-              const fields: ReturnType<typeof summarizeField>[] = [];
-              for (let f = 0; f < fieldNodes.length && f < 16; f += 1) {
-                fields.push(summarizeField(fieldNodes[f] as Element));
-              }
-              const item = {
-                id: clip(form.id || '', 120),
-                name: clip(form.getAttribute('name') || '', 120),
-                method: clip((form.getAttribute('method') || 'get').toUpperCase(), 12),
-                action: clip(form.getAttribute('action') || '', 220),
-                fields,
-              };
-              if (!tryPush('forms', item)) break;
-            }
-            if (forms.length > maxPerSectionCount) truncated = true;
-
-            const actions = take<HTMLElement>(
-              'button, a[href], input[type="submit"], input[type="button"], [role="button"], [role="link"], [tabindex="0"]',
-              overscan,
-            );
-            for (let i = 0; i < actions.length && i < maxPerSectionCount; i += 1) {
-              const action = actions[i];
-              const item = {
-                tag: action.tagName.toLowerCase(),
-                text: clip(action.textContent || '', 200),
-                id: clip(action.id || '', 120),
-                href: clip((action as HTMLAnchorElement).href || '', 260),
-                disabled:
-                  (action as HTMLButtonElement).disabled === true || action.getAttribute('aria-disabled') === 'true',
-                selector: getSelector(action),
-              };
-              if (!tryPush('actions', item)) break;
-            }
-            if (actions.length > maxPerSectionCount) truncated = true;
-
-            const sidebarCandidates = take<HTMLElement>(
-              'aside a[href], nav a[href], [role="navigation"] a[href], aside button, nav button, [role="navigation"] button, [role="menuitem"]',
-              overscan,
-            );
-            for (let i = 0; i < sidebarCandidates.length && i < maxPerSectionCount; i += 1) {
-              const candidate = sidebarCandidates[i];
-              const item = {
-                tag: candidate.tagName.toLowerCase(),
-                text: clip(candidate.textContent || candidate.getAttribute('aria-label') || '', 180),
-                href: clip((candidate as HTMLAnchorElement).href || '', 240),
-                role: clip(candidate.getAttribute('role') || '', 60),
-                selector: getSelector(candidate),
-              };
-              if (!tryPush('sidebarItems', item)) break;
-            }
-            if (sidebarCandidates.length > maxPerSectionCount) truncated = true;
-
-            const cardCandidates = take<HTMLElement>(
-              'article, section, [class*="card" i], [class*="tile" i], [class*="widget" i], [data-card], [data-testid*="card" i]',
-              overscan,
-            );
-            for (let i = 0; i < cardCandidates.length && i < maxPerSectionCount; i += 1) {
-              const card = cardCandidates[i];
-              const titleNode = card.querySelector('h1, h2, h3, h4, strong, [data-title], [class*="title" i]');
-              const summaryText = clip(card.textContent || '', 220);
-              const titleText = clip((titleNode as HTMLElement | null)?.textContent || '', 140);
-              if (!titleText && summaryText.length < 30) continue;
-              const item = {
-                tag: card.tagName.toLowerCase(),
-                id: clip(card.id || '', 80),
-                title: titleText,
-                summary: summaryText,
-              };
-              if (!tryPush('cards', item)) break;
-            }
-            if (cardCandidates.length > maxPerSectionCount) truncated = true;
-
-            const tableCandidates = take<HTMLTableElement>('table', overscan);
-            for (let i = 0; i < tableCandidates.length && i < maxPerSectionCount; i += 1) {
-              const table = tableCandidates[i];
-              const thNodes = table.querySelectorAll('th');
-              const headers: string[] = [];
-              for (let h = 0; h < thNodes.length && h < 6; h += 1) {
-                const t = clip(thNodes[h].textContent || '', 60);
-                if (t) headers.push(t);
-              }
-              const rowCount = table.querySelectorAll('tbody tr').length || table.querySelectorAll('tr').length;
-              const caption = clip(table.querySelector('caption')?.textContent || '', 120);
-              const item = {
-                id: clip(table.id || '', 80),
-                caption,
-                rows: rowCount,
-                headers,
-              };
-              if (!tryPush('tables', item)) break;
-            }
-            if (tableCandidates.length > maxPerSectionCount) truncated = true;
-
-            const filterCandidates = take<HTMLElement>(
-              'input[type="search"], input[placeholder*="busc" i], input[placeholder*="filter" i], select, [aria-label*="filtro" i], [aria-label*="filter" i]',
-              overscan,
-            );
-            for (let i = 0; i < filterCandidates.length && i < maxPerSectionCount; i += 1) {
-              const filter = filterCandidates[i];
-              const item = {
-                tag: filter.tagName.toLowerCase(),
-                type: clip((filter as HTMLInputElement).type || '', 40),
-                name: clip(filter.getAttribute('name') || '', 80),
-                label: clip(
-                  filter.getAttribute('aria-label') ||
-                    filter.getAttribute('title') ||
-                    filter.getAttribute('placeholder') ||
-                    '',
-                  140,
-                ),
-                selector: getSelector(filter),
-              };
-              if (!tryPush('filters', item)) break;
-            }
-            if (filterCandidates.length > maxPerSectionCount) truncated = true;
-
-            const tabCandidates = take<HTMLElement>(
-              '[role="tab"], [data-tab], [aria-selected], .tab, [class*="tab-" i]',
-              overscan,
-            );
-            for (let i = 0; i < tabCandidates.length && i < maxPerSectionCount; i += 1) {
-              const tab = tabCandidates[i];
-              const text = clip(tab.textContent || tab.getAttribute('aria-label') || '', 120);
-              if (!text) continue;
-              const item = {
-                text,
-                selected: tab.getAttribute('aria-selected') === 'true',
-                role: clip(tab.getAttribute('role') || '', 40),
-                selector: getSelector(tab),
-              };
-              if (!tryPush('tabs', item)) break;
-            }
-            if (tabCandidates.length > maxPerSectionCount) truncated = true;
-
-            const badgeCandidates = take<HTMLElement>(
-              '[class*="badge" i], [class*="tag" i], [data-badge], [aria-label*="badge" i]',
-              overscan,
-            );
-            for (let i = 0; i < badgeCandidates.length && i < maxPerSectionCount; i += 1) {
-              const badge = badgeCandidates[i];
-              const text = clip(badge.textContent || badge.getAttribute('aria-label') || '', 100);
-              if (!text || text.length < 2) continue;
-              const item = {
-                text,
-                tag: badge.tagName.toLowerCase(),
-              };
-              if (!tryPush('badges', item)) break;
-            }
-            if (badgeCandidates.length > maxPerSectionCount) truncated = true;
-
-            const kpiCandidates = take<HTMLElement>(
-              '[data-kpi], [class*="kpi" i], [class*="metric" i], [class*="stat" i], [class*="summary-value" i]',
-              overscan,
-            );
-            for (let i = 0; i < kpiCandidates.length && i < maxPerSectionCount; i += 1) {
-              const kpi = kpiCandidates[i];
-              const valueText = clip(kpi.textContent || '', 100);
-              if (!valueText) continue;
-              const labelNode =
-                kpi.querySelector('[class*="label" i], [data-label], small, span, strong') || kpi.parentElement;
-              const labelText = clip((labelNode as HTMLElement | null)?.textContent || '', 120);
-              const item = {
-                label: labelText,
-                value: valueText,
-              };
-              if (!tryPush('kpis', item)) break;
-            }
-            if (kpiCandidates.length > maxPerSectionCount) truncated = true;
-
-            const landmarks = take<HTMLElement>('main, nav, header, footer, aside, section, article', overscan);
-            for (let i = 0; i < landmarks.length && i < maxPerSectionCount; i += 1) {
-              const landmark = landmarks[i];
-              const item = {
-                tag: landmark.tagName.toLowerCase(),
-                id: clip(landmark.id || '', 120),
-                role: clip(landmark.getAttribute('role') || '', 80),
-                label: clip(
-                  landmark.getAttribute('aria-label') ||
-                    landmark.getAttribute('title') ||
-                    landmark.getAttribute('data-testid') ||
-                    '',
-                  180,
-                ),
-              };
-              if (!tryPush('landmarks', item)) break;
-            }
-            if (landmarks.length > maxPerSectionCount) truncated = true;
-
-            const content = JSON.stringify(structure);
-            return {
-              success: true,
-              mode: 'structure',
-              structure,
-              sections: {
-                headings: structure.headings.length,
-                forms: structure.forms.length,
-                actions: structure.actions.length,
-                sidebarItems: structure.sidebarItems.length,
-                cards: structure.cards.length,
-                tables: structure.tables.length,
-                filters: structure.filters.length,
-                tabs: structure.tabs.length,
-                badges: structure.badges.length,
-                kpis: structure.kpis.length,
-                landmarks: structure.landmarks.length,
-              },
-              truncated,
-              content,
-              contentLength: content.length,
-            };
-          };
-          if (normalizedType === 'html') {
-            const result = extractHtmlPreview(base, safeLimit);
-            return { success: true, ...result };
-          }
-          if (normalizedType === 'structure') {
-            return extractStructure(base, safeLimit, safeMaxItems);
-          }
-          if (normalizedType === 'title') {
-            const result = truncate(document.title || '');
-            return { success: true, ...result };
-          }
-          if (normalizedType === 'url') {
-            const result = truncate(window.location.href || '');
-            return { success: true, ...result };
-          }
-          if (normalizedType === 'links') {
-            const maxItems = 200;
-            const links: Array<{ text: string; href: string }> = [];
-            const anchors = base.getElementsByTagName('a');
-            let estimatedLength = 2; // []
-            let truncated = false;
-
-            for (let i = 0; i < anchors.length && links.length < maxItems; i += 1) {
-              const link = anchors[i];
-              const item = {
-                text: (link.textContent || '').trim(),
-                href: link.href || '',
-              };
-              // Approx JSON size without full stringify per link.
-              const itemBytes = item.text.length + item.href.length + 20;
-              const projected = estimatedLength + itemBytes + (links.length > 0 ? 1 : 0);
-              if (projected > safeLimit) {
-                truncated = true;
-                break;
-              }
-              links.push(item);
-              estimatedLength = projected;
-            }
-
-            if (!truncated && (anchors.length > links.length || links.length >= maxItems)) {
-              truncated = anchors.length > links.length;
-            }
-
-            const content = JSON.stringify(links);
-            return {
-              success: true,
-              items: links.length,
-              content,
-              truncated,
-              contentLength: content.length,
-            };
-          }
-          const result = extractVisibleText(base, safeLimit);
-          return { success: true, ...result };
-        },
-        [type, selector, maxChars, maxItems],
-      );
+      const result = await this.runInTab(tabId, glidePageDomOp, [
+        'getContent',
+        { t: type, sel: selector, limit: maxChars, maxPerSection: maxItems },
+      ]);
       const baseResult = result || { success: false, error: 'Script execution failed.' };
       return this.attachResolutionMeta(baseResult, resolution);
     });
@@ -5195,8 +2392,11 @@ export class BrowserTools {
     let focusedForCapture = false;
     let restoredFocus = false;
     const capturedTabId = typeof tab.id === 'number' ? tab.id : null;
-    const previouslyFocusedWindowId = (await chrome.windows.getLastFocused()).id;
-    const targetWindowTabs = await chrome.tabs.query({ windowId: tab.windowId, active: true });
+    const [lastFocusedWindow, targetWindowTabs] = await Promise.all([
+      chrome.windows.getLastFocused(),
+      chrome.tabs.query({ windowId: tab.windowId, active: true }),
+    ]);
+    const previouslyFocusedWindowId = lastFocusedWindow.id;
     const targetWindowPreviousActiveTabId = targetWindowTabs[0]?.id ?? capturedTabId;
 
     if (capturedTabId && targetWindowPreviousActiveTabId !== capturedTabId) {
@@ -5355,151 +2555,13 @@ export class BrowserTools {
     const injOpts = framePrep.runOptions;
     const frameMeta = framePrep.frameMeta;
 
-    const overlayScript = (max: number, searchScope: string) => {
-      const OVERLAY_ATTR = 'data-glide-som-overlay';
-      document.querySelector(`[${OVERLAY_ATTR}]`)?.remove();
-
-      function buildLocalSelector(element: Element) {
-        const el = element as HTMLElement;
-        if (el.id) return `#${CSS.escape(el.id)}`;
-        const testId = el.getAttribute('data-testid');
-        if (testId) return `[data-testid="${CSS.escape(testId)}"]`;
-        const name = el.getAttribute('name');
-        if (name) return `[name="${CSS.escape(name)}"]`;
-        const aria = el.getAttribute('aria-label');
-        if (aria) return `[aria-label="${CSS.escape(aria)}"]`;
-        const ph = (el as HTMLInputElement).placeholder;
-        if (ph) return `[placeholder="${CSS.escape(ph)}"]`;
-        const cls = Array.from(el.classList || []).find(
-          (c) => /^[a-z][a-z0-9_-]{2,40}$/i.test(c) && !/[0-9]{5,}/.test(c),
-        );
-        if (cls) return `.${cls}`;
-        const parent = el.parentElement;
-        if (parent) {
-          const tag = el.tagName.toLowerCase();
-          const siblings = Array.from(parent.children).filter((c) => c.tagName.toLowerCase() === tag);
-          return `${tag}:nth-of-type(${siblings.indexOf(el) + 1})`;
-        }
-        return el.tagName.toLowerCase();
-      }
-      function buildOptimalSelector(element: Element): string {
-        const local = buildLocalSelector(element);
-        const root = element.getRootNode();
-        if (root instanceof ShadowRoot) {
-          return `${buildOptimalSelector(root.host)} >>> ${local}`;
-        }
-        return local;
-      }
-      const normalize = (v: string) =>
-        String(v || '')
-          .replace(/\s+/g, ' ')
-          .trim();
-      const isVisible = (element: HTMLElement) => {
-        if (!element || element.hidden) return false;
-        if ((element as HTMLInputElement).type === 'hidden') return false;
-        if (element.getAttribute('aria-hidden') === 'true') return false;
-        const rect = element.getBoundingClientRect();
-        if (rect.width <= 0 || rect.height <= 0) return false;
-        const style = window.getComputedStyle(element);
-        if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
-        return true;
-      };
-      const nameOf = (el: HTMLElement) =>
-        normalize(
-          el.getAttribute('aria-label') ||
-            (el as HTMLInputElement).placeholder ||
-            el.getAttribute('title') ||
-            el.getAttribute('name') ||
-            el.getAttribute('alt') ||
-            el.textContent ||
-            '',
-        ).slice(0, 80);
-
-      const DIALOG_SEL = '[role="dialog"], [aria-modal="true"], div[role="dialog"]';
-      const INTERACTIVE =
-        'button, a[href], input, textarea, select, [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="option"], [role="checkbox"], [role="switch"], [contenteditable="true"], [tabindex="0"]';
-
-      let root: Document | Element = document;
-      const dialogs = Array.from(document.querySelectorAll<HTMLElement>(DIALOG_SEL)).filter(isVisible);
-      if (searchScope === 'dialog') {
-        root = dialogs[dialogs.length - 1] || document;
-      }
-
-      const collected: HTMLElement[] = [];
-      const visit = (base: Document | Element | ShadowRoot) => {
-        if (collected.length >= max * 2) return;
-        for (const el of Array.from(base.querySelectorAll<HTMLElement>(INTERACTIVE))) {
-          collected.push(el);
-          if (collected.length >= max * 2) return;
-        }
-      };
-      visit(root);
-
-      const seen = new Set<HTMLElement>();
-      const marks: Array<Record<string, unknown>> = [];
-      let idx = 0;
-      for (const el of collected) {
-        if (seen.has(el) || !isVisible(el)) continue;
-        seen.add(el);
-        idx += 1;
-        const rect = el.getBoundingClientRect();
-        marks.push({
-          ref: `e${idx}`,
-          selector: buildOptimalSelector(el),
-          tag: el.tagName.toLowerCase(),
-          text: nameOf(el),
-          box: {
-            x: Math.round(rect.left),
-            y: Math.round(rect.top),
-            w: Math.round(rect.width),
-            h: Math.round(rect.height),
-          },
-        });
-        if (marks.length >= max) break;
-      }
-
-      const container = document.createElement('div');
-      container.setAttribute(OVERLAY_ATTR, '1');
-      container.style.cssText = [
-        'position:fixed',
-        'inset:0',
-        'pointer-events:none',
-        'z-index:2147483646',
-        'overflow:visible',
-      ].join(';');
-
-      for (const mark of marks) {
-        const box = mark.box as { x: number; y: number; w: number; h: number };
-        const ref = String(mark.ref || '');
-        const labelNum = ref.replace(/^e/i, '') || '?';
-        const badge = document.createElement('span');
-        badge.textContent = labelNum.slice(0, 3);
-        badge.style.cssText = [
-          'position:absolute',
-          'left:0',
-          'top:0',
-          `transform:translate(${box.x}px, ${Math.max(0, box.y - 4)}px)`,
-          'padding:2px 6px',
-          'font:700 11px/14px system-ui,sans-serif',
-          'color:#fff',
-          'background:#d93025',
-          'border-radius:4px',
-          'box-shadow:0 1px 3px rgba(0,0,0,.35)',
-          'opacity:1',
-        ].join(';');
-        container.appendChild(badge);
-      }
-
-      document.documentElement.appendChild(container);
-      return { success: true, marks, scope: searchScope, count: marks.length };
-    };
-
-    const removeOverlayScript = () => {
-      document.querySelector('[data-glide-som-overlay]')?.remove();
-      return { success: true };
-    };
-
-    const overlayResult = await this.runInTab(tabId, overlayScript, [maxMarks, scope], 8000, injOpts);
+    const overlayResult = await this.runInTab(
+      tabId,
+      glidePageDomOp,
+      ['somOverlay', { max: maxMarks, searchScope: scope }],
+      8000,
+      injOpts,
+    );
     if (!overlayResult?.success) {
       return this.attachResolutionMeta(
         this.attachFrameMeta(overlayResult || { success: false, error: 'Failed to draw mark overlays.' }, frameMeta),
@@ -5512,7 +2574,7 @@ export class BrowserTools {
     try {
       captureResult = await this.captureVisibleTabScreenshot(tab, { format: 'jpeg', quality: 90 });
     } finally {
-      await this.runInTab(tabId, removeOverlayScript, [], 3000, injOpts).catch(() => {});
+      await this.runInTab(tabId, glidePageDomOp, ['removeOverlay', {}], 3000, injOpts).catch(() => {});
     }
 
     if (!captureResult.success) {
@@ -5568,8 +2630,16 @@ export class BrowserTools {
         })
       : await this.runInTab(
           tabId,
-          measureScreenshotTarget,
-          [selector, ref, String(args.scope || 'auto').toLowerCase(), args.interactiveOnly !== false],
+          glidePageDomOp,
+          [
+            'measureTarget',
+            {
+              sel: selector,
+              refId: ref,
+              scope: String(args.scope || 'auto').toLowerCase(),
+              interactiveOnly: args.interactiveOnly !== false,
+            },
+          ],
           8000,
           injOpts,
         );
@@ -5586,36 +2656,12 @@ export class BrowserTools {
     if (this.hasFrameTarget(args)) {
       const frameSelector = typeof args.frameSelector === 'string' ? args.frameSelector.trim() : '';
       const frameUrl = typeof args.frameUrl === 'string' ? args.frameUrl.trim() : '';
-      const iframeOffsetScript = (sel: string, urlNeedle: string) => {
-        let iframe: HTMLIFrameElement | null = null;
-        if (sel) {
-          try {
-            const el = document.querySelector(sel);
-            if (el?.tagName === 'IFRAME') iframe = el as HTMLIFrameElement;
-          } catch {
-            return { success: false, code: 'INVALID_SELECTOR', error: 'Invalid frameSelector.' };
-          }
-        }
-        if (!iframe && urlNeedle) {
-          for (const candidate of Array.from(document.querySelectorAll('iframe'))) {
-            const src = candidate.src || candidate.getAttribute('src') || '';
-            if (src.includes(urlNeedle)) {
-              iframe = candidate;
-              break;
-            }
-          }
-        }
-        if (!iframe) {
-          return { success: false, code: 'FRAME_NOT_FOUND', error: 'Could not locate iframe element in top document.' };
-        }
-        const rect = iframe.getBoundingClientRect();
-        return {
-          success: true,
-          offset: { x: rect.left, y: rect.top },
-          viewport: { width: window.innerWidth, height: window.innerHeight },
-        };
-      };
-      const offsetResult = await this.runInTab(tabId, iframeOffsetScript, [frameSelector, frameUrl], 5000);
+      const offsetResult = await this.runInTab(
+        tabId,
+        glidePageDomOp,
+        ['iframeOffset', { sel: frameSelector, urlNeedle: frameUrl }],
+        5000,
+      );
       if (!offsetResult?.success) {
         return this.attachResolutionMeta(
           this.attachFrameMeta(
@@ -5958,11 +3004,8 @@ export class BrowserTools {
           if (allowedDest) {
             const csrf = await this.runInTab(
               resolved.resolution.tabId,
-              () => {
-                const m = document.cookie.match(/(?:^|; )csrftoken=([^;]*)/);
-                return m ? decodeURIComponent(m[1]) : null;
-              },
-              [],
+              glidePageDomOp,
+              ['cookieCsrf', {}],
               4000,
               false,
               'ISOLATED',
@@ -6352,20 +3395,40 @@ export class BrowserTools {
                 }
                 if (Object.keys(apiHints).length) entry.apiHints = apiHints;
 
+                pushEntry(entry);
+
                 // Response preview only when currently enabled (avoids cloning every response).
+                // Lido em segundo plano: aguardar o corpo antes de devolver `response` travava a
+                // página em respostas em streaming (SSE/ndjson/chat), que nunca terminam.
                 if (opts.captureResponseBody) {
                   try {
                     const clone = response.clone();
-                    const text = await clone.text();
-                    const preview = truncate(text, opts.bodyCharLimit);
-                    entry.responseBodyPreview = preview.text;
-                    entry.responseBodyTruncated = preview.truncated;
+                    const reader = clone.body?.getReader();
+                    if (reader) {
+                      void (async () => {
+                        try {
+                          const decoder = new TextDecoder();
+                          let received = '';
+                          const cap = Math.max(1, Number(opts.bodyCharLimit) || 0) + 1;
+                          while (received.length < cap) {
+                            const chunk = await reader.read();
+                            if (chunk.done) break;
+                            received += decoder.decode(chunk.value, { stream: true });
+                          }
+                          await reader.cancel().catch(() => {});
+                          const preview = truncate(received, opts.bodyCharLimit);
+                          entry.responseBodyPreview = preview.text;
+                          entry.responseBodyTruncated = preview.truncated;
+                        } catch {
+                          entry.responseBodyPreview = '[unreadable response body]';
+                        }
+                      })();
+                    }
                   } catch {
                     entry.responseBodyPreview = '[unreadable response body]';
                   }
                 }
 
-                pushEntry(entry);
                 return response;
               } catch (err) {
                 bumpInflight(-1);
@@ -6686,213 +3749,8 @@ export class BrowserTools {
 
       const result = await this.runInTab(
         resolution.tabId,
-        (max: number, interactive: boolean, searchScope: string) => {
-          function buildLocalSelector(element: Element) {
-            const el = element as HTMLElement;
-            if (el.id) return `#${CSS.escape(el.id)}`;
-            const testId = el.getAttribute('data-testid');
-            if (testId) return `[data-testid="${CSS.escape(testId)}"]`;
-            const name = el.getAttribute('name');
-            if (name) return `[name="${CSS.escape(name)}"]`;
-            const aria = el.getAttribute('aria-label');
-            if (aria) return `[aria-label="${CSS.escape(aria)}"]`;
-            const ph = (el as HTMLInputElement).placeholder;
-            if (ph) return `[placeholder="${CSS.escape(ph)}"]`;
-            const cls = Array.from(el.classList || []).find(
-              (c) => /^[a-z][a-z0-9_-]{2,40}$/i.test(c) && !/[0-9]{5,}/.test(c),
-            );
-            if (cls) return `.${cls}`;
-            const parent = el.parentElement;
-            if (parent) {
-              const tag = el.tagName.toLowerCase();
-              const siblings = Array.from(parent.children).filter((c) => c.tagName.toLowerCase() === tag);
-              return `${tag}:nth-of-type(${siblings.indexOf(el) + 1})`;
-            }
-            return el.tagName.toLowerCase();
-          }
-          function buildOptimalSelector(element: Element): string {
-            const local = buildLocalSelector(element);
-            const root = element.getRootNode();
-            if (root instanceof ShadowRoot) {
-              return `${buildOptimalSelector(root.host)} >>> ${local}`;
-            }
-            return local;
-          }
-          const normalize = (v: string) =>
-            String(v || '')
-              .replace(/\s+/g, ' ')
-              .trim();
-          const isVisible = (element: HTMLElement) => {
-            if (!element || element.hidden) return false;
-            if ((element as HTMLInputElement).type === 'hidden') return false;
-            if (element.getAttribute('aria-hidden') === 'true') return false;
-            const checkVisibility = (
-              element as HTMLElement & {
-                checkVisibility?: (options?: {
-                  checkOpacity?: boolean;
-                  checkVisibilityCSS?: boolean;
-                }) => boolean;
-              }
-            ).checkVisibility;
-            if (typeof checkVisibility === 'function') {
-              try {
-                if (
-                  !checkVisibility.call(element, {
-                    checkOpacity: true,
-                    checkVisibilityCSS: true,
-                  })
-                ) {
-                  return false;
-                }
-                const rect = element.getBoundingClientRect();
-                return rect.width > 0 && rect.height > 0;
-              } catch {
-                // fall through
-              }
-            }
-            const rect = element.getBoundingClientRect();
-            if (rect.width <= 0 || rect.height <= 0) return false;
-            if (element.offsetParent === null) {
-              const style = window.getComputedStyle(element);
-              if (style.position !== 'fixed' && style.position !== 'sticky') {
-                let parent: HTMLElement | null = element.parentElement;
-                let fixedAncestor = false;
-                while (parent && parent !== document.body) {
-                  const ps = window.getComputedStyle(parent);
-                  if (ps.position === 'fixed' || ps.position === 'sticky') {
-                    fixedAncestor = true;
-                    break;
-                  }
-                  parent = parent.parentElement;
-                }
-                if (!fixedAncestor) return false;
-              }
-              if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
-            } else {
-              const style = window.getComputedStyle(element);
-              if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) {
-                return false;
-              }
-            }
-            return true;
-          };
-          const roleOf = (el: HTMLElement) => {
-            const explicit = el.getAttribute('role');
-            if (explicit) return explicit;
-            const tag = el.tagName.toLowerCase();
-            if (tag === 'a' && el.hasAttribute('href')) return 'link';
-            if (tag === 'button') return 'button';
-            if (tag === 'input') return (el as HTMLInputElement).type || 'textbox';
-            if (tag === 'textarea') return 'textbox';
-            if (tag === 'select') return 'combobox';
-            if (/^h[1-6]$/.test(tag)) return 'heading';
-            if (tag === 'nav') return 'navigation';
-            if (tag === 'main') return 'main';
-            return tag;
-          };
-          const nameOf = (el: HTMLElement) => {
-            const labelledBy = el.getAttribute('aria-labelledby');
-            if (labelledBy) {
-              const parts = labelledBy
-                .split(/\s+/)
-                .map((id) => document.getElementById(id)?.textContent || '')
-                .join(' ');
-              if (normalize(parts)) return normalize(parts).slice(0, 120);
-            }
-            return normalize(
-              el.getAttribute('aria-label') ||
-                (el as HTMLInputElement).placeholder ||
-                el.getAttribute('title') ||
-                el.getAttribute('name') ||
-                el.getAttribute('alt') ||
-                el.textContent ||
-                '',
-            ).slice(0, 120);
-          };
-
-          const DIALOG_SEL = '[role="dialog"], [aria-modal="true"], div[role="dialog"]';
-          const INTERACTIVE =
-            'button, a[href], input, textarea, select, [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="option"], [role="checkbox"], [role="switch"], [contenteditable="true"], [tabindex="0"]';
-          const LANDMARKS = 'main, nav, header, footer, h1, h2, h3, [role="navigation"], [role="main"]';
-
-          let root: Document | Element = document;
-          const dialogs = Array.from(document.querySelectorAll<HTMLElement>(DIALOG_SEL)).filter(isVisible);
-          if (searchScope === 'dialog' || (searchScope === 'auto' && dialogs.length)) {
-            root = dialogs[dialogs.length - 1] || document;
-          }
-
-          const collected: HTMLElement[] = [];
-          let shadowScanned = 0;
-          const walkShadowHosts = (
-            base: Document | ShadowRoot | Element,
-            visitShadow: (shadow: ShadowRoot) => void,
-          ) => {
-            const walker = document.createTreeWalker(base, NodeFilter.SHOW_ELEMENT);
-            let current = walker.nextNode() as HTMLElement | null;
-            while (current && shadowScanned < 4000) {
-              shadowScanned += 1;
-              if (current.shadowRoot) visitShadow(current.shadowRoot);
-              current = walker.nextNode() as HTMLElement | null;
-            }
-          };
-          const visit = (base: Document | Element | ShadowRoot) => {
-            if (collected.length >= max * 2) return;
-            for (const el of Array.from(base.querySelectorAll<HTMLElement>(INTERACTIVE))) {
-              collected.push(el);
-              if (collected.length >= max * 2) return;
-            }
-            if (!interactive) {
-              for (const el of Array.from(base.querySelectorAll<HTMLElement>(LANDMARKS))) {
-                collected.push(el);
-              }
-            }
-            walkShadowHosts(base, visit);
-          };
-          visit(root);
-
-          const seen = new Set<HTMLElement>();
-          const elements: Array<Record<string, unknown>> = [];
-          let idx = 0;
-          for (const el of collected) {
-            if (seen.has(el) || !isVisible(el)) continue;
-            seen.add(el);
-            idx += 1;
-            const rect = el.getBoundingClientRect();
-            elements.push({
-              ref: `e${idx}`,
-              role: roleOf(el),
-              name: nameOf(el),
-              tag: el.tagName.toLowerCase(),
-              selector: buildOptimalSelector(el),
-              href: (el as HTMLAnchorElement).href || undefined,
-              value:
-                typeof (el as HTMLInputElement).value === 'string'
-                  ? String((el as HTMLInputElement).value).slice(0, 80)
-                  : undefined,
-              disabled:
-                (el as HTMLButtonElement).disabled === true || el.getAttribute('aria-disabled') === 'true' || undefined,
-              box: {
-                x: Math.round(rect.left),
-                y: Math.round(rect.top),
-                w: Math.round(rect.width),
-                h: Math.round(rect.height),
-              },
-            });
-            if (elements.length >= max) break;
-          }
-
-          return {
-            success: true,
-            url: location.href,
-            title: document.title,
-            scope: searchScope,
-            openDialogs: dialogs.length,
-            count: elements.length,
-            elements,
-            usageHint: 'Use element.selector with click/type. ref is only a label for this snapshot.',
-          };
-        },
-        [maxItems, interactiveOnly, scope],
+        glidePageDomOp,
+        ['readPage', { max: maxItems, interactive: interactiveOnly, searchScope: scope }],
         8000,
         injOpts,
       );
@@ -6973,74 +3831,10 @@ export class BrowserTools {
     }
 
     return withResolvedTab(this, args, 'setInputFiles', async (resolution) => {
-      const result = await this.runInTab(
-        resolution.tabId,
-        (sel: string, fileSpecs: SetInputFileSpec[]) => {
-          const deepQuery = (query: string): HTMLInputElement | null => {
-            if (!query.includes('>>>')) {
-              try {
-                return document.querySelector(query);
-              } catch {
-                return null;
-              }
-            }
-            const parts = query
-              .split('>>>')
-              .map((p) => p.trim())
-              .filter(Boolean);
-            let root: Document | ShadowRoot | Element = document;
-            for (let i = 0; i < parts.length; i++) {
-              let next: Element | null = null;
-              try {
-                next = root.querySelector(parts[i]);
-              } catch {
-                return null;
-              }
-              if (!next) return null;
-              if (i === parts.length - 1) return next as HTMLInputElement;
-              if (!(next as HTMLElement).shadowRoot) return null;
-              root = (next as HTMLElement).shadowRoot!;
-            }
-            return null;
-          };
-          const input = deepQuery(sel);
-          if (!input || input.tagName.toLowerCase() !== 'input') {
-            return { success: false, code: 'ELEMENT_NOT_FOUND', error: `File input not found: ${sel}` };
-          }
-          if (String(input.type || '').toLowerCase() !== 'file') {
-            return { success: false, error: 'Target is not input[type=file].' };
-          }
-          try {
-            const dt = new DataTransfer();
-            for (const spec of fileSpecs) {
-              let blobPart: BlobPart;
-              if (spec.contentBase64) {
-                const binary = atob(spec.contentBase64);
-                const bytes = new Uint8Array(binary.length);
-                for (let i = 0; i < binary.length; i += 1) {
-                  bytes[i] = binary.charCodeAt(i);
-                }
-                blobPart = bytes;
-              } else {
-                blobPart = spec.content ?? '';
-              }
-              const file = new File([blobPart], spec.name, { type: spec.mimeType || 'text/plain' });
-              dt.items.add(file);
-            }
-            input.files = dt.files;
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-            input.dispatchEvent(new Event('change', { bubbles: true }));
-            return {
-              success: true,
-              count: fileSpecs.length,
-              names: fileSpecs.map((f) => f.name),
-            };
-          } catch (error) {
-            return { success: false, error: (error as Error)?.message || String(error) };
-          }
-        },
-        [selector, files],
-      );
+      const result = await this.runInTab(resolution.tabId, glidePageDomOp, [
+        'setInputFiles',
+        { sel: selector, fileSpecs: files },
+      ]);
       return result || { success: false, error: 'Script execution failed.' };
     });
   }
@@ -7078,169 +3872,21 @@ export class BrowserTools {
       return this.attachResolutionMeta(this.attachFrameMeta(bridged, frameMeta), resolution);
     }
 
-    const selectOptionScript = async (sel: string, value?: string, label?: string, index?: number) => {
-      const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-      const normalizeOpt = (v: string) =>
-        String(v || '')
-          .replace(/\s+/g, ' ')
-          .trim()
-          .toLowerCase();
-      const deepQuery = (query: string): HTMLElement | null => {
-        if (!query.includes('>>>')) {
-          try {
-            return document.querySelector(query);
-          } catch {
-            return null;
-          }
-        }
-        const parts = query
-          .split('>>>')
-          .map((p) => p.trim())
-          .filter(Boolean);
-        let root: Document | ShadowRoot | Element = document;
-        for (let i = 0; i < parts.length; i++) {
-          const next = root.querySelector(parts[i]);
-          if (!next) return null;
-          if (i === parts.length - 1) return next as HTMLElement;
-          const shadow = (next as HTMLElement).shadowRoot;
-          if (!shadow) return null;
-          root = shadow;
-        }
-        return null;
-      };
-      const isVisible = (el: HTMLElement) => {
-        const rect = el.getBoundingClientRect();
-        return rect.width > 0 && rect.height > 0;
-      };
-      const criteriaCount = [value !== undefined, label !== undefined, index !== undefined].filter(Boolean).length;
-      if (criteriaCount !== 1) {
-        return { success: false, code: 'INVALID_ARGS', error: 'Provide exactly one of value, label, or index.' };
-      }
-      const element = deepQuery(sel);
-      if (!element || !isVisible(element)) {
-        return { success: false, code: 'ELEMENT_NOT_FOUND', error: `Element not found: ${sel}` };
-      }
-      if (element instanceof HTMLSelectElement) {
-        const options = Array.from(element.options);
-        let option: HTMLOptionElement | null = null;
-        if (index !== undefined) {
-          if (index < 0) {
-            return { success: false, code: 'INVALID_ARGS', error: 'Index must be >= 0.' };
-          }
-          option = options[Math.floor(index)] || null;
-        } else if (value !== undefined) option = options.find((opt) => opt.value === value) || null;
-        else if (label !== undefined) {
-          const want = normalizeOpt(label);
-          option = options.find((opt) => normalizeOpt(opt.textContent || opt.label) === want) || null;
-        }
-        if (!option) {
-          return { success: false, code: 'OPTION_NOT_FOUND', error: 'Matching native option not found.' };
-        }
-        element.value = option.value;
-        option.selected = true;
-        element.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
-        element.dispatchEvent(new Event('change', { bubbles: true }));
-        return {
-          success: true,
-          kind: 'native',
-          selectedLabel: option.textContent || option.label,
-          selectedValue: option.value,
-        };
-      }
-      const trigger =
-        element.getAttribute('role') === 'combobox'
-          ? element
-          : (element.closest('[role="combobox"]') as HTMLElement | null) || element;
-      trigger.scrollIntoView({ block: 'center', inline: 'center' });
-      const listCustomOptions = () =>
-        Array.from(
-          document.querySelectorAll<HTMLElement>('[role="option"], [role="menuitem"], li[role="option"]'),
-        ).filter(isVisible);
-      const listboxAlreadyOpen =
-        trigger.getAttribute('aria-expanded') === 'true' ||
-        listCustomOptions().length > 0 ||
-        Boolean(
-          document.querySelector('[role="listbox"]:not([hidden])') &&
-            Array.from(document.querySelectorAll('[role="option"]')).some((el) => isVisible(el as HTMLElement)),
-        );
-      if (!listboxAlreadyOpen) {
-        trigger.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
-        trigger.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
-        trigger.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-      }
-      const started = Date.now();
-      let customOption: HTMLElement | null = null;
-      while (Date.now() - started < 1200) {
-        const options = listCustomOptions();
-        if (index !== undefined) {
-          if (index < 0) {
-            return { success: false, code: 'INVALID_ARGS', error: 'Index must be >= 0.' };
-          }
-          customOption = options[Math.floor(index)] || null;
-        } else if (value !== undefined) {
-          customOption =
-            options.find(
-              (opt) =>
-                opt.getAttribute('data-value') === value ||
-                opt.getAttribute('value') === value ||
-                opt.getAttribute('data-key') === value,
-            ) || null;
-        } else if (label !== undefined) {
-          const want = normalizeOpt(label);
-          customOption =
-            options.find((opt) => {
-              const text = normalizeOpt(opt.textContent || '');
-              const aria = normalizeOpt(opt.getAttribute('aria-label') || '');
-              return text === want || aria === want || text.includes(want);
-            }) || null;
-        }
-        if (customOption) break;
-        await sleep(80);
-      }
-      if (!customOption) {
-        return { success: false, code: 'OPTION_NOT_FOUND', error: 'Custom option not found.', kind: 'custom' };
-      }
-      customOption.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-      return {
-        success: true,
-        kind: 'custom',
-        selectedLabel: customOption.textContent || customOption.getAttribute('aria-label') || '',
-        selectedValue:
-          customOption.getAttribute('data-value') ||
-          customOption.getAttribute('value') ||
-          customOption.getAttribute('data-key') ||
-          customOption.textContent ||
-          '',
-      };
-    };
+    const selectOptionArgs = () => [
+      'selectOption' as const,
+      {
+        sel: selector,
+        value: args.value !== undefined ? String(args.value) : undefined,
+        label: args.label !== undefined ? String(args.label) : undefined,
+        index: args.index !== undefined ? Number(args.index) : undefined,
+      },
+    ];
 
-    let result = await this.runInTab(
-      tabId,
-      selectOptionScript,
-      [
-        selector,
-        args.value !== undefined ? String(args.value) : undefined,
-        args.label !== undefined ? String(args.label) : undefined,
-        args.index !== undefined ? Number(args.index) : undefined,
-      ],
-      10000,
-      injOpts,
-    );
+    let result = await this.runInTab(tabId, glidePageDomOp, selectOptionArgs(), 10000, injOpts);
     if (!injOpts && result?.success === false && result?.code === 'ELEMENT_NOT_FOUND' && selector.trim()) {
       const frameId = await this.findFrameWithSelector(tabId, selector);
       if (frameId != null) {
-        result = await this.runInTab(
-          tabId,
-          selectOptionScript,
-          [
-            selector,
-            args.value !== undefined ? String(args.value) : undefined,
-            args.label !== undefined ? String(args.label) : undefined,
-            args.index !== undefined ? Number(args.index) : undefined,
-          ],
-          10000,
-          { frameId },
-        );
+        result = await this.runInTab(tabId, glidePageDomOp, selectOptionArgs(), 10000, { frameId });
       }
     }
     const baseResult = result || { success: false, error: 'Script execution failed.' };
@@ -7357,16 +4003,7 @@ export class BrowserTools {
       const preUrl = String(preTab?.url || '');
 
       const runInjectedHistory = async () => {
-        await this.runInTab(
-          tabId,
-          (act: string) => {
-            if (act === 'back') window.history.back();
-            else if (act === 'forward') window.history.forward();
-            else window.location.reload();
-            return { success: true, strategy: 'injected' };
-          },
-          [action],
-        );
+        await this.runInTab(tabId, glidePageDomOp, ['historyNav', { act: action }]);
       };
 
       try {
@@ -7446,8 +4083,8 @@ export class BrowserTools {
 
     const result = await this.runInTab(
       tabId,
-      highlightTargetOverlay,
-      [selector, ref, durationMs, scope, interactiveOnly],
+      glidePageDomOp,
+      ['highlight', { sel: selector, refId: ref, duration: durationMs, scope, interactiveOnly }],
       8000,
       highlightOpts,
     );

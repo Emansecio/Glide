@@ -4,6 +4,8 @@ import { shouldWriteThinkingTimerLabel } from './history-storage.js';
 import {
   cancelMarkdownIdleWork,
   digestMarkdownSource,
+  findMarkdownCommitBoundary,
+  findStreamingTable,
   scheduleMarkdownIdleWork,
   shouldDeferMarkdownRender,
 } from './markdown-render-defer.js';
@@ -11,6 +13,61 @@ import { SidePanelUI } from './panel-ui.js';
 
 const STREAM_TEXT_RENDER_INTERVAL_MS = 50;
 const STREAM_REASONING_RENDER_INTERVAL_MS = 100;
+/** Duração do fade de `.stream-chunk` (motion.css); depois disso o trecho vira texto comum. */
+const STREAM_CHUNK_FADE_MS = 320;
+
+type StreamingState = NonNullable<SidePanelUI['streamingState']>;
+
+/**
+ * Renderiza como markdown o trecho ainda cru do buffer até `end` e deixa o
+ * restante como cauda em texto puro.
+ */
+const commitStreamMarkdown = (ui: SidePanelUI, state: StreamingState, end: number) => {
+  const host = state.textEventEl;
+  if (!host) return;
+  const buffer = state.textBuffer || '';
+  let committedEl = state.mdCommittedEl;
+  if (!committedEl || committedEl.parentNode !== host) {
+    committedEl = document.createElement('div');
+    committedEl.className = 'stream-md-committed';
+    host.prepend(committedEl);
+    state.mdCommittedEl = committedEl;
+  }
+  committedEl.insertAdjacentHTML('beforeend', ui.renderMarkdown(buffer.slice(state.mdCommittedPos || 0, end)));
+  state.mdCommittedPos = end;
+  state.textTailEl?.replaceChildren(document.createTextNode(buffer.slice(end)));
+  state.mdLiveEl?.remove();
+  state.mdLiveEl = null;
+  state.mdTailHeld = false;
+};
+
+/**
+ * Tabela ainda chegando: mostra as linhas completas já como tabela. Só as linhas
+ * novas entram no DOM, então o fade (motion.css) toca em cada uma uma única vez.
+ */
+const renderStreamingTable = (ui: SidePanelUI, state: StreamingState, source: string, lines: number) => {
+  const tail = state.textTailEl;
+  if (!tail || (state.mdLiveEl && state.mdLiveLines === lines)) return;
+  let live = state.mdLiveEl;
+  if (!live) {
+    live = document.createElement('div');
+    live.className = 'stream-md-live';
+    tail.before(live);
+    state.mdLiveEl = live;
+  }
+  state.mdLiveLines = lines;
+  const next = document.createElement('template');
+  next.innerHTML = ui.renderMarkdown(source);
+  const table = live.querySelector('table');
+  const nextBody = next.content.querySelector('tbody');
+  if (!table || !nextBody) {
+    live.replaceChildren(next.content);
+    return;
+  }
+  const body = table.querySelector('tbody');
+  if (!body) table.appendChild(nextBody);
+  else body.append(...Array.from(nextBody.children).slice(body.children.length));
+};
 
 const formatElapsed = (elapsedMs: number) => {
   const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
@@ -136,19 +193,59 @@ SidePanelUI.prototype.scheduleStreamingTextRender = function scheduleStreamingTe
 };
 
 SidePanelUI.prototype.flushStreamingTextRender = function flushStreamingTextRender() {
-  if (!this.streamingState?.textEventEl) return;
-  const pending = this.streamingState.textPendingBuffer || '';
+  const state = this.streamingState;
+  if (!state?.textEventEl) return;
+  const pending = state.textPendingBuffer || '';
   if (!pending) return;
-  // Anexa só o delta a um Text node dedicado: ler + reatribuir textContent
+  // A cauda em aberto é um nó de texto seguido dos trechos recém-chegados, cada
+  // um num span que entra em fade. Só o delta é anexado: reatribuir textContent
   // reprocessa a string acumulada inteira a cada flush (O(n²) na resposta).
-  let node = this.streamingState.textNode;
-  if (!node || node.parentNode !== this.streamingState.textEventEl) {
-    node = document.createTextNode('');
-    this.streamingState.textEventEl.appendChild(node);
-    this.streamingState.textNode = node;
+  let tail = state.textTailEl;
+  if (!tail || tail.parentNode !== state.textEventEl) {
+    tail = document.createElement('span');
+    tail.className = 'stream-tail';
+    tail.appendChild(document.createTextNode(''));
+    state.textEventEl.appendChild(tail);
+    state.textTailEl = tail;
   }
-  node.appendData(pending);
-  this.streamingState.textPendingBuffer = '';
+  // Blocos já fechados (parágrafo, lista, tabela, bloco de código) viram markdown
+  // uma única vez; só a cauda em aberto continua como texto cru. O render final
+  // do turno ainda reprocessa tudo, então divisões entre blocos se acertam no fim.
+  const committed = state.mdCommittedPos || 0;
+  const boundary = findMarkdownCommitBoundary(state.textBuffer || '', committed);
+  const committedNow = boundary > committed;
+  if (committedNow) commitStreamMarkdown(this, state, boundary);
+  const open = (state.textBuffer || '').slice(state.mdCommittedPos || 0);
+  const table = findStreamingTable(open);
+  if (table) {
+    // Sintaxe de tabela não aparece crua: a cauda fica vazia e as linhas
+    // completas são desenhadas como tabela conforme chegam.
+    if (!state.mdTailHeld) tail.replaceChildren(document.createTextNode(''));
+    state.mdTailHeld = true;
+    if (table.lines >= 2) renderStreamingTable(this, state, table.source, table.lines);
+  } else if (state.mdTailHeld) {
+    // Parecia tabela e não era: devolve o texto inteiro à cauda.
+    state.mdTailHeld = false;
+    state.mdLiveEl?.remove();
+    state.mdLiveEl = null;
+    tail.replaceChildren(document.createTextNode(open));
+  } else if (!committedNow) {
+    // Trechos cujo fade já terminou voltam para o nó de texto, então a cauda
+    // nunca acumula mais que meia dúzia de spans, por maior que seja o bloco.
+    const now = performance.now();
+    const settled = tail.firstChild as Text;
+    for (let chunk = tail.children[0] as HTMLElement | undefined; chunk; chunk = tail.children[0] as HTMLElement) {
+      if (now - Number(chunk.dataset.at) < STREAM_CHUNK_FADE_MS) break;
+      settled.appendData(chunk.textContent || '');
+      chunk.remove();
+    }
+    const chunk = document.createElement('span');
+    chunk.className = 'stream-chunk';
+    chunk.dataset.at = String(now);
+    chunk.textContent = pending;
+    tail.appendChild(chunk);
+  }
+  state.textPendingBuffer = '';
   if (this.shouldAutoScroll() && this.isNearBottom) {
     this.scrollToBottom();
   }
@@ -217,7 +314,11 @@ SidePanelUI.prototype.startThinkingTimer = function startThinkingTimer() {
   const updateTimer = () => {
     const elapsed = formatElapsed(Date.now() - (this.thinkingStartedAt || Date.now()));
     if (shouldWriteThinkingTimerLabel(this._retryStatusActive)) {
-      const label = `Pensando ${elapsed}`;
+      // Mesmo verbo do título do bloco de execução: a barra dizia "Pensando"
+      // enquanto o agente clicava ou já escrevia a resposta.
+      const state = this.streamingState;
+      const activity = (!state?.completed && state?.executionTitleEl?.textContent) || 'Pensando';
+      const label = `${activity.replace(/…$/, '')} ${elapsed}`;
       if (this.elements.statusText && this.elements.statusText.textContent !== label) {
         this.elements.statusText.textContent = label;
       }
@@ -229,6 +330,7 @@ SidePanelUI.prototype.startThinkingTimer = function startThinkingTimer() {
     }
   };
   updateTimer();
+  this._tickThinkingTimer = updateTimer;
   this.thinkingTimerId = window.setInterval(updateTimer, 1000);
 };
 
@@ -237,6 +339,7 @@ SidePanelUI.prototype.stopThinkingTimer = function stopThinkingTimer() {
     window.clearInterval(this.thinkingTimerId);
     this.thinkingTimerId = null;
   }
+  this._tickThinkingTimer = null;
   this.thinkingStartedAt = null;
   this.clearStreamingRenderTimers();
 };
@@ -246,7 +349,10 @@ SidePanelUI.prototype.startStreamingMessage = function startStreamingMessage() {
   this.clearStreamingRenderTimers();
   const container = document.createElement('div');
   container.className = 'message assistant streaming';
+  // O cabeçalho já nasce com a bolha: criado só no fim, ele empurrava a resposta
+  // inteira ~30px para baixo no último frame. As ações entram com o texto final.
   container.innerHTML = `
+      <div class="message-header assistant-header">${this.buildAssistantHeaderHtml()}</div>
       <div class="message-content streaming-content markdown-body">
         <div class="typing-indicator"><span></span><span></span><span></span></div>
         <div class="execution-human-summary hidden"></div>
@@ -255,7 +361,7 @@ SidePanelUI.prototype.startStreamingMessage = function startStreamingMessage() {
             <svg class="execution-details-chevron" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <polyline points="9 18 15 12 9 6"></polyline>
             </svg>
-            <span class="execution-details-title shimmer">Trabalhando…</span>
+            <span class="execution-details-title shimmer">Pensando…</span>
             <span class="execution-details-meta"></span>
           </summary>
           <div class="stream-events"></div>
@@ -265,13 +371,12 @@ SidePanelUI.prototype.startStreamingMessage = function startStreamingMessage() {
     `;
 
   const streamParent = this.lastChatTurn?.isConnected ? this.lastChatTurn : this.elements.chatMessages;
+  container.querySelector('.assistant-actions')?.remove();
   streamParent.appendChild(container);
-  const executionDetailsEl = container.querySelector('.execution-details') as HTMLDetailsElement | null;
-  const executionSummaryTitleEl = container.querySelector('.execution-details-title') as HTMLElement | null;
-  const executionSummaryMetaEl = container.querySelector('.execution-details-meta') as HTMLElement | null;
   this.streamingState = {
     container,
     eventsEl: container.querySelector('.stream-events') as HTMLElement | null,
+    executionTitleEl: container.querySelector('.execution-details-title') as HTMLElement | null,
     lastEventType: undefined,
     textEventEl: container.querySelector('.stream-main-text') as HTMLElement | null,
     reasoningEventEl: null,
@@ -280,13 +385,7 @@ SidePanelUI.prototype.startStreamingMessage = function startStreamingMessage() {
     _lastMdPos: 0,
     reasoningBuffer: '',
     reasoningRawBuffer: '',
-    planEl: null,
-    planListEl: null,
-    planMetaEl: null,
-    executionDetailsEl,
-    executionSummaryTitleEl,
-    executionSummaryMetaEl,
-    executionHumanSummaryEl: container.querySelector('.execution-human-summary') as HTMLElement | null,
+    executionDetailsEl: container.querySelector('.execution-details') as HTMLDetailsElement | null,
     executionTurnKey: null,
   };
   this.updateExecutionDetailsHeader?.();
@@ -303,9 +402,10 @@ SidePanelUI.prototype.updateStreamingMessage = function updateStreamingMessage(c
   }
   if (!this.streamingState?.textEventEl) return;
 
+  if (!this.streamingState.textBuffer && content) this.collapsePlanDrawerForAnswer?.();
   this.streamingState.textBuffer = `${this.streamingState.textBuffer || ''}${content || ''}`;
   this.streamingState.textPendingBuffer = `${this.streamingState.textPendingBuffer || ''}${content || ''}`;
-  this.streamingState.accumulated = true;
+  this.setExecutionActivityLabel('Respondendo…');
   this.scheduleStreamingTextRender();
 };
 
@@ -326,6 +426,9 @@ SidePanelUI.prototype.completeStreamingMessage = function completeStreamingMessa
     if (offset < buf.length) {
       const el = this.streamingState.textEventEl;
       if (shouldDeferMarkdownRender(buf.length)) {
+        // O parse completo espera o navegador ficar ocioso; a cauda vira
+        // markdown já, para a resposta não ficar com sintaxe crua até lá.
+        commitStreamMarkdown(this, this.streamingState, buf.length);
         this.scheduleDeferredMarkdownRender(el, buf);
       } else {
         el.innerHTML = this.renderMarkdown(buf);
@@ -368,6 +471,7 @@ SidePanelUI.prototype.updateStreamReasoning = function updateStreamReasoning(del
   }
 
   this.streamingState.reasoningRawBuffer = `${this.streamingState.reasoningRawBuffer || ''}${delta}`;
+  this.setExecutionActivityLabel('Pensando…');
   this.scheduleStreamingReasoningRender();
 };
 
@@ -379,33 +483,6 @@ SidePanelUI.prototype.applyPlanUpdate = function applyPlanUpdate(plan: RunPlan) 
   }
   this.currentPlan = plan;
   this.renderPlanDrawer(plan);
-};
-
-SidePanelUI.prototype.ensurePlanBlock = function ensurePlanBlock() {
-  if (!this.streamingState?.eventsEl) return null;
-  if (this.streamingState.planEl) return this.streamingState.planEl;
-
-  const container = document.createElement('div');
-  container.className = 'plan-block';
-  container.innerHTML = `
-      <div class="plan-header">
-        <span class="plan-title">Plano</span>
-        <span class="plan-meta"></span>
-      </div>
-      <ol class="plan-steps"></ol>
-    `;
-
-  const firstChild = this.streamingState.eventsEl.firstChild;
-  if (firstChild) {
-    this.streamingState.eventsEl.insertBefore(container, firstChild);
-  } else {
-    this.streamingState.eventsEl.appendChild(container);
-  }
-
-  this.streamingState.planEl = container;
-  this.streamingState.planListEl = container.querySelector('.plan-steps') as HTMLOListElement | null;
-  this.streamingState.planMetaEl = container.querySelector('.plan-meta') as HTMLElement | null;
-  return container;
 };
 
 // Discards any in-flight streaming state without persisting it. Used when the

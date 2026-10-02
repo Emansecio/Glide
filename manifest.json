@@ -16,6 +16,10 @@
     "webNavigation",
     "declarativeNetRequestWithHostAccess"
   ],
+  "minimum_chrome_version": "116",
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; img-src 'self' data: blob:"
+  },
   "host_permissions": [
     "<all_urls>"
   ],

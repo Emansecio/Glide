@@ -160,5 +160,3 @@ export class RunCoordinator {
     return this.states.size;
   }
 }
-
-export { ALLOWED_TRANSITIONS };

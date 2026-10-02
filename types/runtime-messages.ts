@@ -4,7 +4,7 @@ import type { RunPlan } from './plan.js';
 
 export const RUNTIME_MESSAGE_SCHEMA_VERSION = 2 as const;
 
-export type RuntimeMessageBase = {
+type RuntimeMessageBase = {
   schemaVersion: typeof RUNTIME_MESSAGE_SCHEMA_VERSION;
   runId: string;
   sessionId: string;
@@ -12,30 +12,30 @@ export type RuntimeMessageBase = {
   timestamp: number;
 };
 
-export const toolFailureClasses = ['selector', 'timing', 'permission', 'navigation', 'unknown'] as const;
+const toolFailureClasses = ['selector', 'timing', 'permission', 'navigation', 'unknown'] as const;
 export type ToolFailureClass = (typeof toolFailureClasses)[number];
 
-export const toolRecoveryStages = ['none', 'structure', 'retry', 'screenshot', 'vision'] as const;
+const toolRecoveryStages = ['none', 'structure', 'retry', 'screenshot', 'vision'] as const;
 export type ToolRecoveryStage = (typeof toolRecoveryStages)[number];
 
-export const toolEvidenceConfidence = ['low', 'medium', 'high'] as const;
+const toolEvidenceConfidence = ['low', 'medium', 'high'] as const;
 export type ToolEvidenceConfidence = (typeof toolEvidenceConfidence)[number];
 
-export type AssistantStreamStart = RuntimeMessageBase & {
+type AssistantStreamStart = RuntimeMessageBase & {
   type: 'assistant_stream_start';
 };
 
-export type AssistantStreamDelta = RuntimeMessageBase & {
+type AssistantStreamDelta = RuntimeMessageBase & {
   type: 'assistant_stream_delta';
   content: string;
   channel?: 'text' | 'reasoning';
 };
 
-export type AssistantStreamStop = RuntimeMessageBase & {
+type AssistantStreamStop = RuntimeMessageBase & {
   type: 'assistant_stream_stop';
 };
 
-export type ToolTelemetryFields = {
+type ToolTelemetryFields = {
   actionId?: string;
   tabId?: number;
   frameId?: number;
@@ -48,7 +48,7 @@ export type ToolTelemetryFields = {
   contextRevision?: number;
 };
 
-export type ToolExecutionStart = RuntimeMessageBase &
+type ToolExecutionStart = RuntimeMessageBase &
   ToolTelemetryFields & {
     type: 'tool_execution_start';
     tool: string;
@@ -56,7 +56,7 @@ export type ToolExecutionStart = RuntimeMessageBase &
     args: Record<string, unknown>;
   };
 
-export type ToolExecutionResult = RuntimeMessageBase &
+type ToolExecutionResult = RuntimeMessageBase &
   ToolTelemetryFields & {
     type: 'tool_execution_result';
     tool: string;
@@ -105,17 +105,17 @@ export type ToolBatchEvent =
       | 'contextRevision'
     >;
 
-export type ToolEventsBatch = RuntimeMessageBase & {
+type ToolEventsBatch = RuntimeMessageBase & {
   type: 'tool_events_batch';
   events: ToolBatchEvent[];
 };
 
-export type PlanUpdate = RuntimeMessageBase & {
+type PlanUpdate = RuntimeMessageBase & {
   type: 'plan_update';
   plan: RunPlan;
 };
 
-export type PlanUpdateAck = RuntimeMessageBase & {
+type PlanUpdateAck = RuntimeMessageBase & {
   type: 'plan_update_ack';
   planId: string;
   version: number;
@@ -124,7 +124,7 @@ export type PlanUpdateAck = RuntimeMessageBase & {
   error?: string;
 };
 
-export type AssistantFinal = RuntimeMessageBase & {
+type AssistantFinal = RuntimeMessageBase & {
   type: 'assistant_final';
   content: string;
   thinking?: string | null;
@@ -145,41 +145,41 @@ export type AssistantFinal = RuntimeMessageBase & {
   finishReason?: RunTerminalReason;
 };
 
-export type RunQualityGate = RuntimeMessageBase & {
+type RunQualityGate = RuntimeMessageBase & {
   type: 'run_quality_gate';
   state: 'passed' | 'blocked' | 'forced_retry';
   reason: string;
   details?: Record<string, unknown>;
 };
 
-export type RunError = RuntimeMessageBase & {
+type RunError = RuntimeMessageBase & {
   type: 'run_error';
   message: string;
   /** `action: 'open_settings'` faz o painel oferecer um atalho para as Configurações. */
   details?: Record<string, unknown>;
 };
 
-export type RunWarning = RuntimeMessageBase & {
+type RunWarning = RuntimeMessageBase & {
   type: 'run_warning';
   message: string;
   details?: Record<string, unknown>;
 };
 
 /** Parada deliberada pedida pelo usuário — não é erro, e a UI não deve alarmar. */
-export type RunStopped = RuntimeMessageBase & {
+type RunStopped = RuntimeMessageBase & {
   type: 'run_stopped';
   message: string;
   details?: Record<string, unknown>;
 };
 
-export type RunResumeStarted = RuntimeMessageBase & {
+type RunResumeStarted = RuntimeMessageBase & {
   type: 'run_resume_started';
   resumedFromRunId: string;
   message: string;
   contextRevision?: number;
 };
 
-export type RunResumeRequired = RuntimeMessageBase & {
+type RunResumeRequired = RuntimeMessageBase & {
   type: 'run_resume_required';
   resumedFromRunId: string;
   message: string;
@@ -188,14 +188,14 @@ export type RunResumeRequired = RuntimeMessageBase & {
   terminalReason?: 'ambiguous_action';
 };
 
-export type RunInterrupted = RuntimeMessageBase & {
+type RunInterrupted = RuntimeMessageBase & {
   type: 'run_interrupted';
   message: string;
   finishReason: RunTerminalReason;
   recoveryLoss?: RunRecoveryLoss;
 };
 
-export type ContextCommitMessage = RuntimeMessageBase & {
+type ContextCommitMessage = RuntimeMessageBase & {
   type: 'context_commit';
   previousSessionId?: string;
   revision: number;
@@ -208,7 +208,7 @@ export type ContextCommitMessage = RuntimeMessageBase & {
   };
 };
 
-export type ContextCompacted = RuntimeMessageBase & {
+type ContextCompacted = RuntimeMessageBase & {
   type: 'context_compacted';
   summary: string;
   trimmedCount: number;
@@ -222,7 +222,7 @@ export type ContextCompacted = RuntimeMessageBase & {
   };
 };
 
-export type VisionContextReady = RuntimeMessageBase & {
+type VisionContextReady = RuntimeMessageBase & {
   type: 'vision_context_ready';
   tool: string;
   id?: string;
@@ -251,7 +251,7 @@ export type RuntimeMessage =
   | ContextCompacted
   | VisionContextReady;
 
-export const runtimeMessageTypes = [
+const runtimeMessageTypes = [
   'assistant_stream_start',
   'assistant_stream_delta',
   'assistant_stream_stop',
@@ -273,7 +273,7 @@ export const runtimeMessageTypes = [
   'vision_context_ready',
 ] as const;
 
-export type RuntimeMessageType = (typeof runtimeMessageTypes)[number];
+type RuntimeMessageType = (typeof runtimeMessageTypes)[number];
 
 type RuntimeMessageValidationResult = { ok: true; message: RuntimeMessage } | { ok: false; reason: string };
 
@@ -570,19 +570,8 @@ export function isRuntimeMessage(value: unknown): value is RuntimeMessage {
   return validateRuntimeMessage(value).ok;
 }
 
-/** Panel → service worker: one acknowledged checklist mutation. */
-export type ManualPlanUpdatePanel = {
-  type: 'manual_plan_update';
-  planId: string;
-  version: number;
-  stepId: string;
-  status: 'done' | 'pending';
-  sessionId?: string;
-  runId?: string;
-};
-
 /** Panel → service worker: start or continue a chat turn. */
-export type UserMessagePanel = {
+type UserMessagePanel = {
   type: 'user_message';
   message: string;
   sessionId: string;
@@ -623,8 +612,4 @@ export function validateUserMessagePanel(value: unknown): UserMessagePanelValida
     return { ok: false, reason: 'user_message.panelTabId must be a number when provided.' };
   }
   return { ok: true, message: value as UserMessagePanel };
-}
-
-export function isUserMessagePanel(value: unknown): value is UserMessagePanel {
-  return validateUserMessagePanel(value).ok;
 }

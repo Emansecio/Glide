@@ -16,6 +16,8 @@ terminals/
 work/
 .worktrees/
 hermes-claude-code-max-oauth-routing.md
+# Log de sessão de outra ferramenta (prompts do usuário, caminhos locais)
+.slim/
 
 # Build artifacts
 dist/

@@ -39,6 +39,7 @@
     "check:budgets": "node scripts/check-budgets.mjs",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
+    "knip": "knip",
     "format": "biome format --write .",
     "dev": "echo 'Run npm run build (prod) or build:dev (sourcemaps), then load dist/ in chrome://extensions'"
   },
@@ -56,18 +57,19 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@ai-sdk/anthropic": "^3.0.17",
-    "@ai-sdk/openai-compatible": "^2.0.16",
-    "ai": "^6.0.42",
-    "markdown-it": "^15.0.1"
+    "@ai-sdk/anthropic": "^3.0.118",
+    "@ai-sdk/openai-compatible": "^2.0.75",
+    "@ai-sdk/provider": "^3.0.16",
+    "ai": "^6.0.285",
+    "markdown-it": "^15.0.2"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
     "@types/chrome": "^0.0.268",
-    "@types/markdown-it": "^14.2.0",
     "@types/node": "^22.10.5",
     "esbuild": "^0.27.2",
     "jsdom": "^29.1.1",
+    "knip": "6.37.0",
     "playwright": "^1.57.0",
     "typescript": "^5.6.3",
     "vitest": "^4.1.11"

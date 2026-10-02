@@ -16,6 +16,7 @@ const snapshots: Snapshot[] = [];
 let domRevision = 0;
 let observer: MutationObserver | null = null;
 let revisionTimer: ReturnType<typeof setTimeout> | null = null;
+let idleTimer: ReturnType<typeof setTimeout> | null = null;
 let snapshotSequence = 0;
 
 const ensureRevisionObserver = () => {
@@ -35,13 +36,33 @@ const pruneSnapshots = (now: number) => {
   while (snapshots.length >= SNAPSHOT_LIMIT) snapshots.shift();
 };
 
-export const getDomRevision = () => {
+// A subtree observer with attributes + characterData costs CPU on busy pages for as long
+// as it is connected. Handles are only valid while their snapshot lives (SNAPSHOT_TTL_MS),
+// so once every snapshot has expired nothing reads domRevision and the observer can go.
+const scheduleIdleDisconnect = () => {
+  if (idleTimer) clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => {
+    idleTimer = null;
+    pruneSnapshots(Date.now());
+    if (snapshots.length > 0) {
+      scheduleIdleDisconnect();
+      return;
+    }
+    observer?.disconnect();
+    observer = null;
+    // Mutations stop being counted here; advance the revision so no pre-idle state reads as current.
+    domRevision += 1;
+  }, SNAPSHOT_TTL_MS + 1000);
+};
+
+const getDomRevision = () => {
   ensureRevisionObserver();
   return domRevision;
 };
 
 export const beginElementSnapshot = (): Snapshot => {
   ensureRevisionObserver();
+  scheduleIdleDisconnect();
   const now = Date.now();
   pruneSnapshots(now);
   snapshotSequence += 1;
@@ -87,5 +108,3 @@ export const resolveSnapshotHandle = (
   }
   return resolveElementHandle(value, document, getDomRevision(), target);
 };
-
-export const snapshotRegistrySizeForTests = () => snapshots.length;

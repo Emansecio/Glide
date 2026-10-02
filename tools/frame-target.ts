@@ -4,13 +4,13 @@ export type FrameInfo = {
   parentFrameId: number;
 };
 
-export type ResolveTargetFrameSuccess = {
+type ResolveTargetFrameSuccess = {
   ok: true;
   frameId: number;
   frameUrl: string;
 };
 
-export type ResolveTargetFrameFailure = {
+type ResolveTargetFrameFailure = {
   ok: false;
   code: 'FRAME_NOT_FOUND' | 'FRAME_AMBIGUOUS' | 'FRAME_NOT_REACHABLE';
   error: string;

@@ -26,7 +26,7 @@ SidePanelUI.prototype.truncateText = function truncateText(text: string, limit =
   return `${text.slice(0, limit)}...`;
 };
 
-export const escapeHtmlBasic = (text: string) => {
+const escapeHtmlBasic = (text: string) => {
   if (text == null) return '';
   // Fast path: use string replacement for common cases
   if (!/[&<>"']/.test(text)) return text;

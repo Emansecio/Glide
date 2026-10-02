@@ -2,7 +2,7 @@ import type { RunRecoveryLoss } from './run-checkpoint-store.js';
 import type { RunCheckpoint } from './run-types.js';
 
 export type RunRecoveryDecision = 'resume' | 'confirm' | 'discard';
-export const MAX_CHECKPOINT_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_CHECKPOINT_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export function recoverCheckpoint(
   checkpoint: RunCheckpoint,

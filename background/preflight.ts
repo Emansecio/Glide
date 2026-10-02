@@ -1,4 +1,5 @@
 import { normalizeProviderId } from '../ai/providers.js';
+import { isCustomEndpointAllowed } from '../ai/sdk-client.js';
 
 /**
  * Checagem de credencial/config ANTES de gastar um run.
@@ -142,6 +143,15 @@ export function checkProviderReadiness(input: PreflightInput): PreflightIssue | 
         reason: 'invalid_endpoint',
         action: 'open_settings',
         message: `O endpoint configurado não é uma URL válida: "${String(input.customEndpoint).slice(0, 80)}".`,
+      };
+    }
+    // sdk-client ignora em silêncio endpoint http que não seja loopback e usa o padrão: um Ollama
+    // em `http://192.168.x.x:11434` ia para localhost sem nenhum aviso. Falha cedo, com o motivo.
+    if (provider === 'ollama' && !isCustomEndpointAllowed(provider, String(input.customEndpoint).trim())) {
+      return {
+        reason: 'invalid_endpoint',
+        action: 'open_settings',
+        message: `O endpoint "${String(input.customEndpoint).slice(0, 80)}" não é permitido: use https:// ou http://localhost para o Ollama (http em outro host é bloqueado).`,
       };
     }
   }

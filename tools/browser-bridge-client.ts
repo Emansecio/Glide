@@ -21,6 +21,8 @@ export type FrameProbeResult = {
 
 type SendOptions = { timeoutMs?: number; signal?: AbortSignal; deadline?: number };
 
+const NO_RECEIVER_PATTERN = /receiving end does not exist|could not establish connection/i;
+
 const failure = (code: string, error: string, extra: Record<string, unknown> = {}): GlideBridgeResponse => ({
   success: false,
   code,
@@ -100,10 +102,15 @@ export class BrowserBridgeClient {
       }
       return response;
     } catch (error) {
-      return failure('BRIDGE_UNAVAILABLE', error instanceof Error ? error.message : String(error), {
+      const message = error instanceof Error ? error.message : String(error);
+      // Sem content script na aba/frame nada foi entregue: a ação certamente não executou. Marcar
+      // como 'unknown' derrubava o run inteiro como "ação ambígua" no primeiro click/type.
+      const noReceiver = NO_RECEIVER_PATTERN.test(message);
+      return failure('BRIDGE_UNAVAILABLE', message, {
         unavailable: true,
-        dispatched: true,
-        outcomeCertainty: 'unknown',
+        noReceiver,
+        dispatched: !noReceiver,
+        outcomeCertainty: noReceiver ? 'known_not_executed' : 'unknown',
       });
     } finally {
       if (timeoutId) clearTimeout(timeoutId);

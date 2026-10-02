@@ -5,7 +5,7 @@ export type TabResolution = {
   fallbackUsed: boolean;
 };
 
-export type TabResolveResult = { ok: true; resolution: TabResolution } | { ok: false; result: Record<string, any> };
+type TabResolveResult = { ok: true; resolution: TabResolution } | { ok: false; result: Record<string, any> };
 
 export type TabResolvable = {
   resolveExecutableTab(args: Record<string, any>, toolName: string): Promise<TabResolveResult>;

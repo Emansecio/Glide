@@ -79,7 +79,7 @@ export function computeDownscale(
 }
 
 /** Chunk size for base64 binary-string conversion (~32 KiB, safe for apply stack limits). */
-export const BASE64_CHUNK_SIZE = 0x8000;
+const BASE64_CHUNK_SIZE = 0x8000;
 
 /** True when capture dimensions exceed maxDim and would need canvas downscale + re-encode. */
 export function needsScreenshotDownscale(width: number, height: number, maxDim: number): boolean {

@@ -36,7 +36,6 @@ import {
   createMessage,
   normalizeConversationHistory,
   normalizeUsage,
-  toProviderMessages,
 } from '../../ai/message-schema.js';
 import type { Message } from '../../ai/message-schema.js';
 import { IMAGE_TOKEN_ESTIMATE, estimateTokensFromContent, extractThinking } from '../../ai/message-utils.js';
@@ -51,10 +50,11 @@ import {
   isValidFinalResponse,
 } from '../../ai/retry-engine.js';
 import {
+  INJECTED_TAB_CONTEXT_END,
+  INJECTED_TAB_CONTEXT_START,
   detectTaskIntent,
   hasRecentToolActivity,
   stripInjectedTabContext,
-  wrapInjectedTabContext,
 } from '../../ai/task-intent.js';
 import { extractRecoverableToolCalls, stripRecoverableToolCalls } from '../../ai/tool-call-recovery.js';
 import { wrapUntrustedContent } from '../../ai/untrusted-content.js';
@@ -130,7 +130,6 @@ import {
   decideFailedToolOutcome,
   isFailureTrackedTool,
   normalizeThrownToolError,
-  shouldForceFailedToolContinuation,
 } from '../../background/failure-recovery.js';
 import {
   arrayBufferToBase64,
@@ -253,7 +252,7 @@ import {
   SET_INPUT_FILES_MAX_TOTAL_BYTES,
   normalizeSetInputFileSpecs,
 } from '../../tools/browser-tools.js';
-import { GLIDE_BRIDGE_MESSAGE_TYPE, isMutativeBridgeOp, shouldFallbackFromBridge } from '../../tools/content-bridge.js';
+import { GLIDE_BRIDGE_MESSAGE_TYPE, isMutativeBridgeOp } from '../../tools/content-bridge.js';
 import { isSameOriginUrl, isUrlAllowedByDomains, parseAllowedDomains } from '../../tools/domain-policy.js';
 import {
   buildExecutableBody,
@@ -261,7 +260,6 @@ import {
   isCspEvalError,
   resolveExecuteScriptTimeoutMs,
   resolveExecuteScriptWorld,
-  shouldAllowMainToIsolatedFallback,
   truncateExecuteScriptValue,
 } from '../../tools/execute-script-runner.js';
 import { pickFrameIdForSelectorProbe } from '../../tools/frame-discovery.js';
@@ -280,19 +278,17 @@ import {
   stripSensitiveHeadersForRedirect,
 } from '../../tools/http-request.js';
 import { shouldAutoStopNetworkCapture, shouldDrainInflightBeforeStop } from '../../tools/network-capture.js';
-import { assignReadPageRefs } from '../../tools/ref-resolver.js';
 import { waitForHistoryTransition } from '../../tools/tab-readiness.js';
 import { isTabLoadComplete } from '../../tools/tab-readiness.js';
 import { expandTableRowCells } from '../../tools/table-cells.js';
 import { buildToolDefinitions } from '../../tools/tool-definitions.js';
 import { TOOL_HANDLER_REGISTRY } from '../../tools/tool-registry.js';
 import { requireHttpUrl } from '../../tools/validation.js';
-import { buildRunPlan, normalizePlanStatus, normalizePlanSteps } from '../../types/plan.js';
+import { buildRunPlan, normalizePlanStatus } from '../../types/plan.js';
 import type { RunPlan } from '../../types/plan.js';
 import {
   RUNTIME_MESSAGE_SCHEMA_VERSION,
   isRuntimeMessage,
-  isUserMessagePanel,
   salvageToolEventsBatchEvents,
   validateUserMessagePanel,
 } from '../../types/runtime-messages.js';
@@ -675,11 +671,15 @@ function testBrowserToolArgValidation(runner: TestRunner) {
       fields: [{ selector: '#email', text: 'a', checked: true }],
     });
     runner.assertFalse(badField.ok, 'multiple field modes rejected');
-    const many = tools.validateToolArgs('fillForm', {
+    const atLimit = tools.validateToolArgs('fillForm', {
+      fields: Array.from({ length: 20 }, (_, i) => ({ selector: `#f${i}`, text: 'x' })),
+    });
+    runner.assertTrue(atLimit.ok, '20 fields accepted');
+    // Acima do limite é erro explícito: truncar em silêncio fazia o modelo achar que preencheu tudo.
+    const tooMany = tools.validateToolArgs('fillForm', {
       fields: Array.from({ length: 25 }, (_, i) => ({ selector: `#f${i}`, text: 'x' })),
     });
-    runner.assertTrue(many.ok, 'many fields accepted');
-    if (many.ok) runner.assertEqual(many.args.fields.length, 20, 'fields capped at 20');
+    runner.assertFalse(tooMany.ok, 'more than 20 fields rejected instead of silently truncated');
   });
 
   runner.test('navigateHistory validates action enum', () => {
@@ -1025,33 +1025,6 @@ function testExecuteScriptRunner(runner: TestRunner) {
     runner.assertFalse(isCspEvalError('Unexpected token'));
   });
 
-  runner.test('shouldAllowMainToIsolatedFallback only allows compile-phase CSP failures', () => {
-    runner.assertTrue(
-      shouldAllowMainToIsolatedFallback({
-        ok: false,
-        phase: 'compile',
-        cspLikely: true,
-        error: 'unsafe-eval',
-      }),
-    );
-    runner.assertFalse(
-      shouldAllowMainToIsolatedFallback({
-        ok: false,
-        phase: 'runtime',
-        cspLikely: true,
-        error: 'unsafe-eval',
-      }),
-    );
-    runner.assertFalse(
-      shouldAllowMainToIsolatedFallback({
-        ok: false,
-        phase: 'compile',
-        timedOut: true,
-        error: 'timeout',
-      }),
-    );
-  });
-
   runner.test('truncateExecuteScriptValue caps oversized JSON results', () => {
     const big = { rows: 'x'.repeat(200_000) };
     const limited = truncateExecuteScriptValue(big, 1000);
@@ -1101,7 +1074,7 @@ function testDefaultSystemPrompt(runner: TestRunner) {
       'mentions hook install pattern',
     );
     runner.assertTrue(DEFAULT_SYSTEM_PROMPT.includes('readPage'), 'mentions readPage');
-    runner.assertTrue(DEFAULT_SYSTEM_PROMPT.includes('cdp'), 'mentions cdp opt-in');
+    runner.assertTrue(DEFAULT_SYSTEM_PROMPT.includes('cdp'), 'mentions cdp');
     runner.assertTrue(
       DEFAULT_SYSTEM_PROMPT.includes('RECOVERY') && DEFAULT_SYSTEM_PROMPT.includes('readPage'),
       'recovery order mentions readPage',
@@ -1284,34 +1257,10 @@ function testMessageSchema(runner: TestRunner) {
     runner.assertEqual(normalized[0].role, 'user');
   });
 
-  runner.test('toProviderMessages serializes tool calls and results', () => {
-    const history: Message[] = [
-      {
-        role: 'assistant',
-        content: '',
-        toolCalls: [{ id: 'call_1', name: 'click', args: { selector: '#a' } }],
-      },
-      {
-        role: 'tool',
-        content: { success: true },
-        toolCallId: 'call_1',
-      },
-    ];
-    const provider = toProviderMessages(history);
-    runner.assertTrue(Array.isArray(provider[0].tool_calls), 'tool_calls should be an array');
-    runner.assertTrue(typeof provider[0].tool_calls?.[0]?.function?.arguments === 'string', 'tool args serialized');
-    runner.assertEqual(provider[1].role, 'tool');
-    const toolContent =
-      typeof provider[1].content === 'string' ? provider[1].content : JSON.stringify(provider[1].content);
-    runner.assertTrue(toolContent.includes('success'));
-  });
-
-  runner.test('thinking metadata is preserved and not sent to provider', () => {
+  runner.test('thinking metadata is preserved through normalization', () => {
     const history: Message[] = [{ role: 'assistant', content: 'Hello', thinking: 'Drafting response' }];
     const normalized = normalizeConversationHistory(history);
     runner.assertEqual(normalized[0]?.thinking, 'Drafting response');
-    const provider = toProviderMessages(normalized);
-    runner.assertFalse('thinking' in provider[0], 'Provider messages should not include thinking');
   });
 
   runner.test('cloneConversationHistory isolates nested context data', () => {
@@ -1489,8 +1438,8 @@ function testPlanNormalization(runner: TestRunner) {
     runner.assertEqual(normalizePlanStatus('unknown'), 'pending');
   });
 
-  runner.test('normalizePlanSteps trims, filters, and clamps', () => {
-    const steps = normalizePlanSteps([
+  runner.test('buildRunPlan trims, filters, and clamps steps', () => {
+    const { steps } = buildRunPlan([
       { title: '  Step one  ', status: 'done' },
       { title: '', status: 'pending' },
       { title: 'Step two', status: 'blocked', notes: '  Needs access  ' },
@@ -1500,12 +1449,12 @@ function testPlanNormalization(runner: TestRunner) {
     runner.assertEqual(steps[1].status, 'blocked');
     runner.assertEqual(steps[1].notes, 'Needs access');
 
-    const tooMany = normalizePlanSteps(
+    const tooMany = buildRunPlan(
       Array.from({ length: 12 }, (_, idx) => ({
         title: `Step ${idx + 1}`,
         status: 'pending',
       })),
-    );
+    ).steps;
     runner.assertEqual(tooMany.length, 8);
   });
 
@@ -1752,7 +1701,7 @@ function testTaskIntent(runner: TestRunner) {
     const intent = detectTaskIntent('oi\n\n[Contexto das abas selecionadas:]\n- Instagram');
     runner.assertFalse(intent.usesBrowserAutomation, 'Injected context alone should not trigger automation');
 
-    const wrapped = `oi\n\n${wrapInjectedTabContext('[Contexto das abas selecionadas:]\\n- Instagram')}`;
+    const wrapped = `oi\n\n${INJECTED_TAB_CONTEXT_START}\n[Contexto das abas selecionadas:]\\n- Instagram\n${INJECTED_TAB_CONTEXT_END}`;
     runner.assertEqual(stripInjectedTabContext(wrapped), 'oi');
     runner.assertFalse(detectTaskIntent(wrapped).usesBrowserAutomation);
   });
@@ -2052,10 +2001,10 @@ function testSessionContextStore(runner: TestRunner) {
       sessionId: 'session-1',
       conversationHistory: [{ role: 'user', content: 'prior' }],
     };
-    runner.assertTrue(isUserMessagePanel(withoutHistory));
     runner.assertTrue(validateUserMessagePanel(withoutHistory).ok);
-    runner.assertTrue(isUserMessagePanel(withHistory));
     runner.assertTrue(validateUserMessagePanel(withHistory).ok);
+    runner.assertFalse(validateUserMessagePanel({ ...withoutHistory, sessionId: '' }).ok);
+    runner.assertFalse(validateUserMessagePanel({ ...withoutHistory, conversationHistory: 'x' }).ok);
   });
 }
 
@@ -2157,14 +2106,6 @@ function testContentBridgeContract(runner: TestRunner) {
 
   runner.test('Glide bridge message type is stable', () => {
     runner.assertEqual(GLIDE_BRIDGE_MESSAGE_TYPE, 'glide_bridge');
-  });
-
-  runner.test('Only recoverable bridge misses fall through to frame injection', () => {
-    runner.assertTrue(shouldFallbackFromBridge({ success: false, code: 'ELEMENT_NOT_FOUND' }));
-    runner.assertTrue(shouldFallbackFromBridge({ success: false, code: 'BRIDGE_UNSUPPORTED' }));
-    runner.assertTrue(shouldFallbackFromBridge({ success: false, code: 'WAIT_TIMEOUT' }));
-    runner.assertFalse(shouldFallbackFromBridge({ success: false, code: 'PERMISSION_DENIED' }));
-    runner.assertFalse(shouldFallbackFromBridge({ success: true, bridge: true }));
   });
 
   runner.test('Mutative bridge ops are classified for timeout no-replay policy', () => {
@@ -2816,14 +2757,6 @@ async function testFixToolsBrowserAutomation(runner: TestRunner) {
     runner.assertEqual(row2.row.join('|'), 'A|B');
   });
 
-  runner.test('testFixToolsAssignReadPageRefs deduplicates like readPage numbering', () => {
-    const refs = assignReadPageRefs(['btn-save', 'btn-save', 'nav-main', 'btn-cancel']);
-    runner.assertEqual(refs.get('btn-save'), 'e1');
-    runner.assertEqual(refs.get('nav-main'), 'e2');
-    runner.assertEqual(refs.get('btn-cancel'), 'e3');
-    runner.assertEqual(refs.size, 3);
-  });
-
   runner.test('testFixToolsSelectOptionValidation rejects negative index', () => {
     const tools = new BrowserTools();
     const bad = tools.validateToolArgs('selectOption', { selector: '#x', index: -1 });
@@ -2960,15 +2893,11 @@ function testFailureRecovery(runner: TestRunner) {
   });
 
   runner.test('Failed unverified tools force exactly one continuation', () => {
-    runner.assertTrue(
-      shouldForceFailedToolContinuation({ hasFailedTools: true, awaitingVerification: true, alreadyUsed: false }),
-    );
-    runner.assertFalse(
-      shouldForceFailedToolContinuation({ hasFailedTools: true, awaitingVerification: true, alreadyUsed: true }),
-    );
-    runner.assertFalse(
-      shouldForceFailedToolContinuation({ hasFailedTools: true, awaitingVerification: false, alreadyUsed: false }),
-    );
+    const outcome = (awaitingVerification: boolean, alreadyUsed: boolean) =>
+      decideFailedToolOutcome({ hasFailedTools: true, awaitingVerification, alreadyUsed });
+    runner.assertEqual(outcome(true, false), 'continue');
+    runner.assertTrue(outcome(true, true) !== 'continue');
+    runner.assertTrue(outcome(false, false) !== 'continue');
   });
 
   runner.test('A second failed unverified browser pass terminates the run', () => {
@@ -3403,18 +3332,16 @@ function testToolPermissions(runner: TestRunner) {
     runner.assertTrue(isToolCategoryAllowed(null, {}), 'uncategorized tools are not gated here');
   });
 
-  runner.test('debugger/cdp is opt-in (deny unless true)', () => {
-    runner.assertEqual(getToolPermissionCategory('cdp'), 'debugger', 'cdp maps to debugger');
+  runner.test('cdp is always available under the interact permission', () => {
+    runner.assertEqual(getToolPermissionCategory('cdp'), 'interact', 'cdp maps to interact');
     runner.assertEqual(getToolPermissionCategory('readPage'), 'read', 'readPage is read');
     runner.assertEqual(getToolPermissionCategory('clipboard'), 'clipboard', 'clipboard has its own category');
     runner.assertEqual(getToolPermissionCategory('setInputFiles'), 'fileUpload', 'setInputFiles is fileUpload');
-    runner.assertFalse(DEFAULT_TOOL_PERMISSIONS.debugger, 'debugger defaults off');
-    runner.assertFalse(isToolCategoryAllowed('debugger', {}), 'missing debugger denies');
-    runner.assertFalse(isToolCategoryAllowed('debugger', { debugger: false }), 'false denies');
-    runner.assertTrue(isToolCategoryAllowed('debugger', { debugger: true }), 'true allows');
+    runner.assertFalse('debugger' in DEFAULT_TOOL_PERMISSIONS, 'no separate debugger opt-in');
+    runner.assertTrue(isToolCategoryAllowed('interact', { debugger: false }), 'legacy debugger:false is ignored');
   });
 
-  runner.test('cdp is filtered from schema until debugger permission is true', () => {
+  runner.test('cdp stays in the schema regardless of the legacy debugger flag', () => {
     const browserTools = [
       { name: 'click', description: 'c', input_schema: { type: 'object' as const, properties: {} } },
       { name: 'cdp', description: 'd', input_schema: { type: 'object' as const, properties: {} } },
@@ -3424,13 +3351,13 @@ function testToolPermissions(runner: TestRunner) {
       browserToolDefinitions: browserTools,
       toolPermissions: { interact: true, read: true, debugger: false },
     });
-    runner.assertFalse(off.map((t) => t.name).includes('cdp'), 'cdp hidden when debugger false');
+    runner.assertTrue(off.map((t) => t.name).includes('cdp'), 'cdp listed even with legacy debugger false');
     runner.assertTrue(off.map((t) => t.name).includes('readPage'), 'readPage remains');
-    const on = buildSessionTools({
+    const noInteract = buildSessionTools({
       browserToolDefinitions: browserTools,
-      toolPermissions: { interact: true, read: true, debugger: true },
+      toolPermissions: { interact: false, read: true },
     });
-    runner.assertTrue(on.map((t) => t.name).includes('cdp'), 'cdp listed when debugger true');
+    runner.assertFalse(noInteract.map((t) => t.name).includes('cdp'), 'cdp follows the interact permission');
   });
 
   runner.test('session-tool cache key changes when opt-in permissions flip', () => {
@@ -4654,7 +4581,6 @@ async function testDomInteractExports(runner: TestRunner) {
   await runner.asyncTest('dom-interact exports shared bridge helpers', async () => {
     const mod = await import('../../content/dom-interact.js');
     runner.assertTrue(typeof mod.waitForNewDialog === 'function', 'waitForNewDialog must exist');
-    runner.assertTrue(typeof mod.waitForDialog === 'function', 'waitForDialog must exist');
     runner.assertTrue(typeof mod.performHover === 'function', 'performHover must exist');
     runner.assertTrue(typeof mod.performMouseAction === 'function', 'performMouseAction must exist');
     runner.assertTrue(typeof mod.findElementsByQuery === 'function', 'findElementsByQuery must exist');
@@ -4665,7 +4591,6 @@ async function testDomInteractExports(runner: TestRunner) {
     runner.assertTrue(typeof mod.approxJsonBytes === 'function', 'approxJsonBytes must exist');
     runner.assertTrue(mod.approxJsonBytes({ a: 'hi' }) > 0, 'approxJsonBytes returns positive size');
     runner.assertTrue(typeof mod.resolveProfileStatLink === 'function', 'resolveProfileStatLink must exist');
-    runner.assertTrue(typeof mod.findClickableByText === 'function', 'findClickableByText must exist');
   });
 
   await runner.asyncTest('findElement scope helpers and scan caps', async () => {
@@ -4698,7 +4623,6 @@ async function testDomInteractExports(runner: TestRunner) {
     // Dynamic import of pure helpers (no document) — only check the function exists in the module shape.
     const mod = await import('../../content/dom-interact.js');
     runner.assertTrue(typeof mod.waitForNewDialog === 'function', 'waitForNewDialog must exist');
-    runner.assertTrue(typeof mod.waitForDialog === 'function', 'waitForDialog must exist');
   });
 
   await runner.asyncTest('computeScrollTarget clamps to element bounds in every direction', async () => {

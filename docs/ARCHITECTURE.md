@@ -44,7 +44,7 @@ elemento de lugar é seguro, renomear o ID não.
 
 ### Estilo e tema
 
-`panel.css` importa nove arquivos em ordem: `@font-face` primeiro, tokens depois,
+`panel.css` importa dez arquivos em ordem: `@font-face` primeiro, tokens depois,
 movimento por último. Cada token de cor é um `light-dark(claro, escuro)`, então
 trocar de tema é trocar `color-scheme` no `:root` — não existe folha de tema
 duplicada. O tema é persistido em `localStorage` (leitura síncrona, aplicada
@@ -72,7 +72,7 @@ para escuro).
      um `chrome.storage.local.get` no caminho crítico.
 4. When the model requests a tool, the background validates the tool name, arguments, tab
    target, and permission gate.
-5. Canonical DOM operations run bridge-first in all-frame content scripts. Background routes each mutation to one explicit `frameId`; opt-in CDP is used only for native pointer semantics when debugger permission is enabled.
+5. Canonical DOM operations run bridge-first in all-frame content scripts. Background routes each mutation to one explicit `frameId`; CDP is always available and is used for native pointer semantics and the `cdp` tool.
 6. Effects pass through the per-run action journal (`prepared` → `in_flight` → `committed`). An interrupted `in_flight` effect becomes ambiguous and is never replayed automatically.
 7. The result and verification evidence are sent back to the model and mirrored to the sidepanel activity timeline.
 8. One versioned context commit closes the terminal turn.
@@ -95,7 +95,7 @@ para escuro).
 - DOM actions use canonical content bridges and explicit frame routing. Read-only probes may discover frames; mutations never broadcast.
 - Stable handles bind snapshot, tab, frame, selector, fingerprint, and DOM revision. Stale handles fail closed.
 - Shadow DOM access uses the custom `>>>` selector chain for open shadow roots.
-- Expected postconditions can verify effects. Synthetic bridge events are not described as trusted native input; CDP is opt-in.
+- Expected postconditions can verify effects. Synthetic bridge events are not described as trusted native input; CDP (always available) provides trusted input when requested.
 - Dynamic pages use waits and structured discovery through `findElement` and `getContent`.
 
 ## Storage Compatibility

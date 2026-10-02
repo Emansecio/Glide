@@ -4,9 +4,9 @@ export const LEGACY_CHAT_SESSIONS_KEY = 'chatSessions';
 export const CHAT_SESSIONS_INDEX_KEY = 'chatSessionsIndex';
 export const CHAT_SESSION_KEY_PREFIX = 'chatSession:';
 
-export const HISTORY_SCHEMA_VERSION = 1;
-export const HISTORY_MAX_SESSIONS = 50;
-export const HISTORY_STORAGE_SHRINK_RATIO = 0.7;
+const HISTORY_SCHEMA_VERSION = 1;
+const HISTORY_MAX_SESSIONS = 50;
+const HISTORY_STORAGE_SHRINK_RATIO = 0.7;
 
 export interface ChatSessionIndexEntry {
   id: string;
@@ -33,7 +33,7 @@ export function chatSessionStorageKey(sessionId: string): string {
   return `${CHAT_SESSION_KEY_PREFIX}${sessionId}`;
 }
 
-export function measureHistoryStorageBytes(value: unknown, textEncoder: TextEncoder): number {
+function measureHistoryStorageBytes(value: unknown, textEncoder: TextEncoder): number {
   try {
     return textEncoder.encode(JSON.stringify(value)).length;
   } catch {

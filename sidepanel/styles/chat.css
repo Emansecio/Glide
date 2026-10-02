@@ -469,6 +469,25 @@
   display: none;
 }
 
+/* Abrir e fechar o bloco desliza em vez de saltar. `interpolate-size` permite
+   animar até `auto`; navegador sem suporte ignora as duas regras e abre seco. */
+@media (prefers-reduced-motion: no-preference) {
+  .execution-details {
+    /* biome-ignore lint/correctness/noUnknownProperty: Chrome 129+, ainda fora da lista do Biome */
+    interpolate-size: allow-keywords;
+  }
+
+  .execution-details::details-content {
+    block-size: 0;
+    overflow: clip;
+    transition: block-size var(--dur-4) var(--ease-drawer), content-visibility var(--dur-4) allow-discrete;
+  }
+
+  .execution-details[open]::details-content {
+    block-size: auto;
+  }
+}
+
 .thinking-block .chevron,
 .execution-details-chevron {
   flex-shrink: 0;
@@ -485,6 +504,10 @@
 }
 
 .execution-details-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-weight: 500;
   color: var(--muted);
 }
@@ -502,6 +525,7 @@
 }
 
 .execution-details-meta {
+  flex-shrink: 0;
   margin-left: auto;
   font-family: var(--font-mono);
   font-size: var(--text-mono);
@@ -594,6 +618,12 @@
   white-space: pre-wrap;
 }
 
+/* Blocos já renderizados durante o stream: markdown normal, sem pre-wrap. */
+.message.streaming .stream-md-committed,
+.message.streaming .stream-md-live {
+  white-space: normal;
+}
+
 /* Cursor no fim do texto que chega: o bloco pisca só enquanto o stream corre. */
 @media (prefers-reduced-motion: no-preference) {
   .message.streaming .stream-main-text:not(:empty)::after {
@@ -613,6 +643,12 @@
   display: inline-flex;
   gap: 5px;
   padding: var(--space-3) 0;
+}
+
+/* Os três pontos só valem enquanto não há mais nada para mostrar: assim que o
+   bloco de execução ou o texto aparecem, eles é que dizem que algo acontece. */
+.streaming-content:has(> .execution-details:not(.hidden), > .stream-main-text:not(:empty)) > .typing-indicator {
+  display: none;
 }
 
 .typing-indicator span {
@@ -666,55 +702,4 @@
   word-break: break-word;
   max-height: 200px;
   overflow-y: auto;
-}
-
-/* --- Plano dentro do stream ----------------------------------------------- */
-.plan-block {
-  margin-bottom: var(--space-4);
-  padding: var(--space-4) 0 var(--space-5);
-  border-bottom: var(--hairline);
-}
-
-.plan-header {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-4);
-  margin-bottom: var(--space-3);
-}
-
-.plan-title {
-  font-size: var(--text-xs);
-  font-weight: 600;
-  color: var(--muted-dim);
-}
-
-.plan-meta {
-  font-family: var(--font-mono);
-  font-size: var(--text-mono);
-  color: var(--muted-dim);
-}
-
-.plan-steps {
-  margin: 0;
-  padding-left: 1.15em;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  font-size: var(--text-sm);
-  color: var(--muted);
-}
-
-.plan-steps li::marker {
-  color: var(--muted-dim);
-}
-
-.plan-steps li.done {
-  color: var(--muted-dim);
-  text-decoration: line-through;
-  text-decoration-color: var(--border-strong);
-}
-
-.plan-steps li.running {
-  color: var(--foreground);
-  font-weight: 500;
 }

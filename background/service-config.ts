@@ -41,7 +41,7 @@ export type ExecutionEvent = {
   terminalReason?: 'completed' | 'failed' | 'ambiguous_action';
 };
 
-export const DEFAULT_REQUEST_TIMEOUT_MS = 30000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 30000;
 export const MIN_REQUEST_TIMEOUT_MS = 1000;
 export const MAX_REQUEST_TIMEOUT_MS = 90000;
 /**
@@ -59,7 +59,6 @@ export const MIN_CONTEXT_LIMIT = 16000;
 export const MAX_CONTEXT_LIMIT = 1000000;
 export const EXECUTION_EVENTS_KEY = 'executionEvents';
 export const MAX_EXECUTION_EVENTS = 200;
-export const EXECUTION_PREVIEW_LIMIT = 500;
 export const EXECUTION_TEXT_LIMIT = 500;
 /** Tools that capture page images and share screenshot-store / vision delivery. */
 export const SCREENSHOT_TOOLS = new Set(['screenshot', 'annotatedScreenshot', 'elementScreenshot']);
@@ -170,6 +169,8 @@ export function shouldInvalidateDomCache(toolName: string, args?: Record<string,
 
 /** Cap de saída da sumarização de compaction (reserveTokens é orçamento de INPUT). */
 export const COMPACTION_MAX_OUTPUT_TOKENS = 4096;
+/** Piso do timeout total da sumarização (generateText não-streaming). */
+export const COMPACTION_MIN_TIMEOUT_MS = 120000;
 // Tab-management tools operate on the session tab set (BrowserTools enforces
 // session membership for close/focus/switch), so they are NOT pinned to a single
 // tab. This lets the agent open new tabs from the current one and act on them.
@@ -229,7 +230,7 @@ export const LOCKED_TAB_ALLOWED_BROWSER_TOOLS = new Set([
   'findInPage',
   'extractTable',
   'harvestScroll',
-  // CDP only present in schema when toolPermissions.debugger === true
+  // CDP is always in the schema (gated only by the general interact permission).
   'cdp',
 ]);
 
@@ -287,7 +288,8 @@ export const isNoOutputGeneratedError = (error: unknown) => {
 export const isDeliberateRunStop = (error: unknown) => {
   const message = String((error as { message?: string })?.message || error || '');
   if (!message) return false;
-  return message.startsWith('Run aborted.') || message.startsWith('Run superseded:');
+  // Sem o ponto: "Run aborted before context commit." também é parada deliberada.
+  return message.startsWith('Run aborted') || message.startsWith('Run superseded:');
 };
 
 export function humanizeProviderError(error: unknown, provider: string): string {
@@ -331,7 +333,7 @@ export function humanizeProviderError(error: unknown, provider: string): string 
   }
 
   if (
-    lower.includes('401') ||
+    /\b401\b/.test(lower) ||
     lower.includes('unauthorized') ||
     (lower.includes('invalid') && lower.includes('key')) ||
     // Anthropic devolve "Invalid bearer token" (sem "401"/"key") quando o token
@@ -352,7 +354,7 @@ export function humanizeProviderError(error: unknown, provider: string): string 
   }
 
   if (
-    lower.includes('403') ||
+    /\b403\b/.test(lower) ||
     lower.includes('forbidden') ||
     lower.includes('accessdenied') ||
     lower.includes('unpurchased')
@@ -363,14 +365,14 @@ export function humanizeProviderError(error: unknown, provider: string): string 
     return `Acesso negado (403) no ${prov}. A chave pode não ter permissão, ou a organização bloqueia o acesso.`;
   }
 
-  if (lower.includes('404') || lower.includes('not found') || lower.includes('model_not_found')) {
+  if (/\b404\b/.test(lower) || lower.includes('not found') || lower.includes('model_not_found')) {
     return `O modelo configurado não existe neste provedor (${prov}). Escolha outro modelo em Configurações.`;
   }
 
   // Limite de uso: o erro mais comum no Claude Code OAuth e no Codex. Sem este ramo
   // o usuário recebia o texto cru do provedor e nenhuma orientação.
   if (
-    lower.includes('429') ||
+    /\b429\b/.test(lower) ||
     lower.includes('rate limit') ||
     lower.includes('rate_limit') ||
     lower.includes('too many requests') ||
@@ -393,10 +395,10 @@ export function humanizeProviderError(error: unknown, provider: string): string 
   // Sobrecarga temporária / instabilidade do provedor — não é culpa da configuração.
   if (
     lower.includes('overloaded') ||
-    lower.includes('529') ||
-    lower.includes('503') ||
-    lower.includes('502') ||
-    lower.includes('504') ||
+    /\b529\b/.test(lower) ||
+    /\b503\b/.test(lower) ||
+    /\b502\b/.test(lower) ||
+    /\b504\b/.test(lower) ||
     lower.includes('service unavailable') ||
     lower.includes('bad gateway') ||
     lower.includes('gateway timeout')
@@ -404,13 +406,16 @@ export function humanizeProviderError(error: unknown, provider: string): string 
     return `O ${prov} está sobrecarregado ou instável agora. Já repetimos automaticamente; tente novamente em instantes.`;
   }
 
-  if (lower.includes('500') || lower.includes('internal server error')) {
+  if (/\b500\b/.test(lower) || lower.includes('internal server error')) {
     return `O ${prov} respondeu com erro interno. Tente novamente; se persistir, troque de modelo.`;
   }
 
   if (
-    lower.includes('context') &&
-    (lower.includes('too long') || lower.includes('exceed') || lower.includes('limit'))
+    (lower.includes('context') &&
+      (lower.includes('too long') || lower.includes('exceed') || lower.includes('limit'))) ||
+    lower.includes('prompt is too long') ||
+    lower.includes('maximum context length') ||
+    lower.includes('context_length_exceeded')
   ) {
     return `A conversa excedeu o limite de contexto do modelo (${prov}). Inicie uma nova conversa ou reduza os anexos.`;
   }

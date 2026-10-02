@@ -107,6 +107,29 @@ describe('stable element handles', () => {
     now.mockRestore();
   });
 
+  it('disconnects the DOM revision observer once every snapshot expires', () => {
+    vi.useFakeTimers();
+    const observe = vi.spyOn(MutationObserver.prototype, 'observe');
+    const disconnect = vi.spyOn(MutationObserver.prototype, 'disconnect');
+    try {
+      const first = beginElementSnapshot();
+      vi.advanceTimersByTime(30_000);
+      expect(disconnect).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(40_000);
+      expect(disconnect).toHaveBeenCalledTimes(1);
+
+      const observedBefore = observe.mock.calls.length;
+      const second = beginElementSnapshot();
+      expect(observe.mock.calls.length).toBe(observedBefore + 1);
+      expect(second.revision).toBeGreaterThan(first.revision);
+    } finally {
+      observe.mockRestore();
+      disconnect.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it('never selector-falls back when supplied handle cannot be verified', () => {
     document.body.innerHTML = '<button id="target">Replacement</button>';
 

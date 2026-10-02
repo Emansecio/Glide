@@ -28,10 +28,12 @@ export type HttpUrlValidation = { ok: true; url: string } | { ok: false; error: 
 // Blocks navigation to loopback, link-local and RFC1918 private hosts so a
 // model cannot drive the browser (carrying the user's ambient network position
 // and cookies) at internal admin panels or the cloud metadata endpoint.
-export const isPrivateOrLoopbackHost = (hostname: string): boolean => {
+const isPrivateOrLoopbackHost = (hostname: string): boolean => {
   const host = String(hostname || '')
     .toLowerCase()
-    .replace(/^\[|\]$/g, '');
+    .replace(/^\[|\]$/g, '')
+    // FQDN com ponto final (`localhost.`, `x.local.`) resolve igual ao nome sem ponto.
+    .replace(/\.+$/, '');
   if (!host) return true;
   if (host === 'localhost' || host.endsWith('.localhost')) return true;
   // Nomes de rede local: `.local` (mDNS/Bonjour) resolve para impressoras, NAS e
@@ -42,8 +44,12 @@ export const isPrivateOrLoopbackHost = (hostname: string): boolean => {
   if (host === 'local' || host === 'internal') return true;
   // IPv6 loopback, unspecified, link-local (fe80::/10) and unique-local (fc00::/7).
   if (host === '::1' || host === '::') return true;
-  if (host.startsWith('fe8') || host.startsWith('fe9') || host.startsWith('fea') || host.startsWith('feb')) return true;
-  if (host.startsWith('fc') || host.startsWith('fd')) return true;
+  // Prefixos só valem para literais IPv6; sem `:` bloqueariam domínios como febraban.org.br.
+  if (host.includes(':')) {
+    if (host.startsWith('fe8') || host.startsWith('fe9') || host.startsWith('fea') || host.startsWith('feb'))
+      return true;
+    if (host.startsWith('fc') || host.startsWith('fd')) return true;
+  }
   // IPv4-mapped IPv6. `new URL()` canoniza `::ffff:169.254.169.254` para a forma
   // HEX `::ffff:a9fe:a9fe`, então testar só o sufixo decimal (host.slice(7))
   // deixava passar loopback/metadata/RFC1918 disfarçados. Reconstruímos o IPv4 a

@@ -1,4 +1,4 @@
-export type DomCacheTool = 'getContent' | 'findElement';
+type DomCacheTool = 'getContent' | 'findElement';
 
 export type DomCacheLookup = {
   tabId: number;

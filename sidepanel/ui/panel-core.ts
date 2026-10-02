@@ -8,6 +8,7 @@ import { shouldAcceptContextCompaction, shouldAppendAssistantFinalForCommit } fr
 import { bindSidebarNavigation } from './panel-navigation.js';
 import { connectPanelPort } from './panel-port.js';
 import { getTerminalStatusPresentation } from './panel-status.js';
+import { resolvePanelTabId } from './panel-tab-id.js';
 import { SidePanelUI } from './panel-ui.js';
 import { enqueueStreamMessage } from './stream-queue.js';
 
@@ -59,6 +60,7 @@ SidePanelUI.prototype.init = async function init() {
   this.bindHistoryStorageSync?.();
   if (!this._pagehideBound) {
     window.addEventListener('pagehide', () => {
+      this.flushPendingHistoryDeletes?.();
       void this.flushPendingHistoryPersist?.();
     });
     this._pagehideBound = true;
@@ -84,10 +86,38 @@ SidePanelUI.prototype.init = async function init() {
   void this.fetchAvailableModels?.();
 
   await this.loadHistoryList();
-  this.updateStatus('Pronto', 'success');
+  await this.adoptActiveRunIfAny();
+  if (!this.activeRunId) this.updateStatus('Pronto', 'success');
   this.updateModelDisplay();
   this.updateChatEmptyState?.();
   if (_debug) console.log('[Glide] init() complete');
+};
+
+/**
+ * Painel fechado e reaberto no meio de um run: o sessionId novo descartava todos os eventos e o
+ * composer ficava ocioso, com o agente ainda agindo na página e sem botão Parar. Pergunta ao
+ * worker e adota sessão/run ativos (histórico do worker já é o canônico: não reenviamos o nosso).
+ */
+SidePanelUI.prototype.adoptActiveRunIfAny = async function adoptActiveRunIfAny() {
+  try {
+    const status = await chrome.runtime.sendMessage({ type: 'run_status_query' });
+    if (!status?.activeRunId || typeof status.sessionId !== 'string' || !status.sessionId || this.activeRunId) return;
+    // Run de outra janela/aba: não adota (ficaria "ocupado" com eventos de um chat que não é este).
+    if (typeof status.panelTabId === 'number' && status.panelTabId !== (await resolvePanelTabId())) return;
+    this.sessionId = status.sessionId;
+    this.acceptedSessionIds = new Set([status.sessionId]);
+    this.noteAcceptedSessionId?.(status.sessionId);
+    this.swContextSyncedSessions.add(status.sessionId);
+    if (Number.isInteger(status.contextRevision) && status.contextRevision >= 0) {
+      this.contextRevision = status.contextRevision;
+    }
+    this.activeRunId = String(status.activeRunId);
+    this.setComposerBusy(true);
+    this.startRunLiveness?.();
+    this.updateStatus('Execução em andamento…', 'warning');
+  } catch {
+    // Worker indisponível: segue como painel ocioso.
+  }
 };
 
 SidePanelUI.prototype.setupEventListeners = function setupEventListeners() {
@@ -106,6 +136,7 @@ SidePanelUI.prototype.setupEventListeners = function setupEventListeners() {
     void this.startNewSession({ privateSession: true });
   });
   this.elements.clearHistoryBtn?.addEventListener('click', () => this.clearAllHistory());
+  this.elements.historySearch?.addEventListener('input', () => this.filterHistoryList());
 
   bindSettings(this);
   bindModelPicker(this);
@@ -123,11 +154,15 @@ SidePanelUI.prototype.setupEventListeners = function setupEventListeners() {
   // Enter to send (Shift+Enter for newline); Esc interrompe a execução ativa.
   this.elements.userInput?.addEventListener('keydown', (event: KeyboardEvent) => {
     if (event.key === 'Enter' && !event.shiftKey) {
+      // Enter que confirma uma composição IME (CJK) não é "enviar".
+      if (event.isComposing || event.keyCode === 229) return;
       event.preventDefault();
       this.sendMessage();
       return;
     }
     if (event.key === 'Escape' && this.elements.composer?.classList.contains('running')) {
+      // Esc que cancela uma composição IME não é "parar".
+      if (event.isComposing) return;
       event.preventDefault();
       void this.requestStopRun();
     }
@@ -163,6 +198,17 @@ SidePanelUI.prototype.setupEventListeners = function setupEventListeners() {
   });
   this.elements.userInput?.addEventListener('paste', (event: ClipboardEvent) => {
     void this.handleComposerPaste?.(event);
+  });
+  // Soltar um arquivo fora de um alvo tratado navegaria o painel para o arquivo e destruiria o
+  // estado da conversa. Trata como anexo.
+  const hasFiles = (event: DragEvent) => Array.from(event.dataTransfer?.types || []).includes('Files');
+  window.addEventListener('dragover', (event) => {
+    if (hasFiles(event)) event.preventDefault();
+  });
+  window.addEventListener('drop', (event) => {
+    if (!hasFiles(event)) return;
+    event.preventDefault();
+    void this.ingestFiles?.(Array.from(event.dataTransfer?.files || []) as File[]);
   });
   // Also accept paste when focus is on the composer tray (not only textarea)
   this.elements.composer?.addEventListener('paste', (event: ClipboardEvent) => {
@@ -277,8 +323,11 @@ SidePanelUI.prototype.setupResizeObserver = function setupResizeObserver() {
   this.destroyResizeObserver();
   let lastObservedWidth = -1;
   this.chatResizeObserver = new ResizeObserver((entries) => {
+    // A área visível mudou de tamanho (gaveta do plano, banners, composer): cola
+    // no fim a cada frame. O acompanhamento suave ficaria para trás de uma
+    // transição que já anima a própria altura.
     if (this.shouldAutoScroll() && this.isNearBottom) {
-      this.scrollToBottom();
+      this.scrollToBottom({ instant: true });
     }
     // O conteúdo do stream cresce em ALTURA a cada flush; a densidade do
     // composer só depende da LARGURA. Recalcular activity state (que lê
@@ -301,73 +350,6 @@ SidePanelUI.prototype.destroyResizeObserver = function destroyResizeObserver() {
     this.chatResizeObserver.disconnect();
     this.chatResizeObserver = null;
   }
-};
-
-SidePanelUI.prototype.destroy = function destroy() {
-  this._panelPortDisconnect?.();
-  this._panelPortDisconnect = null;
-  this.cancelDeferredConversationRender?.();
-  // Clean up runtime message listener
-  if (this._runtimeMessageHandler) {
-    chrome.runtime.onMessage.removeListener(this._runtimeMessageHandler);
-    this._runtimeMessageHandler = null;
-  }
-  // Clean up document-level event listeners
-  if (this._documentClickHandler) {
-    document.removeEventListener('click', this._documentClickHandler);
-    this._documentClickHandler = null;
-  }
-  if (this._documentKeydownHandler) {
-    document.removeEventListener('keydown', this._documentKeydownHandler);
-    this._documentKeydownHandler = null;
-  }
-  if (this._visibilityChangeBound && this._visibilityChangeHandler) {
-    document.removeEventListener('visibilitychange', this._visibilityChangeHandler);
-    this._visibilityChangeHandler = null;
-    this._visibilityChangeBound = false;
-  }
-  if (this._historyStorageChangeListener) {
-    chrome.storage.onChanged.removeListener(this._historyStorageChangeListener);
-    this._historyStorageChangeListener = undefined;
-  }
-  if (this._streamDrainScheduled) {
-    this._streamDrainScheduled = false;
-    this._pendingStreamMessages = [];
-  }
-  this.modelsFetchController?.abort();
-  this.modelsFetchController = null;
-  this.resolveRunStopAckWaiter?.();
-  // Clean up ResizeObserver
-  this.destroyResizeObserver();
-  this.stopRunLiveness?.();
-  // Clear any pending timers
-  if (this.thinkingTimerId) {
-    clearInterval(this.thinkingTimerId);
-    this.thinkingTimerId = null;
-  }
-  this.stopToolDurationTimer?.();
-  if (this._toolLogScrollRafId) {
-    cancelAnimationFrame(this._toolLogScrollRafId);
-    this._toolLogScrollRafId = 0;
-  }
-  if (this.streamTextRenderTimerId) {
-    clearTimeout(this.streamTextRenderTimerId);
-    this.streamTextRenderTimerId = null;
-  }
-  if (this.streamReasoningRenderTimerId) {
-    clearTimeout(this.streamReasoningRenderTimerId);
-    this.streamReasoningRenderTimerId = null;
-  }
-  if (this.contextUsageDebounceTimerId) {
-    clearTimeout(this.contextUsageDebounceTimerId);
-    this.contextUsageDebounceTimerId = null;
-  }
-  if (this.historyPersistDebounceTimerId) {
-    clearTimeout(this.historyPersistDebounceTimerId);
-    this.historyPersistDebounceTimerId = null;
-  }
-  void this.flushPendingHistoryPersist?.();
-  this.cancelPendingMarkdownRender?.();
 };
 
 SidePanelUI.prototype.finishActiveRun = function finishActiveRun() {

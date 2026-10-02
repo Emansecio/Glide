@@ -87,7 +87,10 @@ export const bindModelPicker = (ui: ModelPickerBindContext) => {
     }
   };
   ui._documentKeydownHandler = (event: KeyboardEvent) => {
-    if (event.key !== 'Escape') return;
+    if (event.key !== 'Escape' || event.defaultPrevented) return;
+    // Esc dentro de modal/campo de configurações fecha o próprio elemento, não para o run.
+    const target = event.target instanceof Element ? event.target : null;
+    if (target?.closest('input, select, textarea, dialog, [role="dialog"], [aria-modal="true"]')) return;
     // Esc primeiro fecha o menu aberto; se não havia menu e há execução em
     // andamento, Esc é o atalho de PARAR (mesma ação do botão no composer).
     const menuWasOpen = !ui.elements.modelSelectMenu?.classList.contains('hidden');

@@ -36,7 +36,7 @@ export function collectOutstandingToolNames(messages: ToolPackMessage[]): string
   return [...new Set(pending.values())].sort();
 }
 
-export function collectRecentToolNames(messages: ToolPackMessage[], windowSize = 12): string[] {
+function collectRecentToolNames(messages: ToolPackMessage[], windowSize = 12): string[] {
   const recent = messages
     .slice(-windowSize)
     .flatMap((message) =>

@@ -7,13 +7,7 @@ export type TaskIntent = {
 export const INJECTED_TAB_CONTEXT_START = '<!-- glide:injected-tab-context:v1 -->';
 export const INJECTED_TAB_CONTEXT_END = '<!-- /glide:injected-tab-context -->';
 /** @deprecated Legacy marker kept for backward-compatible stripping only. */
-export const LEGACY_SELECTED_TABS_CONTEXT_MARKER = '[Contexto das abas selecionadas:]';
-
-export function wrapInjectedTabContext(body: string): string {
-  const payload = String(body || '').trim();
-  if (!payload) return '';
-  return `${INJECTED_TAB_CONTEXT_START}\n${payload}\n${INJECTED_TAB_CONTEXT_END}`;
-}
+const LEGACY_SELECTED_TABS_CONTEXT_MARKER = '[Contexto das abas selecionadas:]';
 
 export function stripInjectedTabContext(text: string): string {
   if (!text || typeof text !== 'string') return text;

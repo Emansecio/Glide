@@ -1,6 +1,6 @@
 /**
- * Opt-in Chrome DevTools Protocol (chrome.debugger).
- * Default off via toolPermissions.debugger — attach paints the yellow infobar.
+ * Chrome DevTools Protocol (chrome.debugger), always available to the agent.
+ * Attaching paints Chrome's yellow infobar; sessions are detached when the run ends.
  */
 
 import { requireHttpUrl } from './validation.js';
@@ -31,7 +31,7 @@ const hookDetach = () => {
   });
 };
 
-export async function cdpAttach(tabId: number): Promise<Record<string, unknown>> {
+async function cdpAttach(tabId: number): Promise<Record<string, unknown>> {
   hookDetach();
   if (attachedTabs.has(tabId)) {
     return {
@@ -84,7 +84,7 @@ export async function cdpAttach(tabId: number): Promise<Record<string, unknown>>
     return {
       success: false,
       error: message,
-      hint: 'Enable toolPermissions.debugger and reload the extension. Cannot attach to chrome:// or Web Store pages.',
+      hint: 'Cannot attach to chrome://, extension or Web Store pages. Reload the extension if the debugger API is unavailable.',
     };
   }
 }
@@ -108,6 +108,35 @@ export async function cdpDetach(tabId: number): Promise<Record<string, unknown>>
   }
 }
 
+/**
+ * Após reinício do service worker o Set em memória some, mas o Chrome mantém o debugger anexado.
+ * `chrome.debugger.detach` só encerra a sessão desta extensão (falha inofensivamente se não houver).
+ */
+export async function cdpReleaseOrphanedSessions(): Promise<number> {
+  try {
+    if (typeof chrome === 'undefined' || !chrome.debugger?.getTargets) return 0;
+    const targets = await promisify<chrome.debugger.TargetInfo[]>((cb) =>
+      chrome.debugger.getTargets(cb as (result: chrome.debugger.TargetInfo[]) => void),
+    );
+    let released = 0;
+    await Promise.all(
+      (targets || [])
+        .filter((target) => target.attached && typeof target.tabId === 'number' && !attachedTabs.has(target.tabId))
+        .map(async (target) => {
+          try {
+            await promisify<void>((cb) => chrome.debugger.detach({ tabId: target.tabId as number }, cb as () => void));
+            released += 1;
+          } catch {
+            // Sessão de outro cliente (DevTools): não é nossa.
+          }
+        }),
+    );
+    return released;
+  } catch {
+    return 0;
+  }
+}
+
 /** Detach only tabs Glide attached (never third-party / DevTools sessions). */
 export async function cdpDetachAll(): Promise<{ detached: number }> {
   const ids = new Set<number>(attachedTabs);
@@ -122,11 +151,13 @@ export async function cdpDetachAll(): Promise<{ detached: number }> {
   return { detached };
 }
 
-/** Domains the agent may use via cdp send (opt-in debugger). Blocks arbitrary CDP surface. */
+const CDP_COMMAND_TIMEOUT_MS = 45_000;
+
+/** Domains the agent may use via cdp send. Blocks arbitrary CDP surface. */
 const CDP_ALLOWED_DOMAIN =
   /^(Network|Runtime|Page|Input|DOM|CSS|Overlay|Fetch|Emulation|Log|Performance|Security|Target|Browser)\./;
 
-export async function cdpSend(
+async function cdpSend(
   tabId: number,
   method: string,
   params?: Record<string, unknown>,
@@ -157,17 +188,39 @@ export async function cdpSend(
     if (!attached.success) return attached;
   }
   try {
-    const result = await promisify<unknown>((cb) =>
-      chrome.debugger.sendCommand({ tabId }, trimmed, params || {}, cb as (result?: unknown) => void),
-    );
+    // sendCommand não tem timeout próprio: com alert()/beforeunload aberto a promise nunca resolve
+    // e só o watchdog global do run (~180s) liberava a tool.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const result = await Promise.race([
+      promisify<unknown>((cb) =>
+        chrome.debugger.sendCommand({ tabId }, trimmed, params || {}, cb as (result?: unknown) => void),
+      ),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new Error(
+                `CDP ${trimmed} timed out after ${CDP_COMMAND_TIMEOUT_MS / 1000}s (a JS dialog or beforeunload prompt may be blocking the page).`,
+              ),
+            ),
+          CDP_COMMAND_TIMEOUT_MS,
+        );
+      }),
+    ]).finally(() => {
+      if (timer) clearTimeout(timer);
+    });
     return { success: true, tabId, method: trimmed, result: result ?? null };
   } catch (error) {
+    const message = (error as Error)?.message || String(error);
+    const timedOut = /timed out after/.test(message);
     return {
       success: false,
       tabId,
       method: trimmed,
-      error: (error as Error)?.message || String(error),
+      error: message,
       hint: 'Check method name/params. Enable domains first (e.g. Network.enable).',
+      // Timeout não prova que o comando não rodou (pode concluir depois): trata como incerto.
+      ...(timedOut ? { timedOut: true, dispatched: true, outcomeCertainty: 'unknown' as const } : {}),
     };
   }
 }

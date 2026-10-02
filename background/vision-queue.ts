@@ -1,13 +1,13 @@
 import { type SDKModelSettings, describeImageWithModel, migrateStoredProvider } from '../ai/sdk-client.js';
 import { readScreenshotDataUrl } from './screenshot-store.js';
 
-export type VisionDescribeSettings = SDKModelSettings;
+type VisionDescribeSettings = SDKModelSettings;
 
-export type VisionQueueResult = {
+type VisionQueueResult = {
   description: string;
 };
 
-export type VisionQueueError = {
+type VisionQueueError = {
   message: string;
 };
 

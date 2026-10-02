@@ -1,13 +1,13 @@
 export type ToolPresentation = { icon: string; running: string; done: string };
 
-export const PRESS_KEY_MODIFIER_LABELS: Record<string, string> = {
+const PRESS_KEY_MODIFIER_LABELS: Record<string, string> = {
   Control: 'Ctrl',
   Alt: 'Alt',
   Shift: 'Shift',
   Meta: 'Meta',
 };
 
-export const WAIT_CONDITION_LABELS: Record<string, string> = {
+const WAIT_CONDITION_LABELS: Record<string, string> = {
   time: 'tempo',
   selector: 'seletor visível',
   visible: 'elemento visível',
@@ -34,7 +34,7 @@ export const formatWaitPreview = (condition: string, selector?: string, idleMs?:
   return label;
 };
 
-export const TOOL_ICON_PATHS: Record<string, string> = {
+const TOOL_ICON_PATHS: Record<string, string> = {
   compass: '<circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/>',
   plusSquare:
     '<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/>',
@@ -59,7 +59,7 @@ export const TOOL_ICON_PATHS: Record<string, string> = {
     '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>',
 };
 
-export const TOOL_PRESENTATION: Record<string, ToolPresentation> = {
+const TOOL_PRESENTATION: Record<string, ToolPresentation> = {
   navigate: { icon: 'compass', running: 'Navegando', done: 'Navegou' },
   openTab: { icon: 'plusSquare', running: 'Abrindo aba', done: 'Abriu aba' },
   click: { icon: 'pointer', running: 'Clicando', done: 'Clicou' },

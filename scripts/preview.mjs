@@ -126,6 +126,47 @@ const DEMO_CONVERSATION = `
           <span class="execution-details-meta">1.4s</span>
         </summary>
         <div class="stream-events">
+          <div class="tool-step tool-tree-item running">
+            <span class="tool-step-icon">${toolIcon('<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>')}</span>
+            <div class="tool-step-body">
+              <span class="tool-step-label">Filtrando por status</span>
+              <span class="tool-step-target">status = "pendente"</span>
+            </div>
+            <span class="tool-tree-meta tool-step-meta">2.5s</span>
+          </div>
+        </div>
+      </details>
+      <p><strong>23 pedidos</strong> estão pendentes de envio hoje. Três deles passaram do prazo:</p>
+      <ul>
+        <li><code>#4821</code> — atrasado há 2 dias</li>
+        <li><code>#4833</code> — atrasado há 1 dia</li>
+        <li><code>#4840</code> — vence hoje às 18h</li>
+      </ul>
+      <p>Quer que eu <a href="#">abra o primeiro</a> para revisar o endereço?</p>
+    </div>
+  </div>
+</div>
+
+<div class="chat-turn">
+  <div class="message user">
+    <div class="message-content">Sim, e me manda um resumo em markdown depois.</div>
+  </div>
+</div>
+
+<div class="chat-turn">
+  <div class="message assistant streaming">
+    <div class="message-header assistant-header">
+      <span class="assistant-glyph">${GLYPH}</span>
+      <span class="assistant-name">Glide</span>
+    </div>
+    <div class="message-content streaming-content markdown-body">
+      <details class="execution-details working" open>
+        <summary class="execution-details-summary">
+          <svg class="execution-details-chevron" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+          <span class="execution-details-title shimmer">Trabalhando…</span>
+          <span class="execution-details-meta">1.4s</span>
+        </summary>
+        <div class="stream-events">
           <div class="plan-block">
             <div class="plan-header"><span class="plan-title">Plan</span><span class="plan-meta">1/3</span></div>
             <ol class="plan-steps">
@@ -187,20 +228,20 @@ const DEMO_MODEL_MENU = `
 
 const DEMO_PLAN = `
 <li class="plan-checklist-item completed">
-  <button class="plan-checklist-checkbox checked" disabled>
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+  <button class="plan-checklist-checkbox checked" role="checkbox" aria-checked="true" aria-label="Abrir o painel de pedidos">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12" pathLength="1"></polyline></svg>
   </button>
   <div class="plan-checklist-content"><div class="plan-checklist-title">Abrir o painel de pedidos</div></div>
 </li>
 <li class="plan-checklist-item current">
-  <button class="plan-checklist-checkbox" disabled></button>
+  <button class="plan-checklist-checkbox" role="checkbox" aria-checked="false" aria-label="Conferir endereço de entrega"></button>
   <div class="plan-checklist-content">
     <div class="plan-checklist-title">Conferir endereço de entrega</div>
     <div class="plan-checklist-notes">Comparar com o cadastro do cliente</div>
   </div>
 </li>
 <li class="plan-checklist-item">
-  <button class="plan-checklist-checkbox" disabled></button>
+  <button class="plan-checklist-checkbox" role="checkbox" aria-checked="false" aria-label="Escrever o resumo em markdown" disabled></button>
   <div class="plan-checklist-content"><div class="plan-checklist-title">Escrever o resumo em markdown</div></div>
 </li>`;
 
@@ -217,6 +258,9 @@ if (view === 'empty') {
   $('#chatMessages').innerHTML = '';
   $('#attachmentsBar').classList.add('hidden');
   $('#planDrawer').classList.add('hidden');
+  $('#statusText').textContent = 'Pronto';
+  $('#statusMeta').textContent = '';
+  $('#statusDot').classList.remove('active');
 } else {
   $('#chatEmptyState').style.display = 'none';
 }
@@ -234,6 +278,7 @@ if (view === 'settings' || view === 'history') {
 }
 
 if (view === 'menu') $('#modelSelectMenu').classList.remove('hidden');
+if (params.get('plan') === 'collapsed') $('#planDrawer').classList.add('collapsed');
 
 // Interações suficientes para clicar em volta e ver as transições.
 $('#openSidebarBtn')?.addEventListener('click', () => {
@@ -328,7 +373,10 @@ const buildPreview = () => {
       '<div id="modelSelectMenu" class="model-dropdown hidden" role="listbox"></div>',
       `<div id="modelSelectMenu" class="model-dropdown hidden" role="listbox">${DEMO_MODEL_MENU}</div>`,
     )
-    .replace('<div id="planDrawer" class="plan-drawer hidden">', '<div id="planDrawer" class="plan-drawer">')
+    .replace(
+      '<div id="planDrawer" class="plan-drawer hidden">',
+      '<div id="planDrawer" class="plan-drawer run-active" style="--plan-progress: 0.333">',
+    )
     .replace(
       '<ol class="plan-checklist" id="planChecklist"></ol>',
       `<ol class="plan-checklist" id="planChecklist">${DEMO_PLAN}</ol>`,
@@ -336,6 +384,10 @@ const buildPreview = () => {
     .replace(
       '<span class="plan-drawer-count" id="planStepCount">0 etapas</span>',
       '<span class="plan-drawer-count" id="planStepCount">1/3 etapas</span>',
+    )
+    .replace(
+      '<span class="plan-drawer-current" id="planCurrentStep"></span>',
+      '<span class="plan-drawer-current" id="planCurrentStep" title="Conferir endereço de entrega">Conferir endereço de entrega</span>',
     )
     .replace('<span id="modelSelectValue">Selecionar modelo</span>', '<span id="modelSelectValue">Sonnet 5</span>')
     .replace(
@@ -351,20 +403,21 @@ const buildPreview = () => {
       '<span id="statusDot" class="status-dot active" aria-hidden="true"></span>',
     );
 
+  // Mesma marcação de panel-history.ts (loadHistoryList) — mantenha em sincronia.
   const demoHistory = ['Pedidos pendentes de envio', 'Extrair tabela de preços', 'Preencher formulário de cadastro']
     .map(
       (title, index) => `
       <div class="history-item">
-        <div class="history-item-main">
+        <button type="button" class="history-item-main">
           <div class="history-title">${title}</div>
           <div class="history-meta">
-            <span>${index === 0 ? 'agora' : `há ${index * 2}h`}</span>
+            <span>${index === 0 ? 'Agora' : `${index * 2} h atrás`}</span>
             <span class="history-meta-dot">·</span>
-            <span>${6 + index * 4} msgs</span>
+            <span>${6 + index * 4} mensagens</span>
           </div>
-        </div>
-        <button class="history-delete" type="button" aria-label="Excluir">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+        </button>
+        <button class="history-delete" title="Excluir" aria-label="Excluir sessão: ${title}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
         </button>
       </div>`,
     )
@@ -416,7 +469,7 @@ const buildPreview = () => {
   fs.writeFileSync(path.join(outPanel, 'preview-split.html'), split);
 
   console.log('preview → dist/sidepanel/preview.html');
-  console.log('          ?theme=light|dark  ?view=chat|empty|sidebar|settings|menu');
+  console.log('          ?theme=light|dark  ?view=chat|empty|sidebar|settings|history|menu  ?plan=collapsed');
   console.log('split   → dist/sidepanel/preview-split.html');
 };
 

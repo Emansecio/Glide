@@ -35,10 +35,8 @@ export type GlideBridgeResponse = {
 export const isGlideBridgeResponse = (value: unknown): value is GlideBridgeResponse =>
   Boolean(value && typeof value === 'object' && 'success' in (value as Record<string, unknown>));
 
-const RECOVERABLE_BRIDGE_CODES = new Set(['ELEMENT_NOT_FOUND', 'BRIDGE_UNSUPPORTED', 'WAIT_TIMEOUT']);
-
 /** Bridge ops that mutate page state — never fall through to inject after timeout/unavailable. */
-export const MUTATIVE_BRIDGE_OPS = new Set<GlideBridgeOp>([
+const MUTATIVE_BRIDGE_OPS = new Set<GlideBridgeOp>([
   'click',
   'type',
   'pressKey',
@@ -51,9 +49,6 @@ export const MUTATIVE_BRIDGE_OPS = new Set<GlideBridgeOp>([
 ]);
 
 export const isMutativeBridgeOp = (op: GlideBridgeOp): boolean => MUTATIVE_BRIDGE_OPS.has(op);
-
-export const shouldFallbackFromBridge = (response: GlideBridgeResponse): boolean =>
-  response.success === false && typeof response.code === 'string' && RECOVERABLE_BRIDGE_CODES.has(response.code);
 
 export const sendGlideBridge = async (
   tabId: number,

@@ -1,15 +1,7 @@
 import type { SidePanelElements } from './panel-elements.js';
 import { setSidebarOpen } from './panel-navigation-helpers.js';
 import { SidePanelUI } from './panel-ui.js';
-
 // Re-export the pure helpers so existing importers of this module keep working.
-export {
-  setSidebarOpen,
-  showRightPanel,
-  updateNavActive,
-  type RightPanelName,
-  type NavName,
-} from './panel-navigation-helpers.js';
 
 type NavigationHandlers = {
   onOpen: () => void;

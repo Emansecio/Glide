@@ -3,24 +3,12 @@
 
 import { installGlideBridge } from './content/glide-bridge.js';
 
-// Toda a interação DOM real acontece via glide-bridge; aqui só sinalizamos ao
-// background que o content script carregou nesta página.
-const notifyReady = () => {
-  chrome.runtime
-    .sendMessage({
-      type: 'content_script_ready',
-      url: window.location.href,
-    })
-    .catch((err) => {
-      if (err?.message?.includes('Could not establish connection')) return;
-      console.warn('content_script_ready failed:', err);
-    });
-};
-
+// Toda a interação DOM real acontece via glide-bridge. Não notificamos o background no load:
+// a mensagem acordava o service worker em TODO frame de TODA página (all_frames + <all_urls>)
+// e ninguém consumia o aviso.
 // Guard against reinjection — prevents duplicate listeners on content script reloads.
 const GLIDE_INIT_FLAG = '__glide_content_init__';
 if (!(window as unknown as Record<string, boolean>)[GLIDE_INIT_FLAG]) {
   (window as unknown as Record<string, boolean>)[GLIDE_INIT_FLAG] = true;
   installGlideBridge();
-  notifyReady();
 }

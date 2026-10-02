@@ -2,7 +2,7 @@
 // geração de verifier/challenge, captura do redirect observando a URL da aba
 // de login e keep-alive do service worker MV3 durante o login interativo.
 
-export const base64UrlEncode = (bytes: ArrayBuffer | Uint8Array) => {
+const base64UrlEncode = (bytes: ArrayBuffer | Uint8Array) => {
   const array = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   let raw = '';
   for (const byte of array) raw += String.fromCharCode(byte);
@@ -25,7 +25,7 @@ export const sha256Challenge = async (verifier: string) => {
  * (com code/state). Funciona mesmo quando o redirect não carrega (localhost),
  * porque a URL chega em tabs.onUpdated antes da falha de conexão.
  */
-export const waitForRedirectUrl = (
+const waitForRedirectUrl = (
   tabId: number,
   redirectPrefix: string,
   expectedState: string,

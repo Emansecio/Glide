@@ -69,7 +69,7 @@ Glide também oferece:
 - extração de tabelas, busca na página e coleta com scroll infinito;
 - screenshots, downloads, rede, console e métricas de performance;
 - automação entre várias abas sem mover o painel da aba onde você o abriu;
-- permissões separadas por leitura, interação, navegação, abas e screenshots.
+- permissões separadas por categoria: leitura, interação, navegação, abas, screenshots, dados sensíveis, área de transferência, upload de arquivos, scripts e downloads (dados sensíveis, área de transferência, upload, scripts e downloads são opt-in).
 
 ## Escolha onde a IA roda
 
@@ -79,6 +79,8 @@ Use um provedor em nuvem ou mantenha o modelo na sua máquina:
 - **Codex / OpenAI**
 - **OpenCode**
 - **Command Code**
+- **Qwen / ModelStudio**
+- **xAI / Grok**
 - **Ollama local**
 
 Credenciais ficam separadas por provedor. Trocar de modelo não reutiliza a chave de outro serviço.
@@ -87,7 +89,7 @@ Credenciais ficam separadas por provedor. Trocar de modelo não reutiliza a chav
 
 ### 1. Prepare o projeto
 
-Requer Node.js 18+ e Chrome, Edge ou outro navegador baseado em Chromium.
+Requer Node.js 20.19+ (o CI usa Node 22) e Chrome, Edge ou outro navegador baseado em Chromium.
 
 ```bash
 git clone https://github.com/Emansecio/Glide.git
@@ -118,7 +120,7 @@ flowchart LR
   V --> U
 ```
 
-O service worker coordena modelo, permissões, abas e ferramentas. Operações DOM usam um bridge por padrão; CDP fica disponível como opção para interações nativas que exigem a permissão de debugger.
+O service worker coordena modelo, permissões, abas e ferramentas. Operações DOM usam um bridge por padrão; CDP está sempre disponível para interações nativas (a permissão `debugger` do manifest é usada pela ferramenta `cdp`; a flag `toolPermissions.debugger` é ignorada).
 
 Cada efeito recebe uma identidade própria. Se o Chrome interromper o worker entre despacho e confirmação, Glide registra a ação como ambígua e pede uma decisão — nunca repete automaticamente um efeito que pode já ter acontecido.
 
@@ -128,7 +130,7 @@ Cada efeito recebe uma identidade própria. Se o Chrome interromper o worker ent
 - Requisições HTTP feitas pela ferramenta bloqueiam hosts privados e endpoints de metadata.
 - Uma allowlist opcional restringe os domínios disponíveis para automação.
 - Screenshots podem usar retenção efêmera, curta para debug ou persistente.
-- CDP é opt-in; o caminho padrão usa APIs da extensão e scripts isolados.
+- CDP fica sempre disponível para casos difíceis (mostra o banner de depuração do Chrome na aba); o caminho padrão continua sendo APIs da extensão e scripts isolados.
 
 <details>
 <summary><strong>Desenvolvimento e verificação</strong></summary>

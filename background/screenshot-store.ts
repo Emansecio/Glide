@@ -17,9 +17,9 @@ export type ScreenshotIndexEntry = {
   bytes: number;
 };
 
-export const buildScreenshotStorageKey = (screenshotId: string) => `${SCREENSHOT_KEY_PREFIX}${screenshotId}`;
+const buildScreenshotStorageKey = (screenshotId: string) => `${SCREENSHOT_KEY_PREFIX}${screenshotId}`;
 
-export const createScreenshotId = () => `ss_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+const createScreenshotId = () => `ss_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
 /**
  * Pure prune planner — no Chrome APIs. Used by the store and unit tests.

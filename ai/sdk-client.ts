@@ -178,7 +178,7 @@ const withBearerToken = (init: RequestInit | undefined, token: string): RequestI
  * do expiry local), força um refresh e repete a requisição uma única vez.
  * O corpo já chega serializado (string) do SDK, então o retry é seguro.
  */
-export const createAnthropicAuthFetch = (fallbackToken: string): typeof globalThis.fetch => {
+const createAnthropicAuthFetch = (fallbackToken: string): typeof globalThis.fetch => {
   return async (input, init) => {
     let token = fallbackToken;
     try {
@@ -201,7 +201,7 @@ export const createAnthropicAuthFetch = (fallbackToken: string): typeof globalTh
 };
 
 /** Fetch xAI com Bearer renovado (sessão Grok CLI / OIDC). */
-export const createXaiAuthFetch = (fallbackToken: string): typeof globalThis.fetch => {
+const createXaiAuthFetch = (fallbackToken: string): typeof globalThis.fetch => {
   return async (input, init) => {
     let token = fallbackToken;
     try {

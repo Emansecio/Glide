@@ -260,14 +260,6 @@
   color: var(--foreground);
 }
 
-.panel-header-actions {
-  display: inline-flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  align-items: center;
-  gap: var(--space-3);
-}
-
 /* --- Botão de ícone: a peça mais repetida da interface -------------------- */
 .icon-btn {
   width: 32px;

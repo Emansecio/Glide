@@ -13,6 +13,7 @@ import type {
   LanguageModelV3Usage,
 } from '@ai-sdk/provider';
 import { ensureFreshCodexChatGptToken, readCodexChatGptAuth } from './codex-auth.js';
+import { createProviderHttpError, createTruncatedStreamError } from './provider-http-error.js';
 import { extensionFetch } from './sdk-client.js';
 
 export const CODEX_CHATGPT_RESPONSES_URL = 'https://chatgpt.com/backend-api/codex/responses';
@@ -204,7 +205,8 @@ const parseSseEvents = (
   chunk: string,
   pending: string,
 ): { events: Array<{ event: string; data: string }>; rest: string } => {
-  const combined = pending + chunk;
+  // Normaliza CRLF: servidores que separam eventos com \r\n\r\n não produziam evento nenhum.
+  const combined = (pending + chunk).replace(/\r\n/g, '\n');
   const blocks = combined.split('\n\n');
   const rest = blocks.pop() || '';
   const events: Array<{ event: string; data: string }> = [];
@@ -231,6 +233,7 @@ const createCodexStream = (
     let pending = '';
     let textStarted = false;
     let reasoningStarted = false;
+    let sawTerminal = false;
     const textId = 'txt-0';
     const reasoningId = 'reasoning-0';
     const itemIdToOutputIndex = new Map<string, number>();
@@ -402,6 +405,8 @@ const createCodexStream = (
         type === 'response.reasoning_text.delta' ||
         type === 'response.reasoning_summary_text.done'
       ) {
+        // `.done` repete o texto já entregue por `.delta`; só vale se nenhum delta chegou.
+        if (type.endsWith('.done') && reasoningStarted) return;
         const delta = type.endsWith('.delta') ? String(parsed.delta || '') : String(parsed.text || '');
         if (!delta) return;
         if (!reasoningStarted) {
@@ -413,11 +418,14 @@ const createCodexStream = (
       }
 
       if (type === 'response.completed' || type === 'response.incomplete') {
+        sawTerminal = true;
         const response = parsed.response as Record<string, unknown> | undefined;
         usage = mapUsage(response?.usage as Record<string, unknown> | undefined);
-        finishReason = mapFinishReason(
-          typeof response?.status === 'string' ? response.status : type.replace('response.', ''),
-        );
+        const incompleteReason = (response?.incomplete_details as { reason?: unknown } | undefined)?.reason;
+        finishReason =
+          incompleteReason === 'max_output_tokens'
+            ? { unified: 'length', raw: 'max_output_tokens' }
+            : mapFinishReason(typeof response?.status === 'string' ? response.status : type.replace('response.', ''));
         const output = Array.isArray(response?.output) ? response.output : [];
         for (const raw of output) {
           if (raw && typeof raw === 'object') applyFunctionCallItem(raw as Record<string, unknown>, true);
@@ -436,6 +444,7 @@ const createCodexStream = (
       }
 
       if (type === 'response.failed' || type === 'error') {
+        sawTerminal = true;
         const response = parsed.response as Record<string, unknown> | undefined;
         const errObj = (parsed.error || response?.error) as Record<string, unknown> | undefined;
         const message = String(errObj?.message || parsed.message || 'Codex ChatGPT request failed.');
@@ -448,7 +457,29 @@ const createCodexStream = (
       reader
         .read()
         .then(({ done, value }) => {
+          const dispatchEvents = (events: Array<{ event: string; data: string }>) => {
+            for (const evt of events) {
+              if (evt.data === '[DONE]') continue;
+              try {
+                const parsed = JSON.parse(evt.data) as Record<string, unknown>;
+                handleParsed(parsed.type ? parsed : { ...parsed, type: evt.event });
+              } catch {
+                // ignore malformed chunks
+              }
+            }
+          };
           if (done) {
+            // Último evento sem "\n\n" final (e bytes UTF-8 retidos pelo decoder) ainda conta:
+            // perdê-lo descartava o response.completed.
+            const tail = pending + decoder.decode();
+            pending = '';
+            if (tail.trim()) dispatchEvents(parseSseEvents('', `${tail}\n\n`).events);
+            if (!sawTerminal) {
+              // Conexão fechada sem response.completed/failed: não é sucesso. Texto parcial ou
+              // function_call truncado seria aceito como resposta final.
+              reject(createTruncatedStreamError('Codex ChatGPT'));
+              return;
+            }
             if (textStarted) controller.enqueue({ type: 'text-end', id: textId });
             if (reasoningStarted) controller.enqueue({ type: 'reasoning-end', id: reasoningId });
             controller.enqueue({ type: 'finish', finishReason, usage });
@@ -457,15 +488,7 @@ const createCodexStream = (
           }
           const { events, rest } = parseSseEvents(decoder.decode(value, { stream: true }), pending);
           pending = rest;
-          for (const evt of events) {
-            if (evt.data === '[DONE]') continue;
-            try {
-              const parsed = JSON.parse(evt.data) as Record<string, unknown>;
-              handleParsed(parsed.type ? parsed : { ...parsed, type: evt.event });
-            } catch {
-              // ignore malformed chunks
-            }
-          }
+          dispatchEvents(events);
           pump();
         })
         .catch(reject);
@@ -475,7 +498,7 @@ const createCodexStream = (
     pump();
   });
 
-export const createCodexChatGptFetch = (): typeof globalThis.fetch => {
+const createCodexChatGptFetch = (): typeof globalThis.fetch => {
   return async (input, init) => {
     const bundle = await readCodexChatGptAuth();
     if (!bundle?.accountId) {
@@ -565,9 +588,10 @@ export function createCodexChatGptModel(modelId: string): LanguageModelV3 {
         signal: options.abortSignal,
       });
       if (!response.ok) {
-        const detail = await response.text().catch(() => '');
-        throw new Error(
-          `Codex ChatGPT request failed (HTTP ${response.status})${detail ? `: ${detail.slice(0, 240)}` : ''}. Reimporte ~/.codex/auth.json ou reconecte em Configurações.`,
+        throw await createProviderHttpError(
+          'Codex ChatGPT',
+          response,
+          'Reimporte ~/.codex/auth.json ou reconecte em Configurações.',
         );
       }
       if (!response.body) throw new Error('Codex ChatGPT response stream missing.');

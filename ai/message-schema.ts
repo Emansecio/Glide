@@ -69,13 +69,6 @@ export type Message = {
   usage?: Usage;
   meta?: MessageMeta;
 };
-type ProviderMessage = {
-  role: Role;
-  content: MessageContent;
-  tool_calls?: OpenAIToolCall[];
-  tool_call_id?: string;
-  name?: string;
-};
 
 const ROLE_SET = new Set<Role>(['system', 'user', 'assistant', 'tool']);
 
@@ -169,40 +162,6 @@ export function cloneConversationHistory(history: Message[] = []): Message[] {
   return normalized.map((message) => cloneValue(message));
 }
 
-export function toProviderMessages(history: Message[] = []): ProviderMessage[] {
-  const normalized = normalizeConversationHistory(history as Message[], {
-    addIds: false,
-    addTimestamps: false,
-  });
-  return normalized.map((msg) => {
-    if (msg.role === 'tool') {
-      const toolCallId = msg.toolCallId || (msg as any).tool_call_id || '';
-      return {
-        role: 'tool',
-        tool_call_id: toolCallId,
-        content: normalizeToolContent(msg.content),
-      };
-    }
-
-    const payload: ProviderMessage = {
-      role: msg.role,
-      content: msg.content,
-    };
-
-    if (msg.role === 'assistant' && Array.isArray(msg.toolCalls)) {
-      payload.tool_calls = msg.toolCalls.map((call) => ({
-        id: call.id || createMessageId(),
-        type: 'function',
-        function: {
-          name: call.name || '',
-          arguments: JSON.stringify(call.args || {}),
-        },
-      }));
-    }
-    return payload;
-  });
-}
-
 function resolveOpenAIToolCallName(call: OpenAIToolCall | ToolCall): string {
   if (typeof call?.name === 'string' && call.name.trim()) return call.name.trim();
   const openAI = call as OpenAIToolCall;
@@ -273,16 +232,6 @@ function normalizeArgs(args: unknown): Record<string, unknown> {
     }
   }
   return {};
-}
-
-function normalizeToolContent(content: MessageContent): MessageContent {
-  if (typeof content === 'string') return content;
-  if (Array.isArray(content)) return content;
-  try {
-    return JSON.stringify(content);
-  } catch {
-    return String(content ?? '');
-  }
 }
 
 function cloneValue<T>(value: T): T {

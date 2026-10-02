@@ -6,12 +6,12 @@ import { getSessionStorageArea } from './storage-access.js';
 
 export const ACTIVE_RUN_CHECKPOINT_KEY = 'glideActiveRunCheckpointV1';
 export const RUN_RECOVERY_CONTEXT_KEY = 'glideRunRecoveryContextV1';
-export const DEFAULT_MAX_CHECKPOINT_BYTES = 32 * 1024;
-export const MAX_RECOVERY_CONTEXT_BYTES = 128 * 1024;
+const DEFAULT_MAX_CHECKPOINT_BYTES = 32 * 1024;
+const MAX_RECOVERY_CONTEXT_BYTES = 128 * 1024;
 
-export type RunRecoveryLossKind = 'sensitive_redaction' | 'binary_redaction' | 'total_byte_limit';
+type RunRecoveryLossKind = 'sensitive_redaction' | 'binary_redaction' | 'total_byte_limit';
 
-export type RunRecoveryLossReason = {
+type RunRecoveryLossReason = {
   kind: RunRecoveryLossKind;
   messageIndex?: number;
   path?: string;
@@ -191,7 +191,9 @@ const serializeBounded = (state: RunCheckpoint, maxBytes: number): RunCheckpoint
     contextRevision: state.contextRevision,
     selectedTabIds: state.selectedTabIds.filter(Number.isInteger),
     request: {
-      message: String(state.request.message || ''),
+      // A mensagem completa vive no recovery context; um prompt grande não pode estourar o limite do
+      // checkpoint e desligar a recuperação de todos os runs seguintes deste worker.
+      message: String(state.request.message || '').slice(0, 6000),
       ...(Number.isInteger(state.request.panelTabId) ? { panelTabId: state.request.panelTabId } : {}),
     },
     ...(state.terminalReason ? { terminalReason: state.terminalReason } : {}),

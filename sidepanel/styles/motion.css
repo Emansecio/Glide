@@ -127,6 +127,28 @@
     animation: rise-in-sm var(--dur-3) var(--ease-out) both;
   }
 
+  .plan-drawer:not(.hidden) {
+    animation: rise-in-sm var(--dur-4) var(--ease-out) both;
+  }
+
+  /* Texto da resposta: cada trecho que chega entra em fade, então a resposta
+     flui em vez de aparecer aos blocos de 50ms. */
+  .stream-chunk,
+  .stream-md-live tr {
+    animation: fade-in var(--dur-4) var(--ease-out) both;
+  }
+
+  /* Ferramenta rodando: o ícone respira; ao concluir, dá o mesmo pulinho do
+     visto do plano. */
+  .tool-step.running .tool-step-icon {
+    animation: breathe 1.4s var(--ease-in-out) infinite;
+  }
+
+  .tool-step.success .tool-step-icon,
+  .tool-step.error .tool-step-icon {
+    animation: check-pop var(--dur-4) var(--ease-spring) both;
+  }
+
   .plan-checklist > .plan-checklist-item:nth-child(2),
   .stream-events > .tool-step:nth-child(2) {
     animation-delay: 30ms;
@@ -168,9 +190,12 @@
 
 /* --- Sinais de "está acontecendo algo" ------------------------------------ */
 
-/* Shimmer no rótulo em execução: faixa de realce atravessa o texto. O sweep
-   roda em transform (compositor) — background-position repintava a cada frame
-   durante passes longos de ferramenta. */
+/* Shimmer no rótulo em execução: uma janela de luz atravessa o texto.
+   A camada por cima é da COR DO FUNDO — invisível sobre o fundo, ela só apaga os
+   glifos; a faixa transparente no meio deixa o texto em cor cheia. Uma faixa na
+   cor do texto aparecia como um retângulo cinza passando por cima das letras.
+   O sweep roda em transform (compositor): animar background-position com
+   background-clip: text repinta a cada frame, o run inteiro. */
 .shimmer {
   position: relative;
   color: var(--muted);
@@ -178,30 +203,41 @@
 }
 
 @media (prefers-reduced-motion: no-preference) {
+  /* Texto em cor cheia por baixo do véu; o segundo seletor vence a cor própria
+     do título do bloco de execução (chat.css). */
+  .shimmer,
+  .execution-details-title.shimmer {
+    color: var(--foreground);
+  }
+
+  /* 3× a largura do rótulo, para cobri-lo do começo ao fim do percurso. */
   .shimmer::after {
+    --shimmer-veil: color-mix(in srgb, var(--shimmer-bg, var(--surface)) 62%, transparent);
     content: "";
     position: absolute;
-    inset: 0 -40%;
+    top: 0;
+    bottom: 0;
+    left: -200%;
+    width: 300%;
     background: linear-gradient(
       90deg,
-      transparent 0%,
-      transparent 35%,
-      color-mix(in srgb, var(--foreground) 55%, transparent) 50%,
-      transparent 65%,
-      transparent 100%
+      var(--shimmer-veil) 0%,
+      var(--shimmer-veil) 42%,
+      transparent 50%,
+      var(--shimmer-veil) 58%,
+      var(--shimmer-veil) 100%
     );
-    transform: translateX(-100%);
-    animation: shimmer-sweep 2.2s linear infinite;
+    animation: shimmer-sweep 1.8s linear infinite;
     pointer-events: none;
   }
 }
 
 @keyframes shimmer-sweep {
   from {
-    transform: translateX(-100%);
+    transform: translateX(0);
   }
   to {
-    transform: translateX(100%);
+    transform: translateX(66.667%);
   }
 }
 

@@ -61,8 +61,9 @@ export function isOverloadedProviderError(error: unknown): boolean {
  * Respeitar essa janela é o que impede queimar as tentativas restantes em rajada.
  */
 export function extractRetryAfterMs(error: unknown, now = Date.now()): number {
-  if (!error || typeof error !== 'object') return 0;
-  const candidate = error as Record<string, any>;
+  const unwrapped = unwrapProviderError(error);
+  if (!unwrapped || typeof unwrapped !== 'object') return 0;
+  const candidate = unwrapped as Record<string, any>;
   const headers = candidate.responseHeaders || candidate.headers || candidate.response?.headers;
   let raw: unknown;
   if (headers && typeof headers === 'object') {
@@ -87,9 +88,43 @@ export function extractRetryAfterMs(error: unknown, now = Date.now()): number {
   return 0;
 }
 
+/**
+ * O AI SDK embrulha falhas repetidas em `RetryError` (sem statusCode/headers); o erro
+ * real do provedor vive em `lastError`. Sem desembrulhar, 429/5xx e `Retry-After` se perdem.
+ */
+export function unwrapProviderError(error: unknown): unknown {
+  let current = error;
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (!current || typeof current !== 'object') break;
+    const record = current as Record<string, unknown>;
+    const next =
+      record.lastError ?? (record.name === 'AI_RetryError' || record.name === 'RetryError' ? record.cause : undefined);
+    if (!next || next === current) break;
+    current = next;
+  }
+  return current;
+}
+
+const TRANSIENT_NETWORK_PATTERN =
+  /fetch failed|failed to fetch|networkerror|network error|^\s*terminated\s*$|econnreset|socket hang up|etimedout|und_err|stream ended (?:before|without)|connection (?:closed|reset)/i;
+
+/**
+ * Falhas de transporte / stream cortado: retentáveis mesmo sem status HTTP. Também respeita
+ * `isRetryable` que o AI SDK (APICallError) e os modelos custom marcam.
+ */
+export function isTransientProviderFailure(error: unknown): boolean {
+  const unwrapped = unwrapProviderError(error);
+  if (unwrapped && typeof unwrapped === 'object' && (unwrapped as { isRetryable?: unknown }).isRetryable === true) {
+    return true;
+  }
+  const message = String((unwrapped as { message?: string })?.message || unwrapped || '');
+  return TRANSIENT_NETWORK_PATTERN.test(message);
+}
+
 export function extractProviderErrorStatus(error: unknown): number | undefined {
-  if (!error || typeof error !== 'object') return undefined;
-  const candidate = error as Record<string, unknown>;
+  const unwrapped = unwrapProviderError(error);
+  if (!unwrapped || typeof unwrapped !== 'object') return undefined;
+  const candidate = unwrapped as Record<string, unknown>;
   if (typeof candidate.statusCode === 'number') return candidate.statusCode;
   if (typeof candidate.status === 'number') return candidate.status;
   const response = candidate.response;

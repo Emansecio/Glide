@@ -26,6 +26,7 @@ import {
   findCutPoint,
   forceCompactionCut,
   resetCompactionHysteresis,
+  resolveCompactionSettings,
   serializeConversation,
   shouldCompact,
 } from './ai/compaction.js';
@@ -46,6 +47,7 @@ import {
   extractRetryAfterMs,
   isOverloadedProviderError,
   isRetryableProviderError,
+  isTransientProviderFailure,
   isValidFinalResponse,
 } from './ai/retry-engine.js';
 import { buildRunToolSet, getCachedLanguageModel } from './ai/runtime-cache.js';
@@ -54,6 +56,7 @@ import { withScopedOwnership } from './ai/system-prompt-mode.js';
 import { detectTaskIntent, hasRecentToolActivity } from './ai/task-intent.js';
 import { extractRecoverableToolCalls, stripRecoverableToolCalls } from './ai/tool-call-recovery.js';
 import { buildToolTurnMessages } from './ai/tool-history.js';
+import { trimOldToolResults } from './ai/tool-result-trim.js';
 import { ensureFreshXaiToken, getXaiAuthHealth, readXaiOAuth } from './ai/xai-oauth.js';
 import { ActionJournal, classifyActionOutcome, isMutativeBrowserEffect } from './background/action-journal.js';
 import { ModelActivityWatchdog } from './background/activity-timeout.js';
@@ -111,6 +114,7 @@ import {
   ACTIVE_RUN_TIMEOUT_MS,
   BROWSER_ACTION_TOOLS,
   COMPACTION_MAX_OUTPUT_TOKENS,
+  COMPACTION_MIN_TIMEOUT_MS,
   DEDICATED_RUN_TAB_URL,
   DEFAULT_CONTEXT_LIMIT,
   DEFAULT_MODEL_MAX_TOKENS,
@@ -175,7 +179,7 @@ import {
   resolveVisualDeliveryMode,
 } from './background/vision-queue.js';
 import { BrowserTools, getToolPostconditionDurationMs } from './tools/browser-tools.js';
-import { cdpDetach, cdpDetachAll } from './tools/cdp-session.js';
+import { cdpDetach, cdpDetachAll, cdpReleaseOrphanedSessions } from './tools/cdp-session.js';
 import type { ToolExecutionContext } from './tools/tool-context.js';
 import { clampIntUnknown, isHttpUrl } from './tools/validation.js';
 import { buildRunPlan } from './types/plan.js';
@@ -185,6 +189,7 @@ import {
   isRuntimeMessage,
   salvageToolEventsBatchEvents,
   validateRuntimeMessage,
+  validateUserMessagePanel,
 } from './types/runtime-messages.js';
 
 const clampInt = clampIntUnknown;
@@ -401,6 +406,10 @@ class BackgroundService {
     if (this.activeRunId === runId) {
       this.activeRunId = null;
       this.activeRunMeta = null;
+      // decrementInFlight só zera estes campos enquanto activeRunId === runId; com o lock já
+      // liberado eles ficavam presos e desligavam o timeout do modelo no run seguinte.
+      this.activeInFlightToolCalls = 0;
+      this.activeInFlightToolStartedAt = 0;
     }
     if (this.activeRunWatchdogRunId === runId && this.activeRunTimeoutId) {
       clearTimeout(this.activeRunTimeoutId);
@@ -498,7 +507,7 @@ class BackgroundService {
     const runMeta = this.activeRunId === runId ? this.activeRunMeta : null;
     const contextRevision =
       this.runCoordinator.get(runId)?.contextRevision ??
-      (runMeta ? contextTransactionStore.read(runMeta.sessionId).revision : 0);
+      (runMeta ? contextTransactionStore.getRevision(runMeta.sessionId) : 0);
     this.runPhase = 'stopped';
     if (this.runCoordinator.get(runId)) {
       this.runCoordinator.terminal(runId, 'stopped');
@@ -567,6 +576,35 @@ class BackgroundService {
       // ignore
     }
   }
+
+  private swKeepAliveTimer: ReturnType<typeof setInterval> | null = null;
+
+  /**
+   * O worker MV3 morre após ~30s sem evento/chamada de API. Em TTFB longo (modelo local frio,
+   * thinking) ou stream parado, nada chamava `chrome.*` e o run se perdia. Uma chamada de API
+   * barata a cada 20s renova o idle enquanto houver run ativo (o timer se encerra sozinho).
+   */
+  private ensureSwKeepAlive() {
+    if (this.swKeepAliveTimer) return;
+    this.swKeepAliveTimer = setInterval(() => {
+      if (!this.activeRunId) {
+        if (this.swKeepAliveTimer) clearInterval(this.swKeepAliveTimer);
+        this.swKeepAliveTimer = null;
+        return;
+      }
+      try {
+        void Promise.resolve(chrome.runtime.getPlatformInfo()).catch(() => {});
+      } catch {
+        // API indisponível (testes): ignora.
+      }
+    }, 20_000);
+  }
+
+  /** Aba do painel dono do run ativo: um painel de outra janela não deve readotá-lo. */
+  private activeRunPanelTabId: number | null = null;
+
+  /** Recuperação do boot em andamento: run_status_query espera por ela antes de responder. */
+  private orphanRecovery: Promise<void> = Promise.resolve();
 
   private async recoverOrphanedRun(): Promise<void> {
     try {
@@ -661,6 +699,8 @@ class BackgroundService {
         ...recoveryContext.messages,
         { role: 'system', content: buildRecoveryExecutionNote(checkpoint) },
       ]);
+      // Vários awaits acima: um user_message pode ter assumido o lock nesse intervalo.
+      if (this.activeRunId) return;
       void this.processUserMessage(
         resumedHistory,
         selectedTabs,
@@ -893,8 +933,7 @@ class BackgroundService {
   }
 
   init() {
-    void restrictLocalStorageToTrustedContexts();
-    void bootstrapLocalCommandCodeSettings();
+    void this.loadRuntimeSettings().catch(() => {});
     bindRuntimeSettingsCacheInvalidation();
     bindPanelPortListener();
     // openPanelOnActionClick would let Chrome auto-open the panel using whatever
@@ -914,7 +953,9 @@ class BackgroundService {
 
     // Correctness-critical but async — overlaps first message handling instead of
     // blocking the listener registration above.
-    void this.recoverOrphanedRun();
+    // Antes de retomar: o service worker pode ter reiniciado com um debugger anexado (banner
+    // "depurando" preso). `detach` só afeta a sessão DESTA extensão, nunca DevTools/outras.
+    this.orphanRecovery = cdpReleaseOrphanedSessions().then(() => this.recoverOrphanedRun());
 
     chrome.action.onClicked.addListener((tab) => {
       const tabId = tab?.id;
@@ -1113,21 +1154,37 @@ class BackgroundService {
         // o service worker (que então roda recoverOrphanedRun); a resposta diz se
         // o run ainda existe, para o painel não destravar uma execução legítima.
         case 'run_status_query': {
-          sendResponse?.({
-            success: true,
-            activeRunId: this.activeRunId,
-            lastActivityAt: this.activeRunLastActivityAt || null,
-            inFlightToolCalls: this.activeRunId ? this.getInFlightCount(this.activeRunId) : 0,
-            stopping: this.runPhase === 'stopping',
-          });
-          return false;
+          // Responder antes de a recuperação decidir dizia "sem run ativo" enquanto o run órfão
+          // era retomado em paralelo: o painel destravava e mostrava "interrompido" sobre um run vivo.
+          void Promise.race([this.orphanRecovery, new Promise<void>((resolve) => setTimeout(resolve, 3000))]).then(() =>
+            sendResponse?.({
+              success: true,
+              activeRunId: this.activeRunId,
+              // Permite ao painel reaberto readotar o run em andamento (antes: run invisível, sem Parar).
+              sessionId: this.activeRunId ? (this.activeRunMeta?.sessionId ?? null) : null,
+              panelTabId: this.activeRunId ? this.activeRunPanelTabId : null,
+              contextRevision:
+                this.activeRunId && this.activeRunMeta?.sessionId
+                  ? contextTransactionStore.getRevision(this.activeRunMeta.sessionId)
+                  : null,
+              lastActivityAt: this.activeRunLastActivityAt || null,
+              inFlightToolCalls: this.activeRunId ? this.getInFlightCount(this.activeRunId) : 0,
+              stopping: this.runPhase === 'stopping',
+            }),
+          );
+          return true;
         }
         case 'user_message': {
-          const sessionId = String(message.sessionId || '').trim() || `session-${Date.now()}`;
+          const validation = validateUserMessagePanel(message);
+          if (!validation.ok) {
+            sendResponse?.({ success: false, queued: false, error: validation.reason });
+            return false;
+          }
+          const sessionId = message.sessionId.trim();
           const hasProvidedHistory =
             Array.isArray(message.conversationHistory) && message.conversationHistory.length > 0;
           const action = resolveUserMessageContextAction(sessionContextStore.has(sessionId), hasProvidedHistory);
-          const workerRevision = contextTransactionStore.read(sessionId).revision;
+          const workerRevision = contextTransactionStore.getRevision(sessionId);
           const panelRevision =
             Number.isInteger(message.contextRevision) && Number(message.contextRevision) >= 0
               ? Number(message.contextRevision)
@@ -1338,11 +1395,6 @@ class BackgroundService {
           return true;
         }
 
-        case 'content_script_ready': {
-          sendResponse?.({ success: true, ack: true });
-          return false;
-        }
-
         default:
           console.warn('Unknown message type:', message.type);
           sendResponse?.({ success: false, error: `Unknown message type: ${message.type}` });
@@ -1356,9 +1408,20 @@ class BackgroundService {
     }
   }
 
+  // Uma vez por vida do service worker: antes, todo run pagava de novo o IPC de
+  // setAccessLevel e o fetch do arquivo local opcional antes da primeira request.
+  private settingsBootstrap: Promise<unknown> | null = null;
+
   async loadRuntimeSettings() {
-    await restrictLocalStorageToTrustedContexts();
-    await bootstrapLocalCommandCodeSettings();
+    this.settingsBootstrap ??= Promise.all([
+      restrictLocalStorageToTrustedContexts(),
+      bootstrapLocalCommandCodeSettings(),
+    ]).catch((error) => {
+      // Falha transitória não pode ficar memorizada e derrubar todo run seguinte.
+      this.settingsBootstrap = null;
+      throw error;
+    });
+    await this.settingsBootstrap;
     return loadCachedRuntimeSettings();
   }
 
@@ -1558,6 +1621,8 @@ class BackgroundService {
       }
       this.activeRunId = runMeta.runId;
       this.activeRunMeta = runMeta;
+      this.activeRunPanelTabId = typeof panelTabId === 'number' ? panelTabId : null;
+      this.ensureSwKeepAlive();
       this.runPhase = 'running';
       this.quarantinedRunIds.delete(runMeta.runId);
       this.activeRunAbortController = this.runAbortRegistry.create(runMeta.runId);
@@ -1568,7 +1633,7 @@ class BackgroundService {
       void this.writeActiveRunSentinel(runMeta);
       const normalizedHistory = normalizeConversationHistory(conversationHistory || []);
       const latestUserText = this.getLatestUserText(normalizedHistory);
-      const startingRevision = contextTransactionStore.read(sessionId).revision;
+      const startingRevision = contextTransactionStore.getRevision(sessionId);
       this.runCoordinator.start(runMeta, {
         contextRevision: startingRevision,
         selectedTabIds: selectedTabs.flatMap((tab) => (typeof tab.id === 'number' ? [tab.id] : [])),
@@ -1833,7 +1898,7 @@ class BackgroundService {
               runtimeProfile,
               runtimeSettings,
               sessionIdAtStart: sessionId,
-              sourceRevision: contextTransactionStore.read(sessionId).revision,
+              sourceRevision: contextTransactionStore.getRevision(sessionId),
               abortSignal: this.getRunAbortSignal(runMeta.runId),
             }),
           );
@@ -1971,13 +2036,25 @@ class BackgroundService {
               messages: callMessages,
               tools: toolSet,
               maxOutputTokens: runtimeProfile.maxTokens ?? 2048,
+              // O retry do SDK envolve o início da requisição de CADA step (inclusive depois de
+              // tools executadas, sem reexecutar nada). Zerar isto tornava fatal qualquer 429/5xx
+              // a partir do 2º step, porque o laço externo não retenta passe com tool já executada.
+              maxRetries: 2,
               stopWhen: stepCountIs(qualityRuntime.maxModelSteps),
               abortSignal: abortController.signal,
               // Reposiciona o breakpoint de cache a cada step para que os
               // resultados de ferramenta acumulados na passe também entrem no
               // prefixo cacheado, em vez de serem recobrados por step.
               prepareStep: ({ messages }) => ({
-                messages: applyStepPromptCacheBreakpoints(messages, runtimeProfile.provider, cacheAnchorIndex),
+                // Resultados antigos de tool viram preview quando o total do passe passa do orçamento.
+                messages: applyStepPromptCacheBreakpoints(
+                  // 400k chars ~ 100-130k tokens: em modelos de janela menor o orçamento escala com ela.
+                  trimOldToolResults(messages, {
+                    maxTotalChars: Math.max(40_000, Math.min(400_000, Math.floor(contextLimit * 2))),
+                  }),
+                  runtimeProfile.provider,
+                  cacheAnchorIndex,
+                ),
               }),
               onChunk: ({ chunk }) => {
                 activityWatchdog.touch();
@@ -2054,7 +2131,7 @@ class BackgroundService {
               }
             })();
 
-            const [text, reasoning, usage, steps] = await Promise.all([
+            const [text, reasoning, usage, steps, finishReason] = await Promise.all([
               textPromise,
               Promise.resolve(result?.reasoningText).catch((err) => {
                 console.warn('reasoningText failed:', err);
@@ -2072,7 +2149,17 @@ class BackgroundService {
                 console.warn('steps failed:', err);
                 return [];
               }),
+              Promise.resolve(result?.finishReason).catch(() => null),
             ]);
+
+            if (finishReason === 'length') {
+              // Antes o texto cortado virava resposta final válida, sem nenhum aviso.
+              this.sendRuntime(runMeta, {
+                type: 'run_warning',
+                message:
+                  'A resposta foi cortada pelo limite de tokens de saída do modelo. Aumente "Max tokens" em Configurações ou peça para continuar.',
+              });
+            }
 
             if (streamProviderError) {
               throw streamProviderError;
@@ -2151,7 +2238,11 @@ class BackgroundService {
               continue;
             }
             const providerStatus = extractProviderErrorStatus(error);
-            if (!isRetryableProviderError(providerStatus) && !isOverloadedProviderError(error)) {
+            if (
+              !isRetryableProviderError(providerStatus) &&
+              !isOverloadedProviderError(error) &&
+              !isTransientProviderFailure(error)
+            ) {
               throw error;
             }
             // Do not replay a pass that already executed tools — retrying would
@@ -2245,13 +2336,15 @@ class BackgroundService {
                 runtimeProfile,
                 runtimeSettings,
                 sessionIdAtStart: sessionId,
-                sourceRevision: contextTransactionStore.read(sessionId).revision,
+                sourceRevision: contextTransactionStore.getRevision(sessionId),
                 abortSignal: this.getRunAbortSignal(runMeta.runId),
               }),
             );
             if (compactedHistory) {
               currentHistory = compactedHistory;
               recoveryHistoryDirty = true;
+              // O cache converte só a cauda e assume prefixo igual: após compactar, o prefixo mudou.
+              runPassCache.reset();
             }
           }
         }
@@ -2274,8 +2367,9 @@ class BackgroundService {
         // Filtra as chamadas XML pelo toolset da sessão — sem isto um modelo podia
         // emitir <tool_call>ferramenta_fora_do_toolset</tool_call> e contornar o gate
         // de permissões. extractRecoverableToolCalls já aplica esse filtro.
+        const xmlToolCallsInPass = this.extractXmlToolCalls(toolRecoverySource);
         const recoveredToolCalls = this.dedupeRecoveredToolCalls([
-          ...this.extractXmlToolCalls(toolRecoverySource).filter((call) => availableToolNames.includes(call.name)),
+          ...xmlToolCallsInPass.filter((call) => availableToolNames.includes(call.name)),
           ...extractRecoverableToolCalls(toolRecoverySource, availableToolNames),
         ]);
         toolResults = passResult.toolResults || [];
@@ -2314,6 +2408,12 @@ class BackgroundService {
             ORCHESTRATION_RETRY_NORMALIZE,
           );
           recoveryHistoryDirty = true;
+          // Passes que executaram ferramentas são progresso: três descrições de screenshot seguidas
+          // (provedores sem visão) abortavam o run mesmo com o agente avançando.
+          if (toolResults.length > 0) {
+            lastContinueReason = null;
+            sameContinueStreak = 0;
+          }
           assertOrchestrationContinue('vision_delivery');
           continue;
         }
@@ -2483,7 +2583,11 @@ class BackgroundService {
 
         reasoningText = passResult.reasoningText || null;
         totalUsage = passResult.totalUsage || totalUsage;
-        const cleanedText = stripRecoverableToolCalls(this.stripXmlToolCalls(passResult.text), availableToolNames);
+        const xmlStrippedText = this.stripXmlToolCalls(passResult.text);
+        const cleanedText = stripRecoverableToolCalls(xmlStrippedText, availableToolNames);
+        const strippedToolMarkup =
+          xmlStrippedText !== String(passResult.text || '').trim() ||
+          this.stripXmlToolCalls(passResult.reasoningText || '') !== String(passResult.reasoningText || '').trim();
         const hadToolCalls = toolResults.length > 0;
         const fallbackText = hadToolCalls
           ? taskIntent.requiresDetailedReport
@@ -2512,13 +2616,55 @@ class BackgroundService {
               thinking: passResult.reasoningText || null,
             });
           }
+          // Diferencia "resposta vazia" de "emitiu markup de tool que não rodou":
+          // no segundo caso a resposta genérica faz o modelo repetir o mesmo
+          // formato e morrer no retry. Dizer explicitamente por que foi descartado
+          // (nome fora do toolset, markup não parseável, args rejeitados pelo
+          // schema, ou budget de recovery esgotado) quebra o loop.
+          const droppedXmlNames = [
+            ...new Set(
+              xmlToolCallsInPass.map((call) => call.name).filter((name) => name && !availableToolNames.includes(name)),
+            ),
+          ];
+          // Structured calls que o SDK recusou (nome inexistente ou args fora do
+          // schema) aparecem em toolCalls sem toolResult — do ponto de vista do
+          // loop não houve execução, então entram no mesmo diagnóstico.
+          const unexecutedToolNames = [
+            ...new Set(
+              toolCalls
+                .filter(
+                  (call) =>
+                    !toolResults.some(
+                      (result) =>
+                        String(result?.toolCallId || result?.id || '') === String(call?.toolCallId || call?.id || ''),
+                    ),
+                )
+                .map((call) => String(call?.toolName || call?.name || ''))
+                .filter(Boolean),
+            ),
+          ];
+          let retryInstruction =
+            'Previous attempt returned no usable final answer. Respond to the user now with a direct final answer in the user language. Do not mention internal errors or ask to retry unless strictly necessary. If you lack critical data, clearly say what is missing and provide the next concrete step.';
+          if (unexecutedToolNames.length > 0) {
+            retryInstruction = `Your previous tool calls (${unexecutedToolNames.join(', ')}) were rejected before execution — the tool name or arguments did not match the tool schema. Re-issue the call with the exact tool name and argument schema, or answer the user directly in their language.`;
+          } else if (droppedXmlNames.length > 0) {
+            retryInstruction = `Your previous reply contained tool-call markup for tools that do not exist: ${droppedXmlNames.join(', ')}. Those calls were discarded. Use the tool-call API only, with a valid tool name (e.g. ${availableToolNames.slice(0, 8).join(', ')}), or give a final answer in the user language. Do NOT write <tool_call> markup in text.`;
+          } else if (strippedToolMarkup || recoveredToolCalls.length > 0) {
+            retryInstruction =
+              'Your previous reply contained tool calls written as text/XML markup; they were not executed. Call tools using the native tool-call API, not text markup. If the task is already done or blocked, answer the user directly in their language.';
+          }
           retryHistory.push({
             role: 'system',
-            content:
-              'Previous attempt returned no usable final answer. Respond to the user now with a direct final answer in the user language. Do not mention internal errors or ask to retry unless strictly necessary. If you lack critical data, clearly say what is missing and provide the next concrete step.',
+            content: retryInstruction,
           });
           currentHistory = normalizeConversationHistory(retryHistory, ORCHESTRATION_RETRY_NORMALIZE);
           recoveryHistoryDirty = true;
+          console.warn('[glide] invalid_final pass', {
+            textPreview: String(passResult.text || '').slice(0, 400),
+            xmlCalls: xmlToolCallsInPass.map((call) => call.name),
+            droppedXmlNames,
+            unexecutedToolNames,
+          });
           this.sendRuntime(runMeta, {
             type: 'run_warning',
             message: 'O modelo não produziu resposta final utilizável; refazendo a resposta uma vez.',
@@ -2626,7 +2772,7 @@ class BackgroundService {
 
       const nextHistory = normalizeConversationHistory([...currentHistory, ...responseMessages]);
       const contextSourceSessionId = sessionId;
-      const sourceRevision = contextTransactionStore.read(contextSourceSessionId).revision;
+      const sourceRevision = contextTransactionStore.getRevision(contextSourceSessionId);
       let terminalHistory = nextHistory;
       let compacted = false;
       const compactionSettings = DEFAULT_COMPACTION_SETTINGS;
@@ -2725,8 +2871,10 @@ class BackgroundService {
       // terminam antes do evento terminal para o painel não descartá-los.
       this.runCoordinator.terminal(runMeta.runId, finishReason);
       this.actionJournal.clearRun(runMeta.runId);
-      await this.runCoordinator.clear(runMeta.runId);
+      // Libera antes da limpeza em storage: uma mensagem enviada logo após o
+      // assistant_final não deve bater em "já existe uma execução".
       this.releaseRunExclusiveLock(runMeta.runId);
+      await this.runCoordinator.clear(runMeta.runId);
     } catch (error) {
       console.error('Error processing user message:', error);
       const coordinatorState = this.runCoordinator.get(runMeta.runId);
@@ -2760,7 +2908,19 @@ class BackgroundService {
       this.visionInbox.terminal(runMeta.runId);
       this.visionQueue.cancelRun(runMeta.runId);
       await this.clearActiveRunSentinel(runMeta.runId);
-      const finalCoordinatorState = this.runCoordinator.get(runMeta.runId);
+      let finalCoordinatorState = this.runCoordinator.get(runMeta.runId);
+      if (finalCoordinatorState && !finalCoordinatorState.terminalReason) {
+        // Saídas antecipadas (credencial ausente, falha terminal de tool) retornavam sem estado
+        // terminal: o checkpoint `starting` ficava no storage e o próximo boot do service worker
+        // retomava sozinho a tarefa antiga, sem confirmação. Run que chegou ao finally está vivo;
+        // o checkpoint só serve a recuperação de crash.
+        try {
+          this.runCoordinator.terminal(runMeta.runId, this.isRunAborted(runMeta.runId) ? 'stopped' : 'failed');
+        } catch {
+          /* fase atual não admite transição terminal (ex.: ambiguous): mantém para o resume */
+        }
+        finalCoordinatorState = this.runCoordinator.get(runMeta.runId);
+      }
       if (finalCoordinatorState?.terminalReason && finalCoordinatorState.terminalReason !== 'ambiguous_action') {
         this.actionJournal.clearRun(runMeta.runId);
         await this.runCoordinator.clear(runMeta.runId);
@@ -3325,7 +3485,7 @@ class BackgroundService {
           action: { actionId: journalActionId, tool: toolName },
           contextRevision:
             this.runCoordinator.get(options.runMeta.runId)?.contextRevision ??
-            contextTransactionStore.read(options.runMeta.sessionId).revision,
+            contextTransactionStore.getRevision(options.runMeta.sessionId),
           terminalReason: 'ambiguous_action',
         });
         this.releaseRunExclusiveLock(options.runMeta.runId);
@@ -3953,7 +4113,7 @@ class BackgroundService {
     if (this.sessionTombstones.isTombstoned(sourceSessionId) || abortSignal?.aborted) return null;
     const generationAtStart = this.sessionGenerations.get(sourceSessionId);
 
-    const compactionSettings = DEFAULT_COMPACTION_SETTINGS;
+    const compactionSettings = resolveCompactionSettings(DEFAULT_COMPACTION_SETTINGS, contextLimit);
     const contextUsage = estimateContextTokens(history);
     const compactionCheck = shouldCompact({
       contextTokens: contextUsage.tokens,
@@ -3997,7 +4157,12 @@ class BackgroundService {
     }
     promptText += previousSummary ? UPDATE_SUMMARIZATION_PROMPT : SUMMARIZATION_PROMPT;
 
-    const compactionTimeoutMs = resolveTimeoutMs(runtimeProfile.timeout ?? runtimeSettings.timeout);
+    // Timeout TOTAL de um generateText não-streaming: o de inatividade do chat (30s) é curto demais
+    // para sumarizar 20k+ tokens em modelo lento/local e caía sempre no resumo truncado.
+    const compactionTimeoutMs = Math.max(
+      resolveTimeoutMs(runtimeProfile.timeout ?? runtimeSettings.timeout),
+      COMPACTION_MIN_TIMEOUT_MS,
+    );
     const compactionBackoff = createExponentialBackoff({ baseMs: 1000, maxMs: 8000 });
     const MAX_COMPACTION_RETRIES = 3;
     let summaryText: string | null = null;
@@ -4061,7 +4226,7 @@ class BackgroundService {
         tombstoned: this.sessionTombstones.isTombstoned(sourceSessionId),
         generationMatches: this.sessionGenerations.matches(sourceSessionId, generationAtStart),
         sourceRevision,
-        currentRevision: contextTransactionStore.read(sourceSessionId).revision,
+        currentRevision: contextTransactionStore.getRevision(sourceSessionId),
       })
     ) {
       return null;
@@ -4282,7 +4447,7 @@ class BackgroundService {
       resultBytes: this.measureResultBytes(payload.result),
       recoveryStage: payload.recoveryStage || String(resultRecord?.recoveryStage || 'none'),
       checkpointPhase: state?.phase || 'unavailable',
-      contextRevision: state?.contextRevision ?? contextTransactionStore.read(runMeta.sessionId).revision,
+      contextRevision: state?.contextRevision ?? contextTransactionStore.getRevision(runMeta.sessionId),
     };
     this.executionTelemetry.append(telemetry);
     return this.executionTelemetry.snapshot().at(-1) as ToolTelemetry;
@@ -4563,7 +4728,7 @@ class BackgroundService {
 
     const snippets: string[] = [];
     if (title) {
-      snippets.push(`Pagina analisada: ${title}`);
+      snippets.push(`Página analisada: ${title}`);
     }
 
     if (url) {
@@ -4740,7 +4905,7 @@ class BackgroundService {
     const errorText = errors.size > 0 ? ` Algumas acoes falharam (${Array.from(errors).join(', ')}).` : '';
 
     if (primary) {
-      const prefix = errors.size > 0 ? 'Coleta parcial concluida' : 'Resumo automatico com base nos dados coletados';
+      const prefix = errors.size > 0 ? 'Coleta parcial concluída' : 'Resumo automático com base nos dados coletados';
       return this.truncateSummaryText(`${prefix}: ${primary}.${errorText}`.trim(), 900);
     }
 
@@ -4863,9 +5028,9 @@ class BackgroundService {
 
     const toList = (set: Set<string>, max = 8) => Array.from(set).slice(0, max);
     const scopeLines: string[] = [];
-    if (catalog.title) scopeLines.push(`- Pagina: ${catalog.title}`);
+    if (catalog.title) scopeLines.push(`- Página: ${catalog.title}`);
     if (catalog.url) scopeLines.push(`- URL: ${catalog.url}`);
-    if (!scopeLines.length) scopeLines.push('- Pagina detectada, mas sem metadados completos de titulo/URL.');
+    if (!scopeLines.length) scopeLines.push('- Página detectada, mas sem metadados completos de título/URL.');
 
     const sections: Array<{ title: string; lines: string[] }> = [
       {
@@ -4877,11 +5042,11 @@ class BackgroundService {
         lines: toList(catalog.sidebar).map((item) => `- ${item}`),
       },
       {
-        title: 'Area de Trabalho e Cards',
+        title: 'Área de Trabalho e Cards',
         lines: [...toList(catalog.cards, 10), ...toList(catalog.kpis, 6)].map((item) => `- ${item}`),
       },
       {
-        title: 'Funcoes e Modulos Detectados',
+        title: 'Funções e Módulos Detectados',
         lines: [
           ...toList(catalog.actions, 10),
           ...toList(catalog.tabs, 6),
@@ -4891,7 +5056,7 @@ class BackgroundService {
         ].map((item) => `- ${item}`),
       },
       {
-        title: 'Evidencias Coletadas',
+        title: 'Evidências Coletadas',
         lines: [
           ...toList(catalog.headings, 8),
           ...toList(catalog.visuals, 5),
@@ -4899,21 +5064,21 @@ class BackgroundService {
         ].map((item) => `- ${item}`),
       },
       {
-        title: 'Pendencias e Riscos',
+        title: 'Pendências e Riscos',
         lines: [
           ...(pendingSteps.length
             ? pendingSteps.slice(0, 6).map((step) => `- Etapa pendente: ${step.title}`)
-            : ['- Plano concluido sem etapas pendentes.']),
+            : ['- Plano concluído sem etapas pendentes.']),
           ...(errors.length
             ? [`- Ferramentas com falha: ${Array.from(new Set(errors)).join(', ')}`]
-            : ['- Nenhuma falha de ferramenta registrada no ultimo passe.']),
+            : ['- Nenhuma falha de ferramenta registrada no último passe.']),
         ],
       },
     ];
 
     for (const section of sections) {
       if (section.lines.length === 0) {
-        section.lines.push('- Sem itens detectados nesta secao com as evidencias atuais.');
+        section.lines.push('- Sem itens detectados nesta seção com as evidências atuais.');
       }
     }
 
@@ -5190,13 +5355,11 @@ class BackgroundService {
       const reason =
         category === 'scripting'
           ? 'Permission blocked: scripting (opt-in). Enable executeScript in Settings and Allow User Scripts.'
-          : category === 'debugger'
-            ? 'Permission blocked: debugger (opt-in). Enable “CDP / debugger” in Settings or set toolPermissions.debugger=true, then reload the run.'
-            : category === 'sensitiveDataRead'
-              ? 'Permission blocked: sensitiveDataRead (opt-in). Enable storage/network/console inspection in Settings.'
-              : category === 'clipboard' || category === 'fileUpload' || category === 'downloads'
-                ? `Permission blocked: ${category} (opt-in). Enable it in Settings.`
-                : `Permission blocked: ${category}`;
+          : category === 'sensitiveDataRead'
+            ? 'Permission blocked: sensitiveDataRead (opt-in). Enable storage/network/console inspection in Settings.'
+            : category === 'clipboard' || category === 'fileUpload' || category === 'downloads'
+              ? `Permission blocked: ${category} (opt-in). Enable it in Settings.`
+              : `Permission blocked: ${category}`;
       return {
         allowed: false,
         reason,
@@ -5514,13 +5677,11 @@ Next required call: ${requiredNextCall}
         : '';
 
     const compactStateSection = orchestrationPass > 1 ? '' : stateSection;
-    const debuggerOn =
-      (this.currentSettings?.toolPermissions as Record<string, unknown> | undefined)?.debugger === true;
     const toolSurface =
       orchestrationPass === 1
         ? `
 <tool_surface>
-Schema tools are live. Prefer: readPage/findElement → click/type; getNetworkRequests → httpRequest for APIs; executeScript only when listed (requires Allow User Scripts); clipboard/setInputFiles/mouse drag when permitted.${debuggerOn ? ' cdp is enabled (opt-in debugger).' : ' cdp not in schema unless user enables debugger in Settings.'}
+Schema tools are live. Prefer: readPage/findElement → click/type; getNetworkRequests → httpRequest for APIs; executeScript only when listed (requires Allow User Scripts); clipboard/setInputFiles/mouse drag when permitted. cdp (DevTools Protocol) is always available for hard cases.
 </tool_surface>`
         : '';
     const toolPackSection = context.toolPackState

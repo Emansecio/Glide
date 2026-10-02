@@ -1,6 +1,6 @@
 import { resolveProviderBaseUrl } from '../ai/sdk-client.js';
 
-export const COMMAND_CODE_PRESET_MODELS = ['moonshotai/Kimi-K3'] as const;
+const COMMAND_CODE_PRESET_MODELS = ['moonshotai/Kimi-K3'] as const;
 const PROBE_TIMEOUT_MS = 8000;
 
 export type CommandCodeProbeResult = {

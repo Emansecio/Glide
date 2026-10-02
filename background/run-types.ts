@@ -27,7 +27,7 @@ export type RunMeta = {
   resumedFromRunId?: string;
 };
 
-export type RunRequestEnvelope = {
+type RunRequestEnvelope = {
   message: string;
   panelTabId?: number;
 };
@@ -39,7 +39,7 @@ export type RunResumeInput = {
   resumedFromRunId?: string;
 };
 
-export type ActionJournalState = 'prepared' | 'in_flight' | 'committed' | 'ambiguous';
+type ActionJournalState = 'prepared' | 'in_flight' | 'committed' | 'ambiguous';
 
 export type ActionJournalEntry = {
   actionId: string;

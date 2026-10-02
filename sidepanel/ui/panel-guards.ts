@@ -2,7 +2,7 @@
 
 import { SidePanelUI } from './panel-ui.js';
 
-export const PANEL_BOOKKEEPING_SET_MAX = 64;
+const PANEL_BOOKKEEPING_SET_MAX = 64;
 
 export function shouldAppendAssistantFinalForCommit(input: {
   contextRevision: number;
@@ -147,7 +147,7 @@ export function isHistoryListLoadTokenStale(requestToken: number, currentToken: 
 }
 
 const SETTINGS_CONTROL_SELECTOR =
-  '#provider, #apiKey, #model, #customEndpoint, #systemPrompt, #saveSettingsBtn, #detectModelsBtn, #anthropicOauthBtn, #codexOauthBtn, #importCredentialsBtn, #enableDebugger, #notifyOnComplete, #permRead, #permInteract, #permNavigate, #permTabs, #permScreenshots, #permSensitiveDataRead, #permClipboard, #permFileUpload, #permDownloads, #permScripting';
+  '#provider, #apiKey, #model, #customEndpoint, #systemPrompt, #saveSettingsBtn, #detectModelsBtn, #anthropicOauthBtn, #codexOauthBtn, #importCredentialsBtn, #notifyOnComplete, #permRead, #permInteract, #permNavigate, #permTabs, #permScreenshots, #permSensitiveDataRead, #permClipboard, #permFileUpload, #permDownloads, #permScripting';
 
 SidePanelUI.prototype.bumpRenderSessionGeneration = function bumpRenderSessionGeneration() {
   this.renderSessionGeneration += 1;

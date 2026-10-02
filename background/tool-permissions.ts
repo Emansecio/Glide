@@ -12,10 +12,9 @@ export type ToolPermissionCategory =
   | 'clipboard'
   | 'fileUpload'
   | 'scripting'
-  | 'downloads'
-  | 'debugger';
+  | 'downloads';
 
-export const TOOL_PERMISSION_MAP: Record<string, ToolPermissionCategory> = {
+const TOOL_PERMISSION_MAP: Record<string, ToolPermissionCategory> = {
   navigate: 'navigate',
   openTab: 'navigate',
   click: 'interact',
@@ -55,7 +54,8 @@ export const TOOL_PERMISSION_MAP: Record<string, ToolPermissionCategory> = {
   // Network allowlist / method split is out of scope (segurança-api).
   httpRequest: 'read',
   executeScript: 'scripting',
-  cdp: 'debugger',
+  // CDP está sempre disponível; segue a permissão geral de interação.
+  cdp: 'interact',
 };
 
 export function getToolPermissionCategory(toolName: string): ToolPermissionCategory | null {
@@ -63,8 +63,7 @@ export function getToolPermissionCategory(toolName: string): ToolPermissionCateg
 }
 
 // Opt-in categories: deny unless the user explicitly enables them.
-export const OPT_IN_TOOL_PERMISSIONS = new Set<ToolPermissionCategory>([
-  'debugger',
+const OPT_IN_TOOL_PERMISSIONS = new Set<ToolPermissionCategory>([
   'scripting',
   'sensitiveDataRead',
   'clipboard',
@@ -83,7 +82,6 @@ export const DEFAULT_TOOL_PERMISSIONS: Record<ToolPermissionCategory, boolean> =
   fileUpload: false,
   scripting: false,
   downloads: false,
-  debugger: false,
 };
 
 export function isToolCategoryAllowed(
@@ -96,7 +94,7 @@ export function isToolCategoryAllowed(
 }
 
 /** Stable category order for session-tool cache keys. Matches DEFAULT_TOOL_PERMISSIONS. */
-export const TOOL_PERMISSION_CACHE_CATEGORIES = Object.keys(DEFAULT_TOOL_PERMISSIONS) as ToolPermissionCategory[];
+const TOOL_PERMISSION_CACHE_CATEGORIES = Object.keys(DEFAULT_TOOL_PERMISSIONS) as ToolPermissionCategory[];
 
 export function toolPermissionsCacheKey(permissions: Record<string, unknown> = {}): string {
   return TOOL_PERMISSION_CACHE_CATEGORIES.map((category) =>

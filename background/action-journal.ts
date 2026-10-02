@@ -1,7 +1,7 @@
 import type { ActionJournalEntry } from './run-types.js';
 import { VERIFICATION_EFFECT_TOOLS } from './service-config.js';
 
-export const MUTATIVE_BROWSER_EFFECT_TOOLS = VERIFICATION_EFFECT_TOOLS;
+const MUTATIVE_BROWSER_EFFECT_TOOLS = VERIFICATION_EFFECT_TOOLS;
 
 const MUTATIVE_HTTP_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const AMBIGUOUS_OUTCOME_CODES = new Set(['BRIDGE_TIMEOUT', 'SCRIPT_TIMEOUT', 'DOWNLOAD_TIMEOUT']);
@@ -60,7 +60,7 @@ export type InFlightDecision = {
 
 type PersistEntry = (entry: ActionJournalEntry) => Promise<unknown> | unknown;
 
-export const MAX_RETAINED_TERMINAL_ACTIONS = 100;
+const MAX_RETAINED_TERMINAL_ACTIONS = 100;
 
 export type ActionJournalRetentionOptions = {
   maxTerminalEntries?: number;
@@ -76,7 +76,7 @@ const stableValue = (value: unknown): unknown => {
   );
 };
 
-export const digestActionValue = (value: unknown): string => {
+const digestActionValue = (value: unknown): string => {
   const text = JSON.stringify(stableValue(value));
   let hash = 0x811c9dc5;
   for (let index = 0; index < text.length; index += 1) {

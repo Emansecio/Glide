@@ -1,6 +1,6 @@
 import type { ChatSessionPayload } from './history-storage.js';
 
-export type TruncationMeta = {
+type TruncationMeta = {
   originalChars: number;
   retainedChars: number;
   reason: 'session_budget' | 'total_budget';
@@ -58,20 +58,31 @@ function truncateMessageText(message: any, maxReduction: number, reason: Truncat
 
 function fitMessagesToBudget(messages: unknown[], maxBytes: number, reason: TruncationMeta['reason']): unknown[] {
   const fitted = clone(Array.isArray(messages) ? messages : []);
-  if (measureStoredBytes(fitted) <= maxBytes) return fitted;
+  // Total corrente: medir o array inteiro a cada mensagem era O(n²) (segundos de freeze da UI
+  // ao fim de cada run em sessões longas). Só a mensagem alterada é re-medida.
+  let total = measureStoredBytes(fitted);
+  if (total <= maxBytes) return fitted;
 
   for (const message of fitted as any[]) {
-    if (compactToolMessage(message) && measureStoredBytes(fitted) <= maxBytes) return fitted;
+    const before = measureStoredBytes([message]);
+    if (compactToolMessage(message)) {
+      total += measureStoredBytes([message]) - before;
+      if (total <= maxBytes) return fitted;
+    }
   }
 
   for (const message of fitted as any[]) {
-    const overflow = measureStoredBytes(fitted) - maxBytes;
+    const overflow = total - maxBytes;
     if (overflow <= 0) break;
+    const before = measureStoredBytes([message]);
     truncateMessageText(message, overflow + 256, reason);
+    total += measureStoredBytes([message]) - before;
   }
 
-  while (measureStoredBytes(fitted) > maxBytes && fitted.length > 1) {
-    fitted.shift();
+  while (total > maxBytes && fitted.length > 1) {
+    const removed = fitted.shift();
+    // [a,b,...] -> [b,...]: remove o tamanho de `a` mais a vírgula.
+    total -= measureStoredBytes([removed]) - 1;
   }
   if (measureStoredBytes(fitted) > maxBytes && fitted.length === 1) {
     const message = fitted[0] as any;
@@ -117,12 +128,17 @@ export function fitSessionToBudget(session: StoredSession, maxBytes: number): St
   fitted.messageCount = fitted.transcript.length;
 
   // Full transcripts remain authoritative until serialized session actually exceeds its budget.
-  if (measureStoredBytes(fitted) <= budget) return fitted;
+  let sessionBytes = measureStoredBytes(fitted);
+  if (sessionBytes <= budget) return fitted;
 
   const messageSets = [fitted.transcript, ...(fitted.contextTranscript ? [fitted.contextTranscript] : [])];
   for (const messages of messageSets) {
     for (const message of messages as any[]) {
-      if (compactToolMessage(message) && measureStoredBytes(fitted) <= budget) return fitted;
+      const before = measureStoredBytes([message]);
+      if (compactToolMessage(message)) {
+        sessionBytes += measureStoredBytes([message]) - before;
+        if (sessionBytes <= budget) return fitted;
+      }
     }
   }
 

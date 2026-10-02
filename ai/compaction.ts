@@ -18,6 +18,19 @@ export const DEFAULT_COMPACTION_SETTINGS: CompactionSettings = {
   keepRecentTokens: 20000,
 };
 
+/**
+ * Reserve/keep fixos (60k/20k) não cabem em janelas pequenas (Ollama 16k–32k): o trecho preservado
+ * + resumo já voltava a ~70% e cada passe compactava de novo (uma chamada LLM por passe).
+ */
+export function resolveCompactionSettings(settings: CompactionSettings, contextLimit: number): CompactionSettings {
+  if (!(contextLimit > 0)) return settings;
+  return {
+    ...settings,
+    reserveTokens: Math.min(settings.reserveTokens, Math.floor(contextLimit * 0.3)),
+    keepRecentTokens: Math.min(settings.keepRecentTokens, Math.floor(contextLimit * 0.15)),
+  };
+}
+
 export const COMPACTION_ENTER_PERCENT = 0.7;
 export const COMPACTION_RELEASE_PERCENT = 0.55;
 
@@ -236,7 +249,7 @@ export function shouldCompact({
   }
   latchEntry.active = compactionLatchActive;
 
-  const overReserve = contextTokens > contextLimit - settings.reserveTokens;
+  const overReserve = contextTokens > contextLimit - resolveCompactionSettings(settings, contextLimit).reserveTokens;
   const shouldRun = compactionLatchActive && overReserve;
 
   return {
@@ -389,7 +402,7 @@ export function buildTruncateOnlySummary(messages: Message[], maxChars = 6000): 
   const serialized = serializeConversation(messages);
   const trimmed =
     serialized.length > maxChars
-      ? `${serialized.slice(0, maxChars)}\n\n[Truncated ${messages.length} earlier messages for context recovery.]`
+      ? `[Truncated: older part of ${messages.length} messages dropped for context recovery.]\n\n${serialized.slice(-maxChars)}`
       : serialized;
 
   return `## Goal\nContinue the active task from the preserved recent context.\n\n## Progress\n### Done\n- Earlier context was truncated automatically (${messages.length} messages).\n\n## Critical Context\n${trimmed}`;

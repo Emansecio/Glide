@@ -118,9 +118,13 @@ dispara quando o nó entra no documento, então quase nada exige código.
 | Bolha do usuário | `pop-in` com mola |
 | Passo de ferramenta | `slide-in-left` (direção em que a linha do tempo cresce) |
 | Estado vazio | cascata de 60ms entre marca, título, subtítulo e dica |
-| "Trabalhando…" | `.shimmer` — brilho recortado no glifo (`background-clip: text`) |
+| Bloco de execução | título vivo com `.shimmer` ("Pensando…", "Clicando…", "Respondendo…"); cada troca sobe em fade (`setExecutionActivityLabel`) e a barra de status repete o mesmo verbo. O shimmer é um véu da cor do fundo com uma janela transparente, movido em `transform` |
+| Acompanhar o fim | `scrollToBottom` desliza com desaceleração (τ = 55 ms) quando o conteúdo cresce; pula direto em ação do usuário, em redimensionamento da área visível e quando o layout muda acima do texto |
+| Abrir/fechar execução | `::details-content` desliza até `auto` (`interpolate-size`) |
+| Ferramenta rodando | ícone respira (`breathe`); ao concluir, `check-pop` |
 | Executando | ponto de status com halo pulsante |
-| Streaming | cursor piscando no fim do texto |
+| Streaming | cada trecho entra em `fade-in` (`.stream-chunk`) + cursor piscando no fim |
+| Plano | gaveta desliza (`grid-template-rows` 1fr↔0fr), barra de progresso em `scaleX`, visto desenhado por `stroke-dashoffset`, ponto que respira na etapa atual |
 | Troca de tema | `.theme-transition` no `:root` por 260ms, só cor e fundo |
 
 Tudo dentro de `@media (prefers-reduced-motion: no-preference)`; o `reduce`
@@ -228,7 +232,7 @@ reparseia. O ganho cresce com o tamanho da resposta.
 
 `getCachedToolSet` tinha nome de cache e não cacheava; havia até uma
 `buildToolSetCacheKey` pronta e nunca usada. Medido antes de decidir:
-`buildToolSet` custa **15 µs** para as 29 ferramentas e roda **uma vez por
+`buildToolSet` custa **15 µs** para as ferramentas e roda **uma vez por
 run** — `jsonSchema()` é um getter preguiçoso e `tool()` é a função identidade,
 não há compilação de schema para reaproveitar.
 

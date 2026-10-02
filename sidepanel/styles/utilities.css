@@ -138,8 +138,7 @@
   background: var(--ink-hover);
 }
 
-.error-dismiss,
-.run-incomplete-dismiss {
+.error-dismiss {
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
@@ -153,8 +152,7 @@
   background: transparent;
 }
 
-.error-dismiss:hover,
-.run-incomplete-dismiss:hover {
+.error-dismiss:hover {
   color: var(--foreground);
   background: var(--overlay-hover);
 }

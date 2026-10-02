@@ -36,6 +36,7 @@ export const getSidePanelElements = (): SidePanelElements => ({
   scrollToLatestBtn: byId<HTMLButtonElement>('scrollToLatestBtn'),
   historyPanel: byId<HTMLElement>('historyPanel'),
   historyItems: byId<HTMLElement>('historyItems'),
+  historySearch: byId<HTMLInputElement>('historySearch'),
   clearHistoryBtn: byId<HTMLButtonElement>('clearHistoryBtn'),
   startNewSessionBtn: byId<HTMLButtonElement>('startNewSessionBtn'),
   privateSessionBtn: byId<HTMLButtonElement>('privateSessionBtn'),
@@ -55,7 +56,6 @@ export const getSidePanelElements = (): SidePanelElements => ({
 
   // Form elements - System prompt
   systemPrompt: byId<HTMLTextAreaElement>('systemPrompt'),
-  enableDebugger: byId<HTMLInputElement>('enableDebugger'),
   notifyOnComplete: byId<HTMLInputElement>('notifyOnComplete'),
   permRead: byId<HTMLInputElement>('permRead'),
   permInteract: byId<HTMLInputElement>('permInteract'),
@@ -99,5 +99,6 @@ export const getSidePanelElements = (): SidePanelElements => ({
   planDrawerContent: byId<HTMLElement>('planDrawerContent'),
   planChecklist: byId<HTMLOListElement>('planChecklist'),
   planStepCount: byId<HTMLElement>('planStepCount'),
+  planCurrentStep: byId<HTMLElement>('planCurrentStep'),
   planClearBtn: byId<HTMLButtonElement>('planClearBtn'),
 });

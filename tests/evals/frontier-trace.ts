@@ -2,11 +2,6 @@ import { type FrontierEvalTrace, hasTrustedFrontierEvidence } from './frontier-g
 
 export const FRONTIER_TRACE_PREFIX = 'GLIDE_FRONTIER_TRACE ';
 
-export type FrontierFixtureTrace = {
-  caseId: string;
-  trace: FrontierEvalTrace;
-};
-
 export function emitFrontierTrace(caseId: string, trace: FrontierEvalTrace): void {
   console.log(`${FRONTIER_TRACE_PREFIX}${JSON.stringify({ caseId, trace })}`);
 }

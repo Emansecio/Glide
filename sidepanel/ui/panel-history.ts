@@ -30,19 +30,18 @@ const HISTORY_MAX_MESSAGES_PER_SESSION = 200;
 const HISTORY_MAX_SESSION_BYTES = 200 * 1024;
 const HISTORY_MAX_TOTAL_BYTES = 4 * 1024 * 1024;
 const HISTORY_STORAGE_RETRY_MAX = 2;
+/** Janela para desfazer a exclusão de uma conversa. */
+const HISTORY_UNDO_MS = 5000;
+/** Janela para confirmar "Limpar histórico" com um segundo clique. */
+const HISTORY_CLEAR_CONFIRM_MS = 4000;
+
+const normalizeSearchText = (value: string) => value.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().trim();
+
 const historyTextEncoder = new TextEncoder();
 
 SidePanelUI.prototype.isHistoryPanelVisible = function isHistoryPanelVisible() {
   const panel = this.elements.historyPanel as HTMLElement | null;
   return Boolean(panel && !panel.classList.contains('hidden'));
-};
-
-SidePanelUI.prototype.measureHistoryBytes = function measureHistoryBytes(value: unknown) {
-  try {
-    return historyTextEncoder.encode(JSON.stringify(value)).length;
-  } catch {
-    return historyTextEncoder.encode(String(value)).length;
-  }
 };
 
 SidePanelUI.prototype.truncateHistoryField = function truncateHistoryField(
@@ -123,10 +122,18 @@ SidePanelUI.prototype.readSessionPayload = async function readSessionPayload(
   return expandSessionPayload(payload as ChatSessionPayload);
 };
 
-SidePanelUI.prototype.ensureHistoryStorageMigrated = async function ensureHistoryStorageMigrated() {
+SidePanelUI.prototype.ensureHistoryStorageMigrated = async function ensureHistoryStorageMigrated(
+  options: { alreadyQueued?: boolean } = {},
+) {
   if (this._historyStorageMigrated) return;
 
-  await this.historyWriteQueue.run(async () => {
+  // Chamadores que já estão dentro de historyWriteQueue passam alreadyQueued: reentrar
+  // na fila serial esperaria a própria tarefa externa terminar (deadlock).
+  const runMigration = options.alreadyQueued
+    ? (task: () => Promise<void>) => task()
+    : (task: () => Promise<void>) => this.historyWriteQueue.run(task);
+
+  await runMigration(async () => {
     if (this._historyStorageMigrated) return;
 
     const stored = await chrome.storage.local.get([LEGACY_CHAT_SESSIONS_KEY, CHAT_SESSIONS_INDEX_KEY]);
@@ -192,7 +199,7 @@ SidePanelUI.prototype.saveSessionPayloadWithRetry = async function saveSessionPa
     }
   }
 
-  throw lastError || new Error('Falha ao salvar historico');
+  throw lastError || new Error('Falha ao salvar histórico');
 };
 
 SidePanelUI.prototype.removeHistorySessionKeys = async function removeHistorySessionKeys(sessionIds: string[]) {
@@ -215,6 +222,17 @@ SidePanelUI.prototype.persistHistoryNow = async function persistHistoryNow() {
   const contextSameAsDisplay = transcriptsEqual(transcript, contextTranscriptBuilt);
   const contextTranscript = contextSameAsDisplay ? transcript : contextTranscriptBuilt;
 
+  // Assinatura ANTES do fit (que é o passo caro): se nada mudou desde o último persist, sai cedo.
+  const signature = this.buildHistoryPersistSignature({
+    id: this.sessionId,
+    messageCount: transcript.length,
+    transcript,
+    contextTranscript,
+  });
+  if (signature === this.lastPersistedHistorySignature) {
+    return;
+  }
+
   const entry = fitSessionToBudget(
     {
       schemaVersion: HISTORY_SCHEMA_VERSION,
@@ -229,21 +247,11 @@ SidePanelUI.prototype.persistHistoryNow = async function persistHistoryNow() {
     HISTORY_MAX_SESSION_BYTES,
   );
 
-  const signature = this.buildHistoryPersistSignature({
-    id: entry.id,
-    messageCount: entry.messageCount,
-    transcript: entry.transcript,
-    contextTranscript: contextTranscript,
-  });
-  if (signature === this.lastPersistedHistorySignature) {
-    return;
-  }
-
   try {
     await this.historyWriteQueue.run(async () => {
       if (isHistoryPersistBarrierStale(persistBarrier, this.historyDeletionBarrier)) return;
       if (signature === this.lastPersistedHistorySignature) return;
-      await this.ensureHistoryStorageMigrated();
+      await this.ensureHistoryStorageMigrated({ alreadyQueued: true });
 
       const savedPayload = await this.saveSessionPayloadWithRetry(entry);
       const indexEntry = buildHistoryIndexEntry(savedPayload, historyTextEncoder);
@@ -274,8 +282,8 @@ SidePanelUI.prototype.persistHistoryNow = async function persistHistoryNow() {
       }
     });
   } catch (e) {
-    console.error('Falha ao salvar historico:', e);
-    this.showErrorBanner?.('Falha ao salvar historico.');
+    console.error('Falha ao salvar histórico:', e);
+    this.showErrorBanner?.('Falha ao salvar histórico.');
   }
 };
 
@@ -317,8 +325,12 @@ SidePanelUI.prototype.loadHistoryList = async function loadHistoryList() {
     if (isHistoryListLoadTokenStale(loadToken, this.historyListLoadToken)) return;
     this._cachedChatSessionsIndex = chatSessionsIndex;
     this.elements.historyItems.innerHTML = '';
+    const pendingDeletes = this._pendingHistoryDeletes;
+    const visibleSessions = pendingDeletes?.size
+      ? chatSessionsIndex.filter((session) => !pendingDeletes.has(session.id))
+      : chatSessionsIndex;
 
-    if (!chatSessionsIndex.length) {
+    if (!visibleSessions.length) {
       if (isHistoryListLoadTokenStale(loadToken, this.historyListLoadToken)) return;
       this.elements.historyItems.innerHTML = '<div class="history-empty">Nenhuma conversa salva ainda.</div>';
       this.historyListDirty = false;
@@ -326,9 +338,10 @@ SidePanelUI.prototype.loadHistoryList = async function loadHistoryList() {
     }
 
     const fragment = document.createDocumentFragment();
-    chatSessionsIndex.forEach((session: ChatSessionIndexEntry) => {
+    visibleSessions.forEach((session: ChatSessionIndexEntry) => {
       const item = document.createElement('div');
       item.className = 'history-item';
+      item.dataset.search = normalizeSearchText(session.title || '');
       const date = new Date(session.updatedAt || session.startedAt || Date.now());
       const msgCount = session.messageCount || 0;
       const timeAgo = this.formatTimeAgo(date);
@@ -339,8 +352,8 @@ SidePanelUI.prototype.loadHistoryList = async function loadHistoryList() {
           <div class="history-title">${this.escapeHtml(session.title || 'Sessão sem título')}</div>
           <div class="history-meta">
             <span>${timeAgo}</span>
-            <span class="history-meta-dot">-</span>
-            <span>${msgCount} mensagens</span>
+            <span class="history-meta-dot">·</span>
+            <span>${msgCount} ${msgCount === 1 ? 'mensagem' : 'mensagens'}</span>
           </div>
         </button>
         <button class="history-delete"
@@ -362,7 +375,7 @@ SidePanelUI.prototype.loadHistoryList = async function loadHistoryList() {
       // Delete button
       item.querySelector('.history-delete')?.addEventListener('click', (e: Event) => {
         e.stopPropagation();
-        this.deleteSession(session.id);
+        this.requestDeleteSession(session.id, item);
       });
 
       fragment.appendChild(item);
@@ -370,12 +383,82 @@ SidePanelUI.prototype.loadHistoryList = async function loadHistoryList() {
     if (isHistoryListLoadTokenStale(loadToken, this.historyListLoadToken)) return;
     this.elements.historyItems.appendChild(fragment);
     this.historyListDirty = false;
+    this.filterHistoryList();
   } catch (e) {
     if (isHistoryListLoadTokenStale(loadToken, this.historyListLoadToken)) return;
-    console.error('Falha ao carregar historico:', e);
-    this.showErrorBanner?.('Falha ao carregar historico.');
-    this.elements.historyItems.innerHTML = '<div class="history-empty">Falha ao carregar historico.</div>';
+    console.error('Falha ao carregar histórico:', e);
+    this.showErrorBanner?.('Falha ao carregar histórico.');
+    this.elements.historyItems.innerHTML = '<div class="history-empty">Falha ao carregar histórico.</div>';
   }
+};
+
+/** Filtra a lista pelo título, sem diferenciar acentos nem caixa. */
+SidePanelUI.prototype.filterHistoryList = function filterHistoryList() {
+  const list = this.elements.historyItems as HTMLElement | null;
+  if (!list) return;
+  const query = normalizeSearchText(this.elements.historySearch?.value || '');
+  let visible = 0;
+  for (const item of Array.from(list.querySelectorAll<HTMLElement>('.history-item'))) {
+    const match =
+      !query || (item.dataset.search || '').includes(query) || item.classList.contains('history-item-removed');
+    item.hidden = !match;
+    if (match) visible += 1;
+  }
+  let empty = list.querySelector<HTMLElement>('.history-search-empty');
+  const showEmpty = Boolean(query) && visible === 0 && list.querySelector('.history-item') !== null;
+  if (showEmpty && !empty) {
+    empty = document.createElement('div');
+    empty.className = 'history-empty history-search-empty';
+    empty.textContent = 'Nenhuma conversa encontrada.';
+    list.appendChild(empty);
+  } else if (!showEmpty && empty) {
+    empty.remove();
+  }
+};
+
+/**
+ * Exclusão com desfazer: a linha vira "Conversa excluída · Desfazer" e só é
+ * apagada do storage depois de HISTORY_UNDO_MS (ou ao fechar o painel).
+ */
+SidePanelUI.prototype.requestDeleteSession = function requestDeleteSession(sessionId: string, item: HTMLElement) {
+  this._pendingHistoryDeletes ||= new Map();
+  if (this._pendingHistoryDeletes.has(sessionId)) return;
+  const saved = document.createDocumentFragment();
+  saved.append(...Array.from(item.childNodes));
+  item.classList.add('history-item-removed');
+  item.innerHTML = `
+    <span class="history-undo-text" role="status">Conversa excluída</span>
+    <button type="button" class="btn btn-sm history-undo">Desfazer</button>
+  `;
+
+  const commit = () => {
+    window.clearTimeout(timer);
+    this._pendingHistoryDeletes?.delete(sessionId);
+    item.remove();
+    this.filterHistoryList();
+    void this.deleteSession(sessionId);
+  };
+  const timer = window.setTimeout(commit, HISTORY_UNDO_MS);
+  this._pendingHistoryDeletes.set(sessionId, commit);
+
+  const undoBtn = item.querySelector<HTMLButtonElement>('.history-undo');
+  undoBtn?.addEventListener('click', (e: Event) => {
+    e.stopPropagation();
+    window.clearTimeout(timer);
+    this._pendingHistoryDeletes?.delete(sessionId);
+    item.classList.remove('history-item-removed');
+    item.replaceChildren(saved);
+    item.querySelector<HTMLButtonElement>('.history-item-main')?.focus();
+    this.filterHistoryList();
+  });
+  undoBtn?.focus();
+};
+
+/** Conclui exclusões ainda na janela de desfazer (painel fechando, limpar tudo). */
+SidePanelUI.prototype.flushPendingHistoryDeletes = function flushPendingHistoryDeletes() {
+  const pending = this._pendingHistoryDeletes;
+  if (!pending?.size) return;
+  for (const commit of [...pending.values()]) commit();
 };
 
 SidePanelUI.prototype.loadSessionById = async function loadSessionById(sessionId: string) {
@@ -424,6 +507,9 @@ SidePanelUI.prototype.loadSession = async function loadSession(session: ChatSess
     this.noteAcceptedSessionId?.(this.sessionId);
     this.swContextSyncedSessions.delete(this.sessionId);
     this.pendingSessionId = null;
+    // Sessão salva é persistível: sem isto, continuar uma conversa do histórico depois de
+    // uma "sessão privada" descartava silenciosamente tudo o que o usuário escrevesse.
+    this.privateSession = false;
     this.firstUserMessage = session.title || '';
     void chrome.runtime.sendMessage({ type: 'session_active', sessionId: this.sessionId });
     this.renderConversationHistory();
@@ -440,7 +526,7 @@ SidePanelUI.prototype.deleteSession = async function deleteSession(sessionId: st
   }
   try {
     await this.historyWriteQueue.run(async () => {
-      await this.ensureHistoryStorageMigrated();
+      await this.ensureHistoryStorageMigrated({ alreadyQueued: true });
       const chatSessionsIndex = await this.readHistoryIndex();
       const filtered = chatSessionsIndex.filter((entry) => entry.id !== sessionId);
       this._historyIndexWriteInFlight = true;
@@ -465,13 +551,33 @@ SidePanelUI.prototype.deleteSession = async function deleteSession(sessionId: st
 };
 
 SidePanelUI.prototype.clearAllHistory = async function clearAllHistory() {
-  if (!confirm('Limpar todo o histórico de conversa? Esta ação não pode ser desfeita.')) return;
+  // Confirmação em dois cliques no próprio botão, em vez do confirm() nativo.
+  const btn = this.elements.clearHistoryBtn as HTMLButtonElement | null;
+  if (btn && !btn.classList.contains('confirming')) {
+    const label = btn.textContent || 'Limpar histórico';
+    btn.classList.add('confirming');
+    btn.textContent = 'Confirmar: apagar tudo';
+    this._clearHistoryConfirmTimer = window.setTimeout(() => {
+      btn.classList.remove('confirming');
+      btn.textContent = label;
+      this._clearHistoryConfirmTimer = null;
+    }, HISTORY_CLEAR_CONFIRM_MS);
+    this._clearHistoryConfirmLabel = label;
+    return;
+  }
+  if (btn) {
+    if (this._clearHistoryConfirmTimer) window.clearTimeout(this._clearHistoryConfirmTimer);
+    this._clearHistoryConfirmTimer = null;
+    btn.classList.remove('confirming');
+    btn.textContent = this._clearHistoryConfirmLabel || 'Limpar histórico';
+  }
+  this.flushPendingHistoryDeletes();
 
   this.bumpHistoryDeletionBarrier?.();
   this.lastPersistedHistorySignature = undefined;
   try {
     await this.historyWriteQueue.run(async () => {
-      await this.ensureHistoryStorageMigrated();
+      await this.ensureHistoryStorageMigrated({ alreadyQueued: true });
       const chatSessionsIndex = await this.readHistoryIndex();
       const sessionIds = chatSessionsIndex.map((entry) => entry.id);
       await this.removeHistorySessionKeys(sessionIds);
@@ -485,8 +591,8 @@ SidePanelUI.prototype.clearAllHistory = async function clearAllHistory() {
       }
     });
   } catch (e) {
-    console.error('Falha ao limpar historico:', e);
-    this.showErrorBanner?.('Falha ao limpar historico.');
+    console.error('Falha ao limpar histórico:', e);
+    this.showErrorBanner?.('Falha ao limpar histórico.');
   }
 };
 
@@ -498,9 +604,9 @@ SidePanelUI.prototype.formatTimeAgo = function formatTimeAgo(date: Date): string
   const days = Math.floor(diff / 86400000);
 
   if (minutes < 1) return 'Agora';
-  if (minutes < 60) return `${minutes} min atras`;
-  if (hours < 24) return `${hours} h atras`;
-  if (days < 7) return `${days} d atras`;
+  if (minutes < 60) return `${minutes} min atrás`;
+  if (hours < 24) return `${hours} h atrás`;
+  if (days < 7) return `${days} d atrás`;
   return date.toLocaleDateString();
 };
 

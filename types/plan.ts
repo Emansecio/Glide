@@ -1,7 +1,7 @@
 export type PlanStatus = 'pending' | 'running' | 'done' | 'blocked';
-export type PlanStatusProvenance = 'model' | 'manual';
+type PlanStatusProvenance = 'model' | 'manual';
 
-export const PLAN_STATUSES = ['pending', 'running', 'done', 'blocked'] as const;
+const PLAN_STATUSES = ['pending', 'running', 'done', 'blocked'] as const;
 
 const PLAN_STATUS_SET = new Set<PlanStatus>(PLAN_STATUSES);
 
@@ -71,16 +71,6 @@ function nextStepId(reservedIds: Set<string>, startAt = 1): string {
   let sequence = startAt;
   while (reservedIds.has(`step-${sequence}`)) sequence += 1;
   return `step-${sequence}`;
-}
-
-export function normalizePlanSteps(input: unknown, options: { maxSteps?: number } = {}): PlanStep[] {
-  const drafts = normalizePlanStepInputs(input, options.maxSteps ?? 8);
-  const reservedIds = new Set<string>();
-  return drafts.map(({ requestedId, ...step }) => {
-    const id = requestedId && !reservedIds.has(requestedId) ? requestedId : nextStepId(reservedIds);
-    reservedIds.add(id);
-    return { id, ...step };
-  });
 }
 
 export function buildRunPlan(

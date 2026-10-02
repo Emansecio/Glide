@@ -136,12 +136,28 @@ class ExtensionValidator {
         'tabGroups',
         'storage',
         'debugger',
+        'downloads',
+        'notifications',
+        'webNavigation',
         'declarativeNetRequestWithHostAccess',
       ];
       const permissions = Array.isArray(this.manifest?.permissions) ? this.manifest.permissions : [];
       const missing = required.filter((p) => !permissions.includes(p));
       if (missing.length > 0) {
         throw new Error(`Missing permissions: ${missing.join(', ')}`);
+      }
+    });
+
+    this.test('extension pages CSP blocks remote images (markdown exfiltration)', () => {
+      const csp = String(
+        (this.manifest as Manifest & { content_security_policy?: { extension_pages?: string } })
+          ?.content_security_policy?.extension_pages || '',
+      );
+      if (!/img-src\s+'self'/.test(csp) || /img-src[^;]*https?:/.test(csp)) {
+        throw new Error("extension_pages CSP must restrict img-src to 'self' data: blob:");
+      }
+      if (/unsafe-eval|unsafe-inline/.test(csp.split(';').find((d) => d.trim().startsWith('script-src')) || '')) {
+        throw new Error('extension_pages CSP must not allow unsafe script sources');
       }
     });
 

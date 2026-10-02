@@ -69,6 +69,8 @@ export class SidePanelUI {
   isStreaming: boolean;
   thinkingStartedAt: number | null;
   thinkingTimerId: number | null;
+  /** Reescreve já o rótulo do cronômetro (troca de fase não espera o próximo segundo). */
+  _tickThinkingTimer?: (() => void) | null;
   /** Intervalo compartilhado de duração ao vivo das ferramentas em execução. */
   _toolDurationTimerId: number | null;
   /** Status line reflete retry do provedor até stream/ferramenta retomar. */
@@ -92,29 +94,30 @@ export class SidePanelUI {
   streamingState: {
     container: HTMLElement;
     eventsEl: HTMLElement | null;
-    lastEventType?: 'text' | 'reasoning' | 'tool' | 'plan';
+    lastEventType?: 'text' | 'reasoning' | 'tool';
     textEventEl?: HTMLElement | null;
     reasoningEventEl?: HTMLElement | null;
     textBuffer?: string;
     textPendingBuffer?: string;
     reasoningBuffer?: string;
     reasoningRawBuffer?: string;
-    planEl?: HTMLElement | null;
-    planListEl?: HTMLOListElement | null;
-    planMetaEl?: HTMLElement | null;
-    accumulated?: boolean;
     executionTurnKey?: string | null;
     executionDetailsEl?: HTMLElement | null;
-    executionSummaryTitleEl?: HTMLElement | null;
-    executionSummaryMetaEl?: HTMLElement | null;
-    executionHumanSummaryEl?: HTMLElement | null;
+    executionTitleEl?: HTMLElement | null;
     _lastMdPos?: number;
     // Nós de texto dedicados para flush incremental (appendData) durante o
     // streaming — reatribuir textContent com o buffer inteiro é O(n²).
-    textNode?: Text | null;
+    textTailEl?: HTMLElement | null;
     reasoningTextNode?: Text | null;
     thinkingPanelTextNode?: Text | null;
     reasoningFlushedLength?: number;
+    /** Offset in textBuffer up to which finished markdown blocks were rendered. */
+    mdCommittedPos?: number;
+    mdCommittedEl?: HTMLElement | null;
+    /** Tabela em aberto desenhada linha a linha; `mdTailHeld` esconde a sintaxe crua. */
+    mdLiveEl?: HTMLElement | null;
+    mdLiveLines?: number;
+    mdTailHeld?: boolean;
     // Marcado no stop: deltas atrasados não podem reviver a bolha finalizada.
     completed?: boolean;
   } | null;
@@ -141,8 +144,6 @@ export class SidePanelUI {
   historyPersistence: 'full' | 'redacted' | 'off';
   historyWriteQueue: SerialTaskQueue;
   historyListDirty: boolean;
-  currentView: 'chat' | 'history';
-  settingsOpen: boolean;
   modelsFetchController: AbortController | null;
   modelsFetchSeq: number;
   modelsFetchRequestKey: string;
@@ -203,13 +204,22 @@ export class SidePanelUI {
   _streamDrainScheduled?: boolean;
   /** rAF de auto-scroll em voo — garante um scroll por frame (panel-scroll). */
   _scrollRafId?: number;
+  /** Próximo passo do auto-scroll pula direto para o fim (panel-scroll). */
+  _scrollInstant?: boolean;
+  /** Último scrollTop escrito pelo acompanhamento — distingue-o do usuário. */
+  _scrollFollowTop?: number;
   /** rAF de sincronia do scroll do usuário — uma leitura de layout por frame. */
   _scrollSyncRafId?: number;
   /** Tool-log auto-scroll rAF; at most one callback per frame. */
   _toolLogScrollRafId?: number;
   /** Densidade do composer memorizada; null = precisa remedir (panel-tools). */
   _composerDensity?: 'tight' | 'compact' | 'normal' | null;
-  _planChecklistClickBound?: boolean;
+  /** Exclusões de histórico dentro da janela de desfazer: id → commit imediato. */
+  _pendingHistoryDeletes?: Map<string, () => void>;
+  _clearHistoryConfirmTimer?: number | null;
+  _clearHistoryConfirmLabel?: string | null;
+  /** User toggled the plan drawer for the current plan — suppresses auto-collapse. */
+  _planDrawerUserToggled?: boolean;
   _runtimeMessageHandler?: ((...args: any[]) => any) | null;
   /** Disconnects the SW→panel push port (panel-port.ts). */
   _panelPortDisconnect?: (() => void) | null;
@@ -220,7 +230,6 @@ export class SidePanelUI {
   // Methods attached via prototype in panel-modules
 
   switchView(view: 'chat' | 'history') {
-    this.currentView = view;
     if (!this.elements.chatInterface || !this.elements.historyPanel) return;
     if (view === 'history') {
       this.recordScrollPosition();
@@ -234,7 +243,6 @@ export class SidePanelUI {
   }
 
   openChatView() {
-    this.settingsOpen = false;
     showRightPanel(this.elements, null);
     this.switchView('chat');
     updateNavActive(this.elements, 'chat');
@@ -242,7 +250,6 @@ export class SidePanelUI {
   }
 
   openHistoryPanel() {
-    this.settingsOpen = false;
     setSidebarOpen(this.elements, true);
     showRightPanel(this.elements, 'history');
     updateNavActive(this.elements, 'history');
@@ -252,7 +259,6 @@ export class SidePanelUI {
   }
 
   openSettingsPanel() {
-    this.settingsOpen = true;
     setSidebarOpen(this.elements, true);
     showRightPanel(this.elements, 'settings');
     updateNavActive(this.elements, 'settings');
@@ -372,8 +378,6 @@ export class SidePanelUI {
     this.historyPersistDebounceTimerId = null;
     this.historyWriteQueue = new SerialTaskQueue();
     this.historyListDirty = false;
-    this.currentView = 'chat';
-    this.settingsOpen = false;
     this.modelsFetchController = null;
     this.modelsFetchSeq = 0;
     this.modelsFetchRequestKey = '';
@@ -464,8 +468,12 @@ export interface SidePanelUI {
   createExecutionTurnSummary(...args: any[]): any;
   createToolTreeItem(...args: any[]): any;
   deleteSession(...args: any[]): any;
+  requestDeleteSession(sessionId: string, item: HTMLElement): void;
+  flushPendingHistoryDeletes(): void;
+  filterHistoryList(): void;
   ensureHistoryStorageMigrated(...args: any[]): any;
-  destroy(...args: any[]): any;
+  adoptActiveRunIfAny(): Promise<void>;
+  ingestFiles(files: File[]): Promise<void>;
   destroyResizeObserver(...args: any[]): any;
   detectOllamaDetailed(...args: any[]): any;
   detectProviderModels(...args: any[]): any;
@@ -476,7 +484,6 @@ export interface SidePanelUI {
   downloadJsonFile(...args: any[]): any;
   ensureAttachmentsState(...args: any[]): any;
   ensureExecutionTurnSummary(...args: any[]): any;
-  ensurePlanBlock(...args: any[]): any;
   ensureStreamingExecutionDetailsVisible(...args: any[]): any;
   escapeAttribute(...args: any[]): any;
   escapeHtml(...args: any[]): any;
@@ -537,8 +544,6 @@ export interface SidePanelUI {
   mapToolToExecutionStep(...args: any[]): any;
   maybeNotifyRunComplete(...args: any[]): any;
   resolveErrorBannerAction(...args: any[]): any;
-  resolveToolErrorBannerAction(...args: any[]): any;
-  measureHistoryBytes(...args: any[]): any;
   moveModelMenuFocus(...args: any[]): any;
   normalizeUsage(...args: any[]): any;
   openSidebar(...args: any[]): any;
@@ -575,6 +580,7 @@ export interface SidePanelUI {
   sweepInFlightToolContainers(...args: any[]): any;
   syncHistoryPersistenceSegments(...args: any[]): any;
   syncAssistantActionButtons(...args: any[]): any;
+  setExecutionActivityLabel(...args: any[]): any;
   setComposerBusy(busy: boolean): void;
   resetContextUsageTracking(...args: any[]): any;
   resolveModelFamilyBySource(...args: any[]): any;
@@ -588,7 +594,7 @@ export interface SidePanelUI {
   scheduleStreamingReasoningRender(...args: any[]): any;
   scheduleStreamingTextRender(...args: any[]): any;
   scheduleDeferredMarkdownRender(el: HTMLElement, buffer: string): void;
-  scrollToBottom(options?: { force?: boolean }): void;
+  scrollToBottom(options?: { force?: boolean; instant?: boolean }): void;
   scrollToolLogToBottom(...args: any[]): any;
   selectModelOptionByElement(...args: any[]): any;
   sendMessage(...args: any[]): any;
@@ -616,6 +622,7 @@ export interface SidePanelUI {
   toggleCustomEndpoint(...args: any[]): any;
   toggleModelMenu(...args: any[]): any;
   togglePlanDrawer(...args: any[]): any;
+  collapsePlanDrawerForAnswer(): void;
   togglePlanStep(...args: any[]): any;
   trackExecutionToolResult(...args: any[]): any;
   trackExecutionTurnStart(...args: any[]): any;
@@ -637,8 +644,6 @@ export interface SidePanelUI {
   updateStreamReasoning(...args: any[]): any;
   updateStreamingMessage(...args: any[]): any;
   updateThinkingPanel(...args: any[]): any;
-  updateToolLogEntry(...args: any[]): any;
-  updateToolMessage(...args: any[]): any;
   updateToolTreeItem(...args: any[]): any;
   updateUsageStats(...args: any[]): any;
 }

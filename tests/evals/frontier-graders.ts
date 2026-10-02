@@ -7,7 +7,7 @@ export type FrontierGrade = {
   metrics: Record<string, number>;
 };
 
-export type FrontierEvidenceSource = 'production_runtime' | 'fixture_state' | 'runtime_message' | 'storage_state';
+type FrontierEvidenceSource = 'production_runtime' | 'fixture_state' | 'runtime_message' | 'storage_state';
 
 export type FrontierEvalTrace = {
   events: Array<{

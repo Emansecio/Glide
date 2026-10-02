@@ -1,7 +1,7 @@
 import { ATTACHMENT_LIMITS, validateAttachmentBatch } from './attachment-policy.js';
 import { SidePanelUI } from './panel-ui.js';
 
-export type PendingAttachment = {
+type PendingAttachment = {
   id: string;
   kind: 'text' | 'image';
   name: string;
@@ -66,7 +66,7 @@ async function readAsDataUrl(file: Blob): Promise<string> {
 }
 
 /** Downscale + re-encode to JPEG data URL for lighter multimodal payloads. */
-export async function compressImageBlob(
+async function compressImageBlob(
   blob: Blob,
   maxEdge = MAX_IMAGE_EDGE,
   quality = JPEG_QUALITY,
@@ -152,7 +152,7 @@ SidePanelUI.prototype.renderPendingAttachments = function renderPendingAttachmen
               <span class="attachment-chip-name">${this.escapeHtmlBasic(att.name)}</span>
               <span class="attachment-chip-size">${this.escapeHtmlBasic(att.sizeLabel)}</span>
             </span>
-            <button type="button" class="attachment-chip-remove" data-att-remove="${this.escapeAttribute(att.id)}" title="Remover" aria-label="Remover anexo">
+            <button type="button" class="attachment-chip-remove" data-att-remove="${this.escapeAttribute(att.id)}" title="Remover" aria-label="Remover anexo ${this.escapeAttribute(att.name)}">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                 <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
               </svg>
@@ -169,7 +169,7 @@ SidePanelUI.prototype.renderPendingAttachments = function renderPendingAttachmen
             <span class="attachment-chip-name">${this.escapeHtmlBasic(att.name)}</span>
             <span class="attachment-chip-size">${this.escapeHtmlBasic(att.sizeLabel)}</span>
           </span>
-          <button type="button" class="attachment-chip-remove" data-att-remove="${this.escapeAttribute(att.id)}" title="Remover" aria-label="Remover anexo">
+          <button type="button" class="attachment-chip-remove" data-att-remove="${this.escapeAttribute(att.id)}" title="Remover" aria-label="Remover anexo ${this.escapeAttribute(att.name)}">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
@@ -256,6 +256,11 @@ SidePanelUI.prototype.handleFileSelection = async function handleFileSelection(e
   if (!input) return;
   const files = Array.from(input.files || []) as File[];
   input.value = '';
+  await this.ingestFiles(files);
+};
+
+/** Ponto único de entrada de arquivos (seletor e drag-and-drop). */
+SidePanelUI.prototype.ingestFiles = async function ingestFiles(files: File[]) {
   if (!files.length) return;
 
   const decisions = validateAttachmentBatch(this.ensureAttachmentsState(), files);
@@ -328,7 +333,11 @@ SidePanelUI.prototype.buildAttachmentModelContent = function buildAttachmentMode
   const images: string[] = [];
   for (const att of attachments) {
     if (att.kind === 'text' && att.text) {
-      textBlocks.push(`<attached_file name="${att.name}">\n${att.text}\n</attached_file>`);
+      // Escapa o nome e qualquer tag de fechamento no corpo: o arquivo é conteúdo não confiável
+      // e não pode encerrar o envelope e se passar por instrução.
+      const safeName = att.name.replace(/[<>"&]/g, '_');
+      const safeText = att.text.replace(/<(\/?)attached_file/gi, '<$1attached_file_');
+      textBlocks.push(`<attached_file name="${safeName}">\n${safeText}\n</attached_file>`);
     } else if (att.kind === 'image' && att.dataUrl) {
       images.push(att.dataUrl);
       textBlocks.push(`[Imagem anexada: ${att.name}]`);

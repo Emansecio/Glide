@@ -45,13 +45,19 @@ export function isCspEvalError(message: string): boolean {
  * `return`, or a bare expression (auto-wrapped as `return (expr)`).
  * Top-level `await` is wrapped in an async IIFE so fetch loops work.
  */
+const WHOLE_ASYNC_IIFE = /^\s*\(\s*async[\s\S]*\)\s*\(\s*\)(?:\s*\.(?:then|catch|finally)\([\s\S]*\))*\s*;?\s*$/;
+
 export function buildExecutableBody(code: string): string {
   const body = String(code || '').trim();
   if (!body) return 'return undefined;';
 
   // Already an async IIFE the model wrote — leave as-is (ensure return).
   if (/^\s*return\s*\(\s*async\s*\(/.test(body) || /^\s*\(\s*async\s*\(/.test(body)) {
-    if (/\breturn\b/.test(body)) return body;
+    // Um `return` interno da IIFE não conta: sem o `return` externo o valor se perdia (result: null).
+    // Só prefixa quando a IIFE (com .then/.catch opcionais) é o script inteiro; com código depois
+    // dela o `return` tornaria esse código morto.
+    if (/^\s*return\b/.test(body)) return body;
+    if (/\breturn\b/.test(body) && !WHOLE_ASYNC_IIFE.test(body)) return body;
     return `return ${body}`;
   }
 
@@ -60,6 +66,15 @@ export function buildExecutableBody(code: string): string {
     // new Function cannot be async itself; wrap so top-level await is valid.
     if (/\breturn\b/.test(body)) {
       return `return (async () => { ${body} })();`;
+    }
+    // Expressão única com await (ex.: `await fetch(u).then(r => r.json())`): devolve o valor.
+    const single = body.replace(/;+\s*$/, '');
+    if (
+      !single.includes(';') &&
+      !single.includes('\n') &&
+      !/^(var|let|const|if|for|while|switch|try|class|function|do|throw|with)\b/.test(single)
+    ) {
+      return `return (async () => { return (${single}); })();`;
     }
     return `return (async () => { ${body} })();`;
   }
@@ -96,7 +111,14 @@ export async function runUserScriptInPage(source: string): Promise<ExecuteScript
   let withReturn = raw;
   if (!/^\s*return\s*\(\s*async\s*\(/.test(raw) && !/^\s*\(\s*async\s*\(/.test(raw)) {
     if (/\bawait\b/.test(raw)) {
-      withReturn = `return (async () => { ${raw} })();`;
+      const single = raw.replace(/;+\s*$/, '');
+      withReturn =
+        !/\breturn\b/.test(raw) &&
+        !single.includes(';') &&
+        !single.includes('\n') &&
+        !/^(var|let|const|if|for|while|switch|try|class|function|do|throw|with)\b/.test(single)
+          ? `return (async () => { return (${single}); })();`
+          : `return (async () => { ${raw} })();`;
     } else if (/\breturn\b/.test(raw)) {
       withReturn = raw;
     } else if (
@@ -108,7 +130,11 @@ export async function runUserScriptInPage(source: string): Promise<ExecuteScript
     } else {
       withReturn = `return (${raw});`;
     }
-  } else if (!/\breturn\b/.test(raw)) {
+  } else if (
+    !/^\s*return\b/.test(raw) &&
+    (!/\breturn\b/.test(raw) ||
+      /^\s*\(\s*async[\s\S]*\)\s*\(\s*\)(?:\s*\.(?:then|catch|finally)\([\s\S]*\))*\s*;?\s*$/.test(raw))
+  ) {
     withReturn = `return ${raw}`;
   }
 
@@ -227,11 +253,11 @@ export function isUserScriptsApiAvailable(): boolean {
 }
 
 /** Default / max timeout for executeScript (pagination loops need headroom). */
-export const EXECUTE_SCRIPT_DEFAULT_TIMEOUT_MS = 60000;
-export const EXECUTE_SCRIPT_MAX_TIMEOUT_MS = 120000;
-export const EXECUTE_SCRIPT_MIN_TIMEOUT_MS = 1000;
+const EXECUTE_SCRIPT_DEFAULT_TIMEOUT_MS = 60000;
+const EXECUTE_SCRIPT_MAX_TIMEOUT_MS = 120000;
+const EXECUTE_SCRIPT_MIN_TIMEOUT_MS = 1000;
 /** Cap serialized executeScript results to avoid unbounded JSON buffering. */
-export const EXECUTE_SCRIPT_MAX_RESULT_CHARS = 100_000;
+const EXECUTE_SCRIPT_MAX_RESULT_CHARS = 100_000;
 
 export function truncateExecuteScriptValue(
   value: unknown,
@@ -262,19 +288,6 @@ export function truncateExecuteScriptValue(
       serializedAs: 'string',
     };
   }
-}
-
-/** MAIN→ISOLATED retry is safe only for pre-execution compile/CSP failures. */
-export function shouldAllowMainToIsolatedFallback(outcome: {
-  ok: false;
-  phase?: string;
-  timedOut?: boolean;
-  cspLikely?: boolean;
-  error?: string;
-}): boolean {
-  if (outcome.ok !== false || outcome.timedOut) return false;
-  if (outcome.phase !== 'compile') return false;
-  return Boolean(outcome.cspLikely) || isCspEvalError(String(outcome.error || ''));
 }
 
 export function resolveExecuteScriptTimeoutMs(raw: unknown): number {

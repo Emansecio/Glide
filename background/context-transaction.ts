@@ -1,7 +1,7 @@
 import { type Message, cloneConversationHistory, normalizeConversationHistory } from '../ai/message-schema.js';
 import { MAX_SESSION_CONTEXT_STORE_SIZE } from './session-context-store.js';
 
-export type ContextUsage = {
+type ContextUsage = {
   approxTokens?: number;
   contextLimit?: number;
   percent?: number;
@@ -60,8 +60,8 @@ export type ContextTransactionRetentionOptions = {
   maxTerminalPayloads?: number;
 };
 
-export const MAX_CONTEXT_TRANSACTION_TERMINAL_DIGESTS = 100;
-export const MAX_CONTEXT_TRANSACTION_TERMINAL_PAYLOADS = 8;
+const MAX_CONTEXT_TRANSACTION_TERMINAL_DIGESTS = 100;
+const MAX_CONTEXT_TRANSACTION_TERMINAL_PAYLOADS = 8;
 
 const cloneCommit = (commit: ContextCommit): ContextCommit => ({
   ...commit,
@@ -163,6 +163,14 @@ export class ContextTransactionStore {
       messages: cloneConversationHistory(normalizeConversationHistory(messages)),
     });
     return { accepted: true, state, revision };
+  }
+
+  /** Revisão atual sem clonar o histórico — `read()` copia a conversa inteira. */
+  getRevision(sessionId: string): number {
+    const id = String(sessionId || '').trim();
+    const snapshot = this.sessions.get(id);
+    if (snapshot) this.touchSession(id);
+    return snapshot?.revision ?? 0;
   }
 
   read(sessionId: string): SessionSnapshot {

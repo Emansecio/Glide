@@ -77,7 +77,10 @@ export const evaluateDomPostcondition = async (payload: Record<string, unknown>,
       };
     },
     {
-      timeoutMs: typeof payload.postconditionTimeoutMs === 'number' ? payload.postconditionTimeoutMs : 3000,
+      timeoutMs:
+        typeof payload.postconditionTimeoutMs === 'number' && Number.isFinite(payload.postconditionTimeoutMs)
+          ? Math.min(15000, Math.max(0, payload.postconditionTimeoutMs))
+          : 3000,
       baselineUrl,
     },
   );

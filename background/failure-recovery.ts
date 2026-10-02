@@ -8,7 +8,7 @@ export type FailureAction = {
 };
 
 /** Browser actions that count toward identical-failure stopping — excludes polling `wait`. */
-export const FAILURE_TRACKED_TOOLS = new Set<string>(BROWSER_ACTION_TOOLS.filter((tool) => tool !== 'wait'));
+const FAILURE_TRACKED_TOOLS = new Set<string>(BROWSER_ACTION_TOOLS.filter((tool) => tool !== 'wait'));
 
 export const isFailureTrackedTool = (toolName: string): boolean => FAILURE_TRACKED_TOOLS.has(toolName);
 
@@ -51,16 +51,6 @@ export class FailureRecoveryTracker {
     this.counts.clear();
   }
 }
-
-export const shouldForceFailedToolContinuation = ({
-  hasFailedTools,
-  awaitingVerification,
-  alreadyUsed,
-}: {
-  hasFailedTools: boolean;
-  awaitingVerification: boolean;
-  alreadyUsed: boolean;
-}) => decideFailedToolOutcome({ hasFailedTools, awaitingVerification, alreadyUsed }) === 'continue';
 
 export type FailedToolOutcome = 'complete' | 'continue' | 'fail';
 

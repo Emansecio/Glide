@@ -6,9 +6,9 @@
 import { isCrossOriginRedirect, isUrlAllowedByDomains, parseAllowedDomains } from './domain-policy.js';
 import { requireHttpUrl } from './validation.js';
 
-export const HTTP_REQUEST_MAX_BODY_CHARS = 100_000;
-export const HTTP_REQUEST_DEFAULT_TIMEOUT_MS = 30_000;
-export const HTTP_REQUEST_MAX_TIMEOUT_MS = 90_000;
+const HTTP_REQUEST_MAX_BODY_CHARS = 100_000;
+const HTTP_REQUEST_DEFAULT_TIMEOUT_MS = 30_000;
+const HTTP_REQUEST_MAX_TIMEOUT_MS = 90_000;
 
 const FORBIDDEN_REQUEST_HEADERS = new Set([
   'cookie',
@@ -27,7 +27,7 @@ const FORBIDDEN_REQUEST_HEADERS = new Set([
 ]);
 
 /** Strip on cross-origin redirect hops so secrets do not follow open-redirect chains. */
-export const SENSITIVE_REDIRECT_HEADERS = new Set([
+const SENSITIVE_REDIRECT_HEADERS = new Set([
   'authorization',
   'proxy-authorization',
   'x-api-key',
@@ -81,7 +81,7 @@ export function normalizeHttpMethod(raw: unknown): string {
   return 'GET';
 }
 
-export function resolveAllowedDomainList(raw: unknown): string[] {
+function resolveAllowedDomainList(raw: unknown): string[] {
   if (Array.isArray(raw)) {
     return raw
       .map((entry) =>
@@ -122,20 +122,20 @@ export function sanitizeHttpHeaders(raw: unknown): Record<string, string> {
   return out;
 }
 
-export function resolveHttpTimeoutMs(raw: unknown): number {
+function resolveHttpTimeoutMs(raw: unknown): number {
   const n = Number(raw);
   if (!Number.isFinite(n)) return HTTP_REQUEST_DEFAULT_TIMEOUT_MS;
   return Math.min(HTTP_REQUEST_MAX_TIMEOUT_MS, Math.max(1000, Math.round(n)));
 }
 
-export function resolveHttpMaxBodyChars(raw: unknown): number {
+function resolveHttpMaxBodyChars(raw: unknown): number {
   const n = Number(raw);
   if (!Number.isFinite(n)) return 50_000;
   return Math.min(HTTP_REQUEST_MAX_BODY_CHARS, Math.max(500, Math.round(n)));
 }
 
 /** Max redirect hops when following manually (re-check private hosts each hop). */
-export const HTTP_REQUEST_MAX_REDIRECTS = 10;
+const HTTP_REQUEST_MAX_REDIRECTS = 10;
 
 const isRedirectStatus = (status: number) =>
   status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
@@ -249,6 +249,22 @@ export async function performHttpRequest(
         signal: controller.signal,
         redirect: 'manual',
       });
+      if (response.type === 'opaqueredirect') {
+        // `redirect: 'manual'` devolve resposta opaca (status 0, sem Location) em fetch de
+        // extensão; sem este erro o redirect virava "sucesso" com corpo vazio.
+        const mutating = method !== 'GET' && method !== 'HEAD';
+        return {
+          success: false,
+          error: 'httpRequest hit a redirect whose target could not be inspected.',
+          hint: mutating
+            ? 'The request WAS sent and may have taken effect; verify the result before retrying a mutation.'
+            : 'Request the final URL directly (check for http→https or trailing-slash redirects).',
+          url,
+          status: response.status,
+          // Para POST/PUT/DELETE o servidor já recebeu e executou: não repetir às cegas.
+          ...(mutating ? { dispatched: true, outcomeCertainty: 'unknown' as const } : {}),
+        };
+      }
       if (!isRedirectStatus(response.status)) break;
       if (hop === HTTP_REQUEST_MAX_REDIRECTS) {
         return {

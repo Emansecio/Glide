@@ -104,7 +104,7 @@ export const normalizeRuntimeSettings = (raw: Record<string, unknown>): Record<s
   return settings;
 };
 
-export const invalidateRuntimeSettingsCache = () => {
+const invalidateRuntimeSettingsCache = () => {
   cachedSettings = null;
   cachedAt = 0;
 };

@@ -340,10 +340,6 @@ SidePanelUI.prototype.loadSettings = async function loadSettings() {
   this.fillSettingsModelSelect?.(activeConfig.provider, activeConfig.model);
   if (this.elements.customEndpoint) this.elements.customEndpoint.value = activeConfig.customEndpoint;
   if (this.elements.systemPrompt) this.elements.systemPrompt.value = activeConfig.systemPrompt || fallbackPrompt;
-  if (this.elements.enableDebugger) {
-    const perms = (settings as Record<string, any>).toolPermissions || {};
-    this.elements.enableDebugger.checked = perms.debugger === true;
-  }
   this.applyPermissionCheckboxes((settings as Record<string, any>).toolPermissions || {});
   this.historyPersistence = resolveHistoryPersistenceMode((settings as Record<string, unknown>).historyPersistence);
   this.bindHistoryPersistenceControl();
@@ -408,12 +404,8 @@ SidePanelUI.prototype.persistAllSettings = async function persistAllSettings({ s
     existing.toolPermissions && typeof existing.toolPermissions === 'object'
       ? { ...(existing.toolPermissions as Record<string, unknown>) }
       : {};
-  // Only touch debugger when the control is mounted. Silent saves (OAuth, model
-  // picker) must not clobber an existing opt-in just because the checkbox is
-  // unchecked/missing before loadSettings.
-  if (this.elements.enableDebugger) {
-    prevPerms.debugger = this.elements.enableDebugger.checked === true;
-  }
+  // CDP deixou de ser opt-in: remove a chave legada em vez de carregá-la adiante.
+  delete prevPerms.debugger;
   this.collectPermissionCheckboxes(prevPerms);
 
   const payload: Record<string, unknown> = {

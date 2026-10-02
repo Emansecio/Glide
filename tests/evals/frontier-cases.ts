@@ -7,7 +7,7 @@ export type FrontierTerminalReason =
   | 'interrupted'
   | 'ambiguous_action';
 
-export type FrontierEffectExpectation = {
+type FrontierEffectExpectation = {
   events: number;
   mutations: number;
   committedAttempts: number;

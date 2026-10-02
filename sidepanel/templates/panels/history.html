@@ -1,11 +1,11 @@
 ﻿<div id="historyPanel" class="right-panel-content hidden" data-panel="history">
-    <div class="panel-header">
-        <span class="panel-title">Histórico</span>
-        <div class="panel-header-actions">
-            <button id="privateSessionBtn" class="btn btn-secondary" title="Nova conversa sem gravar histórico">Sessão privada</button>
-            <button id="clearHistoryBtn" class="btn btn-secondary" title="Limpar histórico">Limpar</button>
-            <button id="startNewSessionBtn" class="btn btn-primary">Nova conversa</button>
-        </div>
+    <div class="panel-header history-header">
+        <input id="historySearch" class="history-search" type="search" placeholder="Buscar conversas" aria-label="Buscar conversas" autocomplete="off" spellcheck="false" />
+        <button id="startNewSessionBtn" class="btn btn-primary">Nova conversa</button>
     </div>
     <div id="historyItems" class="history-items"></div>
+    <div class="history-footer">
+        <button id="privateSessionBtn" class="btn btn-sm" title="Nova conversa sem gravar histórico">Sessão privada</button>
+        <button id="clearHistoryBtn" class="btn btn-sm history-clear" title="Excluir todas as conversas salvas">Limpar histórico</button>
+    </div>
 </div>

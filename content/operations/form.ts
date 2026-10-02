@@ -20,9 +20,29 @@ const applyText = (element: HTMLElement, text: string) => {
       : { success: false, code: 'VALUE_NOT_APPLIED', error: 'Field did not retain typed value.' };
   }
   if (element.isContentEditable) {
-    element.textContent = text;
-    element.dispatchEvent(new InputEvent('input', { bubbles: true, data: text }));
-    return { success: true, strategy: 'bridge-type' };
+    // Editores Lexical/Draft/Slate (DMs, Slack, Gmail) ignoram `textContent`: o estado interno
+    // fica vazio e o envio falha. `insertText` passa pelo pipeline normal de edição do navegador.
+    let strategy = 'bridge-type';
+    try {
+      element.focus();
+      const selection = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      const done = text ? document.execCommand('insertText', false, text) : document.execCommand('delete');
+      if (done) strategy = 'bridge-type-exec';
+    } catch {
+      // execCommand indisponível: cai no caminho direto abaixo.
+    }
+    if (strategy === 'bridge-type') {
+      element.textContent = text;
+      element.dispatchEvent(new InputEvent('input', { bubbles: true, data: text }));
+    }
+    const normalize = (value: string) => value.replace(/\s+/g, ' ').trim();
+    return normalize(element.textContent || '') === normalize(text)
+      ? { success: true, strategy }
+      : { success: false, code: 'VALUE_NOT_APPLIED', error: 'Editable field did not retain typed text.' };
   }
   return { success: false, code: 'NOT_EDITABLE', error: 'Target is not editable.' };
 };

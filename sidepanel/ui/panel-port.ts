@@ -2,6 +2,7 @@ import { PANEL_PORT_NAME } from '../../background/runtime-push.js';
 
 export const PORT_RECONNECT_INITIAL_MS = 250;
 export const PORT_RECONNECT_MAX_MS = 2000;
+const PORT_STABLE_AFTER_MS = 5000;
 
 export function computePortReconnectDelayMs(attempt: number): number {
   if (!Number.isFinite(attempt) || attempt < 0) return PORT_RECONNECT_MAX_MS;
@@ -36,10 +37,13 @@ export function connectPanelPort(
     if (disposed) return;
     if (port) return;
     port = chrome.runtime.connect({ name: PANEL_PORT_NAME });
-    reconnectAttempt = 0;
+    const connectedAt = Date.now();
     port.onMessage.addListener(onMessage);
     port.onDisconnect.addListener(() => {
       port = null;
+      // Zerar o backoff a cada connect() anulava o crescimento: um worker que derruba a porta em
+      // loop era religado a cada 250ms. Só considera "estável" quem ficou conectado por um tempo.
+      if (Date.now() - connectedAt >= PORT_STABLE_AFTER_MS) reconnectAttempt = 0;
       if (disposed) return;
       if (options.shouldReconnect?.()) {
         scheduleReconnect();

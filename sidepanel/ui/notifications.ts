@@ -63,7 +63,7 @@ export const clearErrorBanner = () => clearBySeverity('error');
 
 export const clearWarningBanner = () => clearBySeverity('warning');
 
-export const showBanner = (message: string, severity: BannerSeverity = 'error', options: BannerOptions = {}) => {
+const showBanner = (message: string, severity: BannerSeverity = 'error', options: BannerOptions = {}) => {
   // Só substitui um banner da MESMA severidade: um aviso informativo não pode
   // apagar o erro que o usuário ainda não leu (e vice-versa).
   clearBySeverity(severity);

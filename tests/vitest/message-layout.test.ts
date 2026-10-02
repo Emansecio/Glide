@@ -22,12 +22,15 @@ describe('message layout contracts', () => {
       clearStreamingRenderTimers: vi.fn(),
       lastChatTurn: turn,
       elements: { chatMessages: messages, thinkingPanel: null },
+      buildAssistantHeaderHtml: () => '<span class="assistant-name">Glide</span>',
       updateExecutionDetailsHeader: vi.fn(),
       updateThinkingPanel: vi.fn(),
       scrollToBottom: vi.fn(),
     };
     (SidePanelUI.prototype as any).startStreamingMessage.call(ui);
     expect(turn.querySelector('.message.assistant')).toBeTruthy();
+    // Cabeçalho desde o início: inserido só no fim, deslocava a resposta inteira.
+    expect(turn.querySelector('.message.assistant > .message-header')).toBeTruthy();
     expect(messages.children).toHaveLength(1);
   });
 });

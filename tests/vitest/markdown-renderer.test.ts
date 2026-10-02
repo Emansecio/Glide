@@ -38,7 +38,7 @@ describe('renderMarkdownToHtml', () => {
     expect(result.html).toContain('<code class="language-ts">');
   });
 
-  it('opens safe links and images while rejecting unsafe protocols', () => {
+  it('opens safe links, never auto-loads remote images, and rejects unsafe protocols', () => {
     const result = renderMarkdownToHtml(
       '[safe](https://example.com) [mail](mailto:a@example.com) [bad](javascript:alert(1)) ![img](https://example.com/a.png) ![bad](data:text/html,x)',
     );
@@ -46,7 +46,11 @@ describe('renderMarkdownToHtml', () => {
     expect(result.html).toContain('target="_blank" rel="noopener noreferrer"');
     expect(result.html).toContain('href="mailto:a@example.com"');
     expect(result.html).not.toContain('href="javascript:');
-    expect(result.html).toContain('<img src="https://example.com/a.png" alt="img">');
+    // Imagem remota vira link: <img> faria o navegador buscar a URL sozinho (exfiltração).
+    expect(result.html).not.toContain('<img');
+    expect(result.html).toContain(
+      '<a href="https://example.com/a.png" target="_blank" rel="noopener noreferrer">img</a>',
+    );
     expect(result.html).not.toContain('src="data:');
   });
 

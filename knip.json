@@ -1,0 +1,20 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "background.ts",
+    "content.ts",
+    "sidepanel/panel.ts",
+    "sidepanel/vendor/markdown-it.ts",
+    "tests/run-tests.ts",
+    "tests/validate-extension.ts",
+    "tests/unit/run-unit-tests.ts",
+    "tests/e2e/*.ts",
+    "tests/evals/run-*.ts",
+    "tests/integration/test-*.ts",
+    "tests/vitest/**/*.test.ts",
+    "scripts/*.mjs"
+  ],
+  "project": [
+    "**/*.{ts,mjs}"
+  ]
+}

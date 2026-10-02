@@ -60,6 +60,31 @@ const panelMarkdownVendorPlugin = {
   },
 };
 
+// The AI SDK imports zod as a namespace value, which keeps `z.locales` (~40 languages,
+// >100 KB) alive in the service worker. Nothing here calls `z.locales.*`, and zod
+// registers English through a direct import, so the index is reduced to `en` only.
+const zodLocalesPlugin = {
+  name: 'zod-locales-en-only',
+  setup(build) {
+    build.onResolve({ filter: /locales[\\/]index\.js$/ }, (args) => {
+      if (!args.importer.replaceAll('\\', '/').includes('/node_modules/zod/')) return undefined;
+      return { path: path.join(path.dirname(args.importer), '..', 'locales', 'index.js'), namespace: 'zod-locales' };
+    });
+    build.onLoad({ filter: /.*/, namespace: 'zod-locales' }, (args) => ({
+      contents: `export { default as en } from ${JSON.stringify(path.join(path.dirname(args.path), 'en.js'))};`,
+      resolveDir: path.dirname(args.path),
+      loader: 'js',
+    }));
+  },
+};
+
+// Service-worker shims for SDK code Glide never reaches (see scripts/shims/*). Test bundles
+// use the same aliases so tests exercise exactly what ships.
+const sdkShimAliases = {
+  'zod/v3': path.join(rootDir, 'scripts', 'shims', 'zod-v3.js'),
+  '@ai-sdk/gateway': path.join(rootDir, 'scripts', 'shims', 'ai-gateway.js'),
+};
+
 const buildExtensionBundles = async () => {
   const commonExtConfig = {
     outdir: distDir,
@@ -81,6 +106,8 @@ const buildExtensionBundles = async () => {
     ...commonExtConfig,
     entryPoints: [path.join(rootDir, 'background.ts')],
     format: 'esm',
+    plugins: [zodLocalesPlugin],
+    alias: sdkShimAliases,
   });
 
   const panelBuild = await esbuild.build({
@@ -117,7 +144,12 @@ const buildExtensionBundles = async () => {
   copyDirFiltered(path.join(rootDir, 'icons'), path.join(distDir, 'icons'), (file) => file.endsWith('.png'));
   // Só os .woff2: o LICENSE.md fica no repositório, fora do pacote.
   copyDirFiltered(path.join(rootDir, 'fonts'), path.join(distDir, 'fonts'), (file) => file.endsWith('.woff2'));
-  copyDirFiltered(path.join(rootDir, 'local'), path.join(distDir, 'local'));
+  // local/ holds optional developer credentials (e.g. local/command-code.json) that the
+  // unpacked extension bootstraps on first run. dist/ then carries them — never share it.
+  if (fs.existsSync(path.join(rootDir, 'local'))) {
+    copyDirFiltered(path.join(rootDir, 'local'), path.join(distDir, 'local'));
+    console.warn('⚠ dist/local/ contém credenciais locais — não compartilhe nem publique este dist/.');
+  }
 
   const metafiles = [
     backgroundBuild.metafile,
@@ -181,6 +213,7 @@ const buildTestBundles = async () => {
     sourcemap: true,
     logLevel: 'info',
     external: ['playwright', 'chromium-bidi/lib/cjs/bidiMapper/BidiMapper', 'chromium-bidi/lib/cjs/cdp/CdpConnection'],
+    alias: sdkShimAliases,
   });
 };
 

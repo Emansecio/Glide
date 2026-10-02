@@ -10,10 +10,11 @@ import type {
   LanguageModelV3StreamResult,
   LanguageModelV3Usage,
 } from '@ai-sdk/provider';
+import { createProviderHttpError } from './provider-http-error.js';
 import { extensionFetch } from './sdk-client.js';
 
-export const COMMAND_CODE_GENERATE_PATH = '/alpha/generate';
-export const COMMAND_CODE_CLIENT_VERSION = '1.38.0';
+const COMMAND_CODE_GENERATE_PATH = '/alpha/generate';
+const COMMAND_CODE_CLIENT_VERSION = '1.38.0';
 
 type CommandCodeEvent = Record<string, unknown>;
 
@@ -43,10 +44,30 @@ const inferImageMediaType = (image: unknown, fallback?: string): string => {
   return 'image/png';
 };
 
+const bytesToBase64 = (bytes: Uint8Array): string => {
+  let binary = '';
+  const chunk = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunk));
+  }
+  return btoa(binary);
+};
+
+/** `file` part do AI SDK (imagem já convertida) → string data URL / URL aceita pelo wire. */
+const fileDataToImage = (data: unknown, mediaType: string): string | null => {
+  if (data instanceof URL) return data.toString();
+  if (data instanceof Uint8Array) return `data:${mediaType};base64,${bytesToBase64(data)}`;
+  if (typeof data === 'string' && data) {
+    return /^(?:data:|https?:)/i.test(data) ? data : `data:${mediaType};base64,${data}`;
+  }
+  return null;
+};
+
 const wireUserPart = (part: {
   type: string;
   text?: string;
   image?: unknown;
+  data?: unknown;
   mediaType?: string;
   mimeType?: string;
 }): Record<string, unknown> | null => {
@@ -58,12 +79,29 @@ const wireUserPart = (part: {
       mediaType: inferImageMediaType(part.image, part.mediaType || part.mimeType),
     };
   }
-  if (part.type === 'file') return wireTextPart('[file attachment omitted]');
+  if (part.type === 'file') {
+    // O AI SDK converte partes `image` em `file` (mediaType image/*) antes de chegar aqui; sem
+    // este ramo toda imagem virava "[file attachment omitted]" e o modelo "via" uma descrição inventada.
+    const declared = String(part.mediaType || part.mimeType || '');
+    if (declared.startsWith('image/')) {
+      const concrete = declared === 'image/*' ? 'image/png' : declared;
+      const image = fileDataToImage(part.data, concrete);
+      if (image) return { type: 'image', image, mediaType: inferImageMediaType(image, concrete) };
+    }
+    return wireTextPart('[file attachment omitted]');
+  }
   return null;
 };
 
 const wireUserContent = (
-  content: Array<{ type: string; text?: string; image?: unknown; mediaType?: string; mimeType?: string }>,
+  content: Array<{
+    type: string;
+    text?: string;
+    image?: unknown;
+    data?: unknown;
+    mediaType?: string;
+    mimeType?: string;
+  }>,
 ) => content.map(wireUserPart).filter((part): part is Record<string, unknown> => Boolean(part));
 
 const convertPrompt = (prompt: LanguageModelV3Prompt): { system: string; messages: unknown[] } => {
@@ -389,10 +427,7 @@ export function createCommandCodeModel(
         signal: options.abortSignal,
       });
       if (!response.ok) {
-        const detail = await response.text().catch(() => '');
-        throw new Error(
-          `Command Code request failed (HTTP ${response.status})${detail ? `: ${detail.slice(0, 240)}` : ''}.`,
-        );
+        throw await createProviderHttpError('Command Code', response);
       }
       if (!response.body) throw new Error('Command Code response stream missing.');
       const stream = new ReadableStream<LanguageModelV3StreamPart>({

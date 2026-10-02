@@ -17,12 +17,12 @@ export const RETRIES_PROP = {
 
 export const SELECTOR_PROP = (description: string) => ({ type: 'string', description }) as const;
 
-export const FRAME_URL_PROP = {
+const FRAME_URL_PROP = {
   type: 'string',
   description: 'Child-frame URL substring; omit for top document.',
 } as const;
 
-export const FRAME_SELECTOR_PROP = {
+const FRAME_SELECTOR_PROP = {
   type: 'string',
   description: 'Top-document iframe CSS selector.',
 } as const;

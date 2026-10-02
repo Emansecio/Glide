@@ -7,7 +7,19 @@ Glide exposes browser-control tools from `tools/browser-tools.ts` to the assista
 | Tool | Purpose |
 | --- | --- |
 | `navigate` | Navigate the current executable tab to an absolute URL. |
-| `openTab` | Open a new session tab, subject to the session tab limit. |
+| `openTab` | Open a new session tab. |
+| `selectOption` | Select an option in a native `<select>` or custom ARIA dropdown (MUI/React-Select combobox + portal listbox). Provide exactly one of `value`, `label`, or `index`. |
+| `fillForm` | Fill multiple form fields in one call (`text`, `checked`, or `option` per field). Runs sequentially and returns per-field results. At most 20 fields per call; more is rejected. |
+| `dismissModal` | Close the topmost open modal/dialog: close button, then Escape, then backdrop click. |
+| `highlightElement` | Draw a transient outline overlay on an element (`selector` or `readPage` ref) so the user can see what is being acted on. |
+| `findInPage` | Find text in visible page content (TreeWalker over text nodes); returns match contexts and total count, and scrolls the first match into view. |
+| `extractTable` | Extract a structured HTML table (largest by default, or `selector`). `colspan` cells repeat their text; short rows are padded. |
+| `harvestScroll` | Harvest repeated items from infinite-scroll lists until `stableRounds` pass with no new items, `maxItems`, or 20 rounds. |
+| `annotatedScreenshot` | Set-of-marks screenshot: numbered overlays on interactive elements plus a marks list (ref, selector, tag, text, box). |
+| `elementScreenshot` | Clipped screenshot around one element (`selector` or `readPage` ref). |
+| `navigateHistory` | Navigate browser history (`back`, `forward`, `reload`) and wait for tab readiness. |
+| `httpRequest` | HTTP request from the extension host, outside page CSP, including target-site cookies. Private/loopback hosts are blocked; an opaque redirect is reported as an error. |
+| `captureDownload` | Capture a file download triggered by the page (or start one directly) and return its id, filename, mime, size, and state. |
 | `click` | Click a DOM element by selector, text hint, or attribute hint. Supports retries, accessible frames, and `>>>` shadow DOM selectors. |
 | `hover` | Move the pointer over an element to reveal menus, flyouts, toolbars, and CSS hover states. Supports retries, accessible frames, and `>>>` shadow DOM selectors. |
 | `mouse` | Advanced mouse: `doubleClick`, `rightClick`, or `drag` (needs `toSelector`). |
@@ -32,7 +44,7 @@ Glide exposes browser-control tools from `tools/browser-tools.ts` to the assista
 | `readPage` | Interactive inventory with refs (`e1`…) and CSS selectors. Prefer before blind click/type. |
 | `clipboard` | Read or write clipboard text from the page context. |
 | `setInputFiles` | Assign synthetic text files to `input[type=file]`. |
-| `cdp` | Opt-in Chrome DevTools Protocol (`toolPermissions.debugger`). attach / detach / send. |
+| `cdp` | Chrome DevTools Protocol, always available (gated by the `interact` permission). attach / detach / send. |
 
 ## Selector Notes
 
@@ -42,7 +54,7 @@ Glide exposes browser-control tools from `tools/browser-tools.ts` to the assista
 - Frame-aware tools route bridge messages to one explicit `frameId`; mutations never fan out across frames.
 - `readPage` and `findElement` return versioned stable handles containing snapshot, tab, frame, selector, fingerprint, and DOM revision. Plain refs/selectors remain accepted for migration compatibility.
 - Mutation with a stale or mismatched handle fails closed with `STALE_ELEMENT_HANDLE` and refreshed candidates.
-- Effect tools may accept an expected `postcondition`; results expose verification evidence. Browser-dispatched events are synthetic through the bridge unless opt-in CDP input is enabled, so they are not claimed as trusted native events.
+- Effect tools may accept an expected `postcondition`; results expose verification evidence. Browser-dispatched events are synthetic through the bridge unless CDP native input is requested (`native: true`), so they are not claimed as trusted native events.
 
 ## Runtime Messages
 
@@ -60,4 +72,4 @@ Tool start/result messages add optional telemetry fields without invalidating sc
 
 Terminal reasons are `completed`, `awaiting_user`, `stopped`, `failed`, `interrupted`, and `ambiguous_action`. `run_resume_started` means a safe checkpoint resumed. `run_resume_required` means an in-flight effect is ambiguous and needs user confirmation; it is never replayed automatically.
 
-The background service worker is the execution boundary: UI code requests actions, the background validates permissions and arguments, then routes bridge-first operations or Chrome APIs. CDP remains opt-in through `toolPermissions.debugger`.
+The background service worker is the execution boundary: UI code requests actions, the background validates permissions and arguments, then routes bridge-first operations or Chrome APIs. CDP is always available; the legacy `toolPermissions.debugger` flag is ignored.

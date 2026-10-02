@@ -1,4 +1,4 @@
-﻿import { dedupeThinking } from '../../ai/message-utils.js';
+import { dedupeThinking } from '../../ai/message-utils.js';
 import {
   clearErrorBanner,
   clearWarningBanner,
@@ -249,8 +249,11 @@ SidePanelUI.prototype.stopToolDurationTimer = function stopToolDurationTimer() {
 
 SidePanelUI.prototype.ensureStreamingExecutionDetailsVisible = function ensureStreamingExecutionDetailsVisible() {
   const details = this.streamingState?.executionDetailsEl as HTMLDetailsElement | null;
-  if (!details) return;
+  if (!details?.classList.contains('hidden')) return;
   details.classList.remove('hidden');
+  // O bloco aparece antes do primeiro flush de conteúdo; sem isto ele ficava
+  // abaixo da dobra até o próximo timer.
+  if (this.shouldAutoScroll() && this.isNearBottom) this.scrollToBottom();
 };
 
 SidePanelUI.prototype.updateExecutionDetailsHeader = function updateExecutionDetailsHeader(
@@ -274,7 +277,8 @@ SidePanelUI.prototype.updateExecutionDetailsHeader = function updateExecutionDet
   const duration = this.formatExecutionDuration(Math.max(0, endedAt - (summary?.startedAt || endedAt)));
   const actionsLabel = `${total} ${total === 1 ? 'ação' : 'ações'}`;
 
-  titleEl.textContent = completed ? 'Ações do agente' : 'Trabalhando…';
+  // Durante o run o título é do setExecutionActivityLabel (o que o agente faz agora).
+  if (completed) titleEl.textContent = 'Ações do agente';
   titleEl.classList.toggle('shimmer', !completed);
   details.classList.toggle('working', !completed);
 
@@ -287,6 +291,28 @@ SidePanelUI.prototype.updateExecutionDetailsHeader = function updateExecutionDet
     metaEl.textContent = actionsLabel;
     metaEl.classList.remove('has-error');
   }
+};
+
+/**
+ * Título vivo do bloco de execução: diz o que o agente faz agora ("Pensando…",
+ * "Clicando…", "Respondendo…") em vez de um rótulo fixo. Entre uma ferramenta
+ * e outra o modelo está decidindo o próximo passo, daí o padrão "Pensando…". Cada troca
+ * sobe em fade, só em transform + opacity.
+ */
+SidePanelUI.prototype.setExecutionActivityLabel = function setExecutionActivityLabel(label = 'Pensando…') {
+  const state = this.streamingState;
+  const titleEl = state?.executionTitleEl;
+  if (!titleEl || state.completed || titleEl.textContent === label) return;
+  titleEl.textContent = label;
+  this._tickThinkingTimer?.();
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+  titleEl.animate?.(
+    [
+      { opacity: 0, transform: 'translateY(4px)' },
+      { opacity: 1, transform: 'none' },
+    ],
+    { duration: 200, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' },
+  );
 };
 
 SidePanelUI.prototype.finalizeExecutionDetails = function finalizeExecutionDetails(
@@ -399,29 +425,19 @@ SidePanelUI.prototype.resolveErrorBannerAction = function resolveErrorBannerActi
   return undefined;
 };
 
-SidePanelUI.prototype.resolveToolErrorBannerAction = function resolveToolErrorBannerAction(result: any) {
-  const code = String(result?.code || '');
-  if (code === 'NO_EXECUTABLE_TAB') {
-    return {
-      label: 'Abrir aba',
-      onClick: () => {
-        void chrome.tabs.create({ active: true });
-      },
-    };
+/** `host/caminho` sem protocolo nem query; devolve a entrada se não for URL. */
+const compactUrl = (url: string) => {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.host}${parsed.pathname === '/' ? '' : parsed.pathname}`;
+  } catch {
+    return url;
   }
-  return undefined;
 };
 
 SidePanelUI.prototype.formatTargetTabLabel = function formatTargetTabLabel(url: string) {
-  try {
-    const parsed = new URL(url);
-    const compact = `${parsed.host}${parsed.pathname === '/' ? '' : parsed.pathname}`;
-    const prefix = `Aba: ${compact}`;
-    return prefix.length > 40 ? `${prefix.slice(0, 39)}…` : prefix;
-  } catch {
-    const prefix = `Aba: ${url}`;
-    return prefix.length > 40 ? `${prefix.slice(0, 39)}…` : prefix;
-  }
+  const prefix = `Aba: ${compactUrl(url)}`;
+  return prefix.length > 40 ? `${prefix.slice(0, 39)}…` : prefix;
 };
 
 SidePanelUI.prototype.updateStatusTargetDisplay = function updateStatusTargetDisplay() {
@@ -435,10 +451,6 @@ SidePanelUI.prototype.updateStatusTargetDisplay = function updateStatusTargetDis
 };
 
 SidePanelUI.prototype.clearRunTargetTab = function clearRunTargetTab() {
-  if (!this._runTargetTabLabel) {
-    this.updateStatusTargetDisplay();
-    return;
-  }
   this._runTargetTabLabel = null;
   this.updateStatusTargetDisplay();
 };
@@ -544,9 +556,6 @@ SidePanelUI.prototype.displayToolExecution = function displayToolExecution(
     this.toolCallViews.set(entryId, entry);
 
     if (this.streamingState?.eventsEl) {
-      if (this.currentPlan) {
-        this.ensurePlanBlock();
-      }
       this.ensureStreamingExecutionDetailsVisible?.();
       const inlineEntry = this.createToolTreeItem(entryId, toolName, args);
       entry.inline = inlineEntry;
@@ -578,44 +587,30 @@ SidePanelUI.prototype.displayToolExecution = function displayToolExecution(
   if (result === null || result === undefined) {
     this.ensureToolDurationTimer();
     this.tickRunningToolDurations();
-  }
-
-  if (result !== null && result !== undefined) {
-    this.updateToolMessage(entry, result);
+    this.setExecutionActivityLabel(getToolPresentation(toolName).running);
+  } else {
+    if (this.pendingToolCount === 0) this.setExecutionActivityLabel();
+    if (entry.inline) this.updateToolTreeItem(entry.inline, result);
+    if (entry.log) this.updateToolTreeItem(entry.log, result);
     const isError = result && (result.error || result.success === false);
     if (isError) {
-      const action = this.resolveToolErrorBannerAction(result);
+      const action = this.resolveErrorBannerAction({ code: result.code });
       this.showErrorBanner(this.formatToolErrorMessage(toolName, result), { action });
     }
     if (!entry.log && this.toolLogBuffer.length > 0) {
-      this.toolLogBuffer = updateToolLogBufferResult(this.toolLogBuffer, entryId, result);
+      // Guarda a versão já enxuta: o buffer (500 entradas) retinha o resultado bruto, de 20-200 KB cada,
+      // enquanto o painel de atividade está fechado.
+      this.toolLogBuffer = updateToolLogBufferResult(
+        this.toolLogBuffer,
+        entryId,
+        this.sanitizeToolResultForDisplay(result),
+      );
     }
     if (this.shouldAutoScroll() && this.isNearBottom) {
       this.scrollToBottom();
     }
   }
   this.updateActivityToggle();
-};
-
-SidePanelUI.prototype.updateToolMessage = function updateToolMessage(entry: any, result: any) {
-  if (!entry) return;
-
-  if (entry.inline || entry.log) {
-    if (entry.inline) {
-      this.updateToolTreeItem(entry.inline, result);
-    }
-    if (entry.log) {
-      const isTreeItem = entry.log.container?.classList?.contains('tool-tree-item');
-      if (isTreeItem) {
-        this.updateToolTreeItem(entry.log, result);
-      } else {
-        this.updateToolLogEntry(entry.log, result);
-      }
-    }
-    return;
-  }
-
-  this.updateToolLogEntry(entry, result);
 };
 
 SidePanelUI.prototype.sanitizeToolResultForDisplay = function sanitizeToolResultForDisplay(value: any, depth = 0) {
@@ -648,67 +643,15 @@ SidePanelUI.prototype.sanitizeToolResultForDisplay = function sanitizeToolResult
 
   if (keys.length > maxFields) {
     sanitized.truncatedFieldCount = keys.length - maxFields;
+    // O estado de sucesso/erro não pode se perder só porque a chave ficou além do limite.
+    for (const key of ['success', 'error', 'code', 'message']) {
+      if (key in source && !(key in sanitized)) {
+        sanitized[key] = this.sanitizeToolResultForDisplay(source[key], depth + 1);
+      }
+    }
   }
 
   return sanitized;
-};
-
-SidePanelUI.prototype.updateToolLogEntry = function updateToolLogEntry(entry: any, result: any) {
-  if (!entry) return;
-  const isError = result && (result.error || result.success === false);
-  const displayResult = this.sanitizeToolResultForDisplay(result);
-
-  if (entry.details) {
-    entry.details.classList.remove('running', 'success', 'error');
-    entry.details.classList.add(isError ? 'error' : 'success');
-    if (entry.statusEl) entry.statusEl.textContent = isError ? 'Erro' : 'Concluido';
-
-    if (entry.resultEl) {
-      const resultText = this.truncateText(this.safeJsonStringify(displayResult), 2000);
-      entry.resultEl.textContent = resultText || (isError ? 'Falha na ferramenta' : 'Concluido');
-    }
-
-    if (entry.previewEl) {
-      const preview = isError ? result?.error || 'Falha na ferramenta' : result?.message || result?.summary || '';
-      if (preview) {
-        entry.previewEl.textContent = this.truncateText(String(preview), 120);
-      }
-    }
-
-    if (isError) {
-      entry.details.open = true;
-    }
-    return;
-  }
-
-  if (entry.container) {
-    entry.container.classList.remove('running', 'success', 'error');
-    entry.container.classList.add(isError ? 'error' : 'success');
-  }
-  if (entry.statusEl) entry.statusEl.textContent = isError ? 'Erro' : 'Concluido';
-
-  if (entry.resultEl) {
-    const resultText = this.truncateText(this.safeJsonStringify(displayResult), 2000);
-    entry.resultEl.textContent = resultText || (isError ? 'Falha na ferramenta' : 'Concluido');
-  }
-
-  if (entry.previewEl) {
-    const preview = isError ? result?.error || 'Falha na ferramenta' : result?.message || result?.summary || '';
-    if (preview) {
-      entry.previewEl.textContent = this.truncateText(String(preview), 120);
-    }
-  }
-
-  if (isError && entry.container) {
-    entry.container.classList.add('expanded');
-    if (entry.toggleBtn) {
-      entry.toggleBtn.textContent = 'Ocultar';
-    }
-  }
-
-  if (this.elements.toolLog && this.activityPanelOpen) {
-    this.scrollToolLogToBottom();
-  }
 };
 
 SidePanelUI.prototype.showErrorBanner = showErrorBanner;
@@ -747,6 +690,7 @@ SidePanelUI.prototype.setComposerBusy = function setComposerBusy(busy: boolean) 
     stopBtn.classList.toggle('hidden', !busy);
     stopBtn.disabled = false;
   }
+  this.elements.planDrawer?.classList.toggle('run-active', busy);
   if (!busy) {
     this.clearRunTargetTab?.();
   }
@@ -797,13 +741,8 @@ SidePanelUI.prototype.exportExecutionLog = async function exportExecutionLog() {
 SidePanelUI.prototype.getArgsPreview = function getArgsPreview(args: any) {
   if (!args) return '';
   if (args.url) {
-    try {
-      const parsed = new URL(String(args.url));
-      const compact = `${parsed.host}${parsed.pathname === '/' ? '' : parsed.pathname}`;
-      return compact.substring(0, 42) + (compact.length > 42 ? '…' : '');
-    } catch {
-      return String(args.url).substring(0, 42);
-    }
+    const compact = compactUrl(String(args.url));
+    return compact.length > 42 ? `${compact.slice(0, 42)}…` : compact;
   }
   if (args.text) return `"${args.text.substring(0, 26)}${args.text.length > 26 ? '…' : ''}"`;
   if (args.condition) {
@@ -976,7 +915,7 @@ SidePanelUI.prototype.updateActivityToggle = function updateActivityToggle(known
     }
   }
   if (hasThinking) {
-    segments.push(density === 'tight' ? 'rac' : 'raciocinio');
+    segments.push(density === 'tight' ? 'rac' : 'raciocínio');
   }
   if (this.activeToolName) {
     const toolLabel = getToolPresentation(this.activeToolName).running;
@@ -1062,7 +1001,7 @@ SidePanelUI.prototype.updateThinkingPanel = function updateThinkingPanel(thinkin
     if (!isStreaming) {
       this.latestThinking = null;
     }
-    panel.textContent = isStreaming ? 'Raciocinando...' : 'Sem raciocinio capturado ainda.';
+    panel.textContent = isStreaming ? 'Raciocinando…' : 'Sem raciocínio capturado ainda.';
     panel.classList.add('empty');
   }
   panel.classList.toggle('streaming', isStreaming);
@@ -1073,10 +1012,6 @@ SidePanelUI.prototype.resetActivityPanel = function resetActivityPanel() {
   this.toolLogBuffer = [];
   if (this.elements.toolLog) {
     this.elements.toolLog.innerHTML = '';
-  }
-  if (this.elements.chatMessages) {
-    const tree = this.elements.chatMessages.querySelector('.tool-tree');
-    if (tree) tree.remove();
   }
   this.latestThinking = null;
   this.activeToolName = null;

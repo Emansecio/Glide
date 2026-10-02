@@ -17,6 +17,26 @@ export type TabReadinessResult = {
 export const isTabLoadComplete = (tab: TabReadinessSnapshot | null | undefined) =>
   tab?.status === 'complete' && isHttpUrl(tab.url);
 
+/**
+ * Espera `delayMs` ou o próximo `tabs.onUpdated` da aba, o que vier primeiro: a
+ * página que termina de carregar logo depois de uma sondagem não espera o resto
+ * do intervalo. O intervalo continua como rede de segurança.
+ */
+const waitForTabUpdate = (tabId: number, delayMs: number) =>
+  new Promise<void>((resolve) => {
+    const onUpdated = chrome.tabs?.onUpdated;
+    const listener = (updatedTabId: number) => {
+      if (updatedTabId === tabId) done();
+    };
+    const timer = setTimeout(() => done(), delayMs);
+    const done = () => {
+      clearTimeout(timer);
+      onUpdated?.removeListener(listener);
+      resolve();
+    };
+    onUpdated?.addListener(listener);
+  });
+
 export async function waitForTabReadiness(
   tabId: number,
   options: {
@@ -31,7 +51,7 @@ export async function waitForTabReadiness(
   const pollIntervalMs = options.pollIntervalMs ?? 200;
   const getTab = options.getTab ?? ((id: number) => chrome.tabs.get(id));
   const probeBridge = options.probeBridge ?? isBridgeAvailable;
-  const sleep = options.sleep ?? ((delayMs: number) => new Promise<void>((resolve) => setTimeout(resolve, delayMs)));
+  const sleep = options.sleep ?? ((delayMs: number) => waitForTabUpdate(tabId, delayMs));
   const startedAt = Date.now();
   let lastTab: TabReadinessSnapshot | null = null;
   let loadComplete = false;
@@ -95,7 +115,7 @@ export async function waitForHistoryTransition(
   const timeoutMs = options.timeoutMs ?? 4000;
   const pollIntervalMs = options.pollIntervalMs ?? 100;
   const getTab = options.getTab ?? ((id: number) => chrome.tabs.get(id));
-  const sleep = options.sleep ?? ((delayMs: number) => new Promise<void>((resolve) => setTimeout(resolve, delayMs)));
+  const sleep = options.sleep ?? ((delayMs: number) => waitForTabUpdate(tabId, delayMs));
   const startedAt = Date.now();
   let sawLoading = false;
   let lastUrl = preUrl;
